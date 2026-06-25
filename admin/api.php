@@ -991,6 +991,7 @@ function fourgeUpdateFetchAllow() {
         'interior-shell.jsx',
         'posts.jsx',
         'preview.html',
+        'adaptify.js',
     ];
 }
 

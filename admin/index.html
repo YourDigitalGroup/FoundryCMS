@@ -1048,6 +1048,9 @@ textarea.fb-input{resize:vertical}
         <div class="ni" onclick="navTo('settings')" id="ni-settings">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg> Settings
         </div>
+        <div class="ni" onclick="navTo('adaptify')" id="ni-adaptify" title="Accessibility widget">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="7.6" r="1.15" fill="currentColor" stroke="none"/><path d="M7.2 10.2h9.6"/><path d="M12 9.4V14m0 0l-2.4 4.4M12 14l2.4 4.4"/></svg> ADAptify
+        </div>
         <div class="sb-sec admin-only">SYSTEM</div>
         <div class="ni admin-only" onclick="navTo('users')" id="ni-users"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Users</div>
         <div class="ni admin-only" onclick="navTo('revisions')" id="ni-revisions"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg> Revisions</div>
@@ -1727,6 +1730,58 @@ textarea.fb-input{resize:vertical}
         </div>
       </div>
 
+      <!-- ══════════════════════════════════════════════════════
+           ADAptify — accessibility widget (site-wide)
+      ═══════════════════════════════════════════════════════ -->
+      <div class="panel" id="p-adaptify">
+        <div style="max-width:680px">
+          <h1 style="font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin-bottom:4px">ADAptify</h1>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:24px">A floating accessibility menu (contrast, text size, grayscale, readable font, and more) shown on every page. Settings here are stored server-side and apply <strong>site-wide</strong> — disabling or recoloring updates all pages.</p>
+
+          <div class="si-sec">
+            <h2>Status</h2>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;font-weight:600;color:var(--text)">
+              <input type="checkbox" id="ada-enabled" style="width:18px;height:18px;accent-color:var(--ember);cursor:pointer">
+              Enable the accessibility widget site-wide
+            </label>
+          </div>
+
+          <div class="si-sec">
+            <h2>Placement</h2>
+            <div class="fg"><label>Position on screen</label>
+              <select id="ada-position" style="width:100%" onchange="adaptifyPreview()">
+                <option value="bottom-right">Bottom right</option>
+                <option value="bottom-left">Bottom left</option>
+                <option value="mid-right">Middle right</option>
+                <option value="mid-left">Middle left</option>
+                <option value="top-right">Top right</option>
+                <option value="top-left">Top left</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="si-sec">
+            <h2>Brand colors</h2>
+            <div class="desc">The launcher button and the accessibility figure take these colors.</div>
+            <div class="fr">
+              <div class="fg"><label>Button color</label><input type="color" id="ada-color" value="#C8531E" oninput="adaptifyPreview()" style="width:100%;height:36px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px"></div>
+              <div class="fg"><label>Figure color</label><input type="color" id="ada-icon-color" value="#FFFFFF" oninput="adaptifyPreview()" style="width:100%;height:36px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px"></div>
+            </div>
+            <div style="margin-top:14px;display:flex;align-items:center;gap:12px">
+              <span style="font-size:12px;color:var(--muted)">Preview:</span>
+              <div id="ada-preview" style="display:inline-flex"></div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="fd-btn-primary" onclick="saveAdaptify()">Save — apply site-wide</button>
+            <button class="fd-btn-secondary" onclick="adaptifyInstallAll()">Install on all pages</button>
+          </div>
+          <div id="ada-install-status" style="font-size:12px;color:var(--muted);margin-top:10px"></div>
+          <div class="desc" style="margin-top:8px">First time? Click <strong>Install on all pages</strong> once to add the widget script to your pages. After that, Save alone updates the widget everywhere.</div>
+        </div>
+      </div>
+
     </div><!-- /main -->
   </div><!-- /body-row -->
 </div><!-- /shell -->
@@ -1865,12 +1920,12 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.3.0';
+const CMS_VERSION='1.4.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
 // This must mirror the server allow-list in api.php → fourgeUpdateFetchAllow().
-const UPDATE_FILES_ALLOWED=['admin/index.html','admin/db.php','block-renderer.jsx','blog-post.jsx','interior-shell.jsx','posts.jsx','preview.html'];
+const UPDATE_FILES_ALLOWED=['admin/index.html','admin/db.php','block-renderer.jsx','blog-post.jsx','interior-shell.jsx','posts.jsx','preview.html','adaptify.js'];
 const UPDATE_FILES_DEFAULT=UPDATE_FILES_ALLOWED.slice(); // used when version.json omits "files"
 const UPDATE_THROTTLE_MS=20*60*60*1000; // ~daily: don't re-check on every login within a day
 const F_PAGES='data/pages.json',F_POSTS='data/posts.json',F_SEO='data/seo.json';
@@ -1897,7 +1952,7 @@ function openM(id){const m=document.getElementById(id);if(m)m.classList.add('on'
 function closeM(id){const m=document.getElementById(id);if(m)m.classList.remove('on');}
 function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');p.parentElement.querySelectorAll('.tab-panel').forEach(t=>t.classList.remove('on'));const el=document.getElementById(panelId);if(el)el.classList.add('on');}
 function switchPropsTab(){}
-const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','settings':'p-settings','factory':'p-factory','users':'p-users'};
+const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','users':'p-users'};
 function navTo(name){goPanel(NAV_MAP[name]||('p-'+name));}
 function goPanel(id){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
@@ -1911,7 +1966,7 @@ function goPanel(id){
   if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-settings':'Settings','p-factory':'Site Factory','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
-  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject')initPlugins();else if(id==='p-analytics')initAnalytics();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-users')initUsers();
+  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject')initPlugins();else if(id==='p-analytics')initAnalytics();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-users')initUsers();
 }
 
 // ── GITHUB API ──────────────────────────────────────────────────
@@ -6447,6 +6502,134 @@ async function viewRevision(revId){
     if(w){ w.document.open(); w.document.write(html); w.document.close(); }
     else toast('Allow pop-ups to view the revision','err');
   }catch(e){ toast('Could not open revision: '+e.message,'err'); }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADAptify — site-wide accessibility widget
+// ══════════════════════════════════════════════════════════════════════════
+// Settings live server-side in data/adaptify.json. The public adaptify.js reads
+// that file on every page, so toggling/recoloring here updates the widget
+// site-wide with no per-page edit. "Install on all pages" is a one-time DOM
+// sweep that drops the <script> tag into each page and seeds the engine file.
+const ADA_DEFAULTS={enabled:true,position:'bottom-right',color:'#C8531E',iconColor:'#FFFFFF'};
+
+// <input type=color> needs a 6-digit #rrggbb; coerce common forms (#abc, abc…).
+function normHex(v){
+  if(!v) return '';
+  let s=String(v).trim();
+  if(s[0]!=='#') s='#'+s;
+  if(/^#[0-9a-fA-F]{3}$/.test(s)) s='#'+s.slice(1).split('').map(c=>c+c).join('');
+  return /^#[0-9a-fA-F]{6}$/.test(s)?s.toUpperCase():'';
+}
+
+// The accessibility figure (person, arms out, in a circle) — mirrors manIcon()
+// in adaptify.js so the CMS preview matches the live launcher exactly.
+function adaIconSvg(color){
+  const c=esc(color||'#fff');
+  return '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">'
+    +'<circle cx="12" cy="12" r="11" fill="none" stroke="'+c+'" stroke-width="1.5" opacity="0.9"/>'
+    +'<circle cx="12" cy="6.2" r="1.7" fill="'+c+'"/>'
+    +'<path d="M6 9.2h12" stroke="'+c+'" stroke-width="1.7" stroke-linecap="round"/>'
+    +'<path d="M12 8.2v6m0 0l-3 5.4m3-5.4l3 5.4" stroke="'+c+'" stroke-width="1.7" stroke-linecap="round" fill="none"/>'
+    +'</svg>';
+}
+
+async function initAdaptify(){
+  let cfg={...ADA_DEFAULTS};
+  // Prefer the public file (identical to what the widget reads); fall back to
+  // the API for fresh sites where data/adaptify.json isn't readable yet.
+  try{
+    const r=await fetch('../data/adaptify.json?t='+Date.now(),{cache:'no-store'});
+    if(r.ok){ const j=await r.json(); if(j&&typeof j==='object') cfg={...cfg,...j}; }
+  }catch{}
+  if(canCallApi()){
+    try{ const d=await apiCall('read_file',{path:'data/adaptify.json'}); if(d&&d.content){ const j=JSON.parse(d.content); if(j&&typeof j==='object') cfg={...cfg,...j}; } }catch{}
+  }
+  const en=document.getElementById('ada-enabled');    if(en) en.checked = cfg.enabled!==false;
+  const po=document.getElementById('ada-position');   if(po) po.value   = cfg.position||'bottom-right';
+  const co=document.getElementById('ada-color');      if(co) co.value   = normHex(cfg.color)||'#C8531E';
+  const ic=document.getElementById('ada-icon-color'); if(ic) ic.value   = normHex(cfg.iconColor)||'#FFFFFF';
+  adaptifyPreview();
+}
+
+function adaptifyPreview(){
+  const wrap=document.getElementById('ada-preview'); if(!wrap) return;
+  const color=document.getElementById('ada-color')?.value||'#C8531E';
+  const icon =document.getElementById('ada-icon-color')?.value||'#FFFFFF';
+  wrap.innerHTML='<span style="display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:50%;background:'+esc(color)+';box-shadow:0 4px 16px rgba(0,0,0,.28)">'+adaIconSvg(icon)+'</span>';
+}
+
+function readAdaptifyForm(){
+  return {
+    enabled:  !!document.getElementById('ada-enabled')?.checked,
+    position: document.getElementById('ada-position')?.value||'bottom-right',
+    color:    document.getElementById('ada-color')?.value||'#C8531E',
+    iconColor:document.getElementById('ada-icon-color')?.value||'#FFFFFF',
+  };
+}
+
+async function saveAdaptify(){
+  if(!canCallApi()){ toast('Sign in again to save','err'); return; }
+  const cfg=readAdaptifyForm();
+  try{
+    await apiCall('write_file',{path:'data/adaptify.json',content:JSON.stringify(cfg,null,2)});
+    toast(cfg.enabled?'ADAptify saved — live on every page':'ADAptify disabled site-wide','ok');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+
+// One-time setup: seed the config, make sure the engine file exists, then drop
+// <script src="/adaptify.js" defer></script> into every page that lacks it.
+async function adaptifyInstallAll(){
+  if(!canCallApi()){ toast('Sign in again to install','err'); return; }
+  const pages=getPageList();
+  if(!pages.length){ toast('No pages found','err'); return; }
+  if(!confirm('Install the ADAptify widget on all '+pages.length+' page(s)?\n\nThis adds the widget script to each page and saves your current settings. The widget then appears site-wide.')) return;
+
+  const status=document.getElementById('ada-install-status');
+  const setStatus=t=>{ if(status) status.textContent=t; };
+
+  // 1) Save settings so data/adaptify.json exists before the widget first loads.
+  try{ await apiCall('write_file',{path:'data/adaptify.json',content:JSON.stringify(readAdaptifyForm(),null,2)}); }
+  catch(e){ toast('Could not save settings: '+e.message,'err'); return; }
+
+  // 2) Best-effort: pull adaptify.js from the CMS repo so the script resolves
+  //    immediately. If this fails, the next CMS update delivers it (it's in the
+  //    version.json manifest + the updater allow-list).
+  setStatus('Fetching widget engine…');
+  try{
+    const{repo,branch}=parseTplRepo(getTplRepo());
+    const js=await fetchRepoFile(repo,branch,'adaptify.js');
+    if(js && js.indexOf('__adaptify')>=0) await apiCall('write_file',{path:'adaptify.js',content:js});
+  }catch(e){ /* delivered later by self-update */ }
+
+  // 3) Inject the script tag into every page (idempotent — skip if present).
+  let added=0, already=0, failed=0;
+  for(const pg of pages){
+    const filePath=pg.path||pg.file||(pg.id==='home'?'index.html':pg.id+'.html');
+    setStatus('Installing on '+filePath+'…');
+    try{
+      const data=await apiCall('read_file',{path:filePath});
+      const html=data.content||'';
+      if(!html){ failed++; continue; }
+      if(/src=["'][^"']*adaptify\.js/i.test(html)){ already++; continue; }
+      const pdoc=new DOMParser().parseFromString(html,'text/html');
+      const body=pdoc.body||pdoc.documentElement;
+      const s=pdoc.createElement('script');
+      s.setAttribute('src','/adaptify.js');
+      s.setAttribute('defer','');
+      body.appendChild(s);
+      const out='<!DOCTYPE html>\n'+pdoc.documentElement.outerHTML;
+      await apiCall('write_file',{path:filePath,content:out});
+      added++;
+    }catch(e){ console.warn('ADAptify install failed for '+filePath+':',e.message); failed++; }
+  }
+  const parts=[];
+  if(added)   parts.push(added+' installed');
+  if(already) parts.push(already+' already had it');
+  if(failed)  parts.push(failed+' failed');
+  setStatus(parts.join(' · ')||'Nothing to do');
+  toast(added?('ADAptify installed on '+added+' page(s)'):'ADAptify already on every page','ok');
 }
 
 
