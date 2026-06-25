@@ -1,0 +1,25 @@
+# Fourge — force HTTPS site-wide.
+# Passwords are hashed AT REST (Argon2id/bcrypt), but a login, password change,
+# or API key sent over plain HTTP is exposed in transit. This redirect closes
+# that gap so every request — public pages, the admin login, and api.php — is
+# served over TLS.
+#
+# The second condition handles shared hosts and load balancers that terminate
+# TLS at the edge and forward plain HTTP to PHP: there %{HTTPS} reads "off" even
+# though the visitor is on HTTPS, so we also trust X-Forwarded-Proto. Without it
+# you can hit an infinite redirect loop on those hosts.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# HSTS — tells browsers "only ever load this site over HTTPS." Left OFF by
+# default ON PURPOSE: once a browser sees this header it will REFUSE http:// for
+# max-age seconds, so a broken or expired certificate can make the whole site
+# unreachable. Enable it ONLY after HTTPS is confirmed stable across the domain
+# (and every subdomain, if you add includeSubDomains), by uncommenting:
+# <IfModule mod_headers.c>
+#   Header always set Strict-Transport-Security "max-age=31536000"
+# </IfModule>
