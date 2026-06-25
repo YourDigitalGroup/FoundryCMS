@@ -1,0 +1,16 @@
+{
+  "version": "1.3.0",
+  "releaseDate": "2026-06-25",
+  "notes": "Server-level page list, automatic server connection (no per-browser Server API config), all settings server-side (Mailgun in encrypted DB), Revisions ledger with View/Restore, faithful HTML import with CSS preservation, multipart save (WAF-proof), square media picker + 16:9 desktop editor, FAQ/accordion editing, Privacy Policy generator, and self-update across the engine files.",
+  "files": [
+    "admin/index.html",
+    "admin/db.php",
+    "block-renderer.jsx",
+    "blog-post.jsx",
+    "interior-shell.jsx",
+    "posts.jsx",
+    "preview.html"
+  ],
+  "apiManual": true,
+  "apiNote": "admin/api.php holds this site's secrets (API token) and is never auto-updated. If a release changes api.php, update it by hand."
+}

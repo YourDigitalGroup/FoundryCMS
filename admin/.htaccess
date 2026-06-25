@@ -1,0 +1,14 @@
+# Fourge — block direct HTTP access to server-side secrets and runtime caches.
+# PHP source is never emitted by the interpreter, but these rules add a second
+# layer and, importantly, protect non-PHP secret files (the Google
+# service-account JSON and its token cache, and the SQLite database that holds
+# password hashes + encrypted secrets) from being downloaded directly.
+<FilesMatch "(\.secret\.php|service-account\.json|\.ga-token\.json|\.db|\.db-wal|\.db-shm)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>

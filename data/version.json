@@ -1,0 +1,5 @@
+{
+  "version": "1.3.0",
+  "releaseDate": "2026-06-24",
+  "notes": "Self-update across engine files, faithful HTML import, Revisions fix, General Markup rename, SQLite backend, Architect tier. (Canonical update marker lives at admin/version.json.)"
+}

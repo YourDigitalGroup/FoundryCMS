@@ -1,0 +1,25 @@
+# ── Fourge — local secrets & runtime files (never commit) ──
+# Real secret config lives here locally; copy config.secret.example.php to
+# config.secret.php and fill in your keys. Ignore EVERY config.secret.*
+# variant (e.g. a mistyped config.secret.api) except the example template.
+admin/config.secret.php
+admin/config.secret.*
+!admin/config.secret.example.php
+
+# SQLite database (users, sessions, encrypted secrets) — created at runtime,
+# never commit. Holds password hashes and encrypted credentials.
+admin/fourge.db
+admin/fourge.db-wal
+admin/fourge.db-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Google Analytics service-account key + cached access token (created at runtime)
+admin/ga-service-account.json
+admin/.ga-token.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp

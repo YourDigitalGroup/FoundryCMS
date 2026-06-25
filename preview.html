@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="interior.css?v=1">
+<style id="preview-page-css"></style>
+<style>
+a{pointer-events:none;cursor:default}
+#pv-load{position:fixed;inset:0;background:#f0f2f4;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;font-family:Manrope,sans-serif;color:#5a6b7a;font-size:13px;gap:12px}
+.sp{width:32px;height:32px;border:3px solid #dde2e8;border-top-color:#45BBEC;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#pv-load.hidden{display:none}
+body{margin:0}
+</style>
+</head>
+<body>
+<div id="pv-load"><div class="sp"></div><span>Loading preview…</span></div>
+<div id="app"></div>
+<!-- Queue messages that arrive before React mounts -->
+<script>window.__pvQ=[];window.addEventListener('message',function e(ev){if(ev.data&&ev.data.type==='cms-preview')window.__pvQ.push(ev.data);});</script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin></script>
+<!-- Set flag BEFORE block-renderer loads so it skips data fetching -->
+<script>window.__CMS_PREVIEW__=true;</script>
+<script type="text/babel" src="posts.jsx"></script>
+<script type="text/babel" src="block-renderer.jsx"></script>
+<script type="text/babel">
+const {useState,useEffect}=React;
+function PreviewApp(){
+  const [state,setState]=useState({blocks:[],pageId:'home'});
+  useEffect(()=>{
+    function apply(data){
+      const css=document.getElementById('preview-page-css');
+      if(css)css.textContent=data.css||'';
+      document.getElementById('pv-load')?.classList.add('hidden');
+      setState({blocks:data.blocks||[],pageId:data.pageId||'home'});
+    }
+    if(window.__pvQ.length){apply(window.__pvQ[window.__pvQ.length-1]);window.__pvQ=[];}
+    function onMsg(e){if(e.data&&e.data.type==='cms-preview')apply(e.data);}
+    window.addEventListener('message',onMsg);
+    return()=>window.removeEventListener('message',onMsg);
+  },[]);
+  const Nav=window.CmsNav||null;
+  const Footer=window.CmsFooter||null;
+  const render=window.renderBlock||null;
+  if(!render)return null;
+  return(<>
+    {Nav&&<Nav current={state.pageId}/>}
+    <main>
+      {state.blocks.length===0
+        ?<div style={{padding:'80px 5%',textAlign:'center',color:'#5a6b7a',fontFamily:'Manrope,sans-serif',fontSize:14}}>Add a block to see the preview.</div>
+        :state.blocks.map(b=>render(b))
+      }
+    </main>
+    {Footer&&<Footer/>}
+  </>);
+}
+ReactDOM.createRoot(document.getElementById('app')).render(<PreviewApp/>);
+window.parent.postMessage({type:'preview-ready'},'*');
+</script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+[
+  {
+    "username": "admin@44interactive.com",
+    "displayName": "Administrator",
+    "email": "admin@44interactive.com",
+    "firstName": "Administrator",
+    "lastName": "",
+    "role": "admin",
+    "createdAt": "2025-01-01",
+    "hash": "cf2b7a3955905584474ad2f125dfd30003dc3daf5ecbe39f0b380023bb94424b"
+  },
+  {
+    "username": "editor44i",
+    "displayName": "44i Editor",
+    "email": "admin+editor@44interactive.com",
+    "firstName": "44i",
+    "lastName": "Editor",
+    "role": "admin",
+    "createdAt": "2026-06-24",
+    "hash": "9263a84ca85a67441ae0c9195c3ecc63e11a62d8db771f1fbe6d035469c5dd8d"
+  },
+  {
+    "username": "Scott@44interactive.com",
+    "displayName": "Scott",
+    "email": "Scott@44interactive.com",
+    "firstName": "Scott",
+    "lastName": "",
+    "role": "superadmin",
+    "architect": true,
+    "createdAt": "2026-06-24",
+    "hash": "b527dca7bf3683a15f87ec71bf78172b505b97a9088e36b31558f2e73ed7950c"
+  },
+  {
+    "username": "Erik@44interactive.com",
+    "displayName": "Erik",
+    "email": "Erik@44interactive.com",
+    "firstName": "Erik",
+    "lastName": "",
+    "role": "superadmin",
+    "createdAt": "2026-06-24",
+    "mustChangePassword": true,
+    "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"
+  },
+  {
+    "username": "Kellar@44interactive.com",
+    "displayName": "Kellar",
+    "email": "Kellar@44interactive.com",
+    "firstName": "Kellar",
+    "lastName": "",
+    "role": "superadmin",
+    "createdAt": "2026-06-24",
+    "mustChangePassword": true,
+    "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"
+  },
+  {
+    "username": "Jon@44interactive.com",
+    "displayName": "Jon",
+    "email": "Jon@44interactive.com",
+    "firstName": "Jon",
+    "lastName": "",
+    "role": "superadmin",
+    "createdAt": "2026-06-24",
+    "mustChangePassword": true,
+    "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"
+  },
+  {
+    "username": "Travis@44interactive.com",
+    "displayName": "Travis",
+    "email": "Travis@44interactive.com",
+    "firstName": "Travis",
+    "lastName": "",
+    "role": "superadmin",
+    "createdAt": "2026-06-24",
+    "mustChangePassword": true,
+    "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"
+  },
+  {
+    "username": "James@44i.com",
+    "displayName": "James",
+    "email": "James@44i.com",
+    "firstName": "James",
+    "lastName": "",
+    "role": "superadmin",
+    "createdAt": "2026-06-24",
+    "mustChangePassword": true,
+    "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"
+  },
+  {
+    "username": "Jim@44interactive.com",
+    "displayName": "Jim",
+    "email": "Jim@44interactive.com",
+    "firstName": "Jim",
+    "lastName": "",
+    "role": "superadmin",
+    "createdAt": "2026-06-24",
+    "mustChangePassword": true,
+    "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"
+  },
+  {
+    "username": "Jim@44iDigital.com",
+    "displayName": "Jim",
+    "email": "Jim@44iDigital.com",
+    "firstName": "Jim",
+    "lastName": "",
+    "role": "superadmin",
+    "createdAt": "2026-06-24",
+    "mustChangePassword": true,
+    "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"
+  }
+]

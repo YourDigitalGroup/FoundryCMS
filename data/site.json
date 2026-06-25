@@ -1,0 +1,22 @@
+{
+  "name": "Site Name",
+  "tagline": "",
+  "logo": "",
+  "favicon": "",
+  "phone": "",
+  "email": "",
+  "website": "",
+  "notifyEmail": "",
+  "address": { "street": "", "city": "", "state": "", "zip": "", "country": "US" },
+  "hours": { "weekday": "", "saturday": "", "sunday": "" },
+  "social": { "facebook": "", "twitter": "", "linkedin": "", "instagram": "", "youtube": "" },
+  "colors": { "primary": "#2D4A2D", "accent": "#4A7A4A", "green": "#5C8E5C" },
+  "nav": [],
+  "apiUrl": "",
+  "apiToken": "",
+  "mailgun": {
+    "domain": "mg.example.com",
+    "from": "postmaster@mg.example.com"
+  },
+  "github": { "repo": "YOUR_ORG/YOUR_REPO", "branch": "main" }
+}
