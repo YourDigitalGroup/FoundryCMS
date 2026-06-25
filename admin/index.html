@@ -1920,7 +1920,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.4.0';
+const CMS_VERSION='1.4.1';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -6511,7 +6511,7 @@ async function viewRevision(revId){
 // Settings live server-side in data/adaptify.json. The public adaptify.js reads
 // that file on every page, so toggling/recoloring here updates the widget
 // site-wide with no per-page edit. "Install on all pages" is a one-time DOM
-// sweep that drops the <script> tag into each page and seeds the engine file.
+// sweep that drops the widget loader tag into each page and seeds the engine file.
 const ADA_DEFAULTS={enabled:true,position:'bottom-right',color:'#C8531E',iconColor:'#FFFFFF'};
 
 // <input type=color> needs a 6-digit #rrggbb; coerce common forms (#abc, abc…).
@@ -6579,7 +6579,7 @@ async function saveAdaptify(){
 }
 
 // One-time setup: seed the config, make sure the engine file exists, then drop
-// <script src="/adaptify.js" defer></script> into every page that lacks it.
+// the widget loader tag (src="/adaptify.js" defer) into every page that lacks it.
 async function adaptifyInstallAll(){
   if(!canCallApi()){ toast('Sign in again to install','err'); return; }
   const pages=getPageList();
