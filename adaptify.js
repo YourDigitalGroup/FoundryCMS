@@ -142,7 +142,12 @@
       + '  <button type="button" class="adaptify-reset" data-act="reset">Reset all settings</button>'
       + '  <div class="adaptify-credit">Accessibility by ADAptify</div>'
       + '</div>';
-    document.body.appendChild(root);
+    // Append to <html> (a sibling of <body>), NOT into <body>. Every visitor
+    // effect is scoped to `body`, so a sibling widget can never be recolored,
+    // filtered, zoomed, or resized by the page-level rules — true isolation
+    // (a descendant cannot escape an ancestor's filter, so this placement is
+    // the only reliable way to keep the panel readable under contrast/invert).
+    document.documentElement.appendChild(root);
 
     var btn = root.querySelector('.adaptify-launch');
     var pnl = root.querySelector('.adaptify-panel');
@@ -235,8 +240,8 @@
 
   function dynCss(p) {
     var css = '';
-    if (p.fontSize) css += 'html{font-size:' + (100 + p.fontSize * 10) + '%!important}';
-    if (p.scaling)  css += 'html{zoom:' + ((100 + p.scaling * 10) / 100) + '}';
+    if (p.fontSize) css += 'body{font-size:' + (100 + p.fontSize * 10) + '%!important}';
+    if (p.scaling)  css += 'body{zoom:' + ((100 + p.scaling * 10) / 100) + '}';
     var sel = 'body :is(p,li,a,h1,h2,h3,h4,h5,h6,td,th,blockquote,dd,dt,figcaption)';
     var parts = [];
     if (p.lineHeight)    parts.push('line-height:' + (1.4 + p.lineHeight * 0.25) + '!important');
@@ -251,7 +256,7 @@
     if (p.invert)        f.push('invert(1) hue-rotate(180deg)');
     if (p.sat === 'high') f.push('saturate(1.9)');
     if (p.sat === 'low')  f.push('saturate(.45)');
-    if (f.length) css += 'html{filter:' + f.join(' ') + '}';
+    if (f.length) css += 'body{filter:' + f.join(' ') + '}';
     return css;
   }
 
@@ -263,7 +268,7 @@
 
   // Text magnifier — floating box shows the hovered element's text, enlarged.
   function magnifierOn() {
-    var box = document.createElement('div'); box.id = 'adaptify-mag'; document.body.appendChild(box);
+    var box = document.createElement('div'); box.id = 'adaptify-mag'; document.documentElement.appendChild(box);
     function move(e) {
       var t = e.target;
       if (!t || (t.closest && t.closest('#adaptify-root'))) { box.style.display = 'none'; return; }
@@ -281,7 +286,7 @@
 
   // Reading guide — a colored line that tracks the cursor's vertical position.
   function guideOn() {
-    var line = document.createElement('div'); line.id = 'adaptify-guide'; document.body.appendChild(line);
+    var line = document.createElement('div'); line.id = 'adaptify-guide'; document.documentElement.appendChild(line);
     function move(e) { line.style.top = e.clientY + 'px'; }
     document.addEventListener('mousemove', move, true);
     return function () { document.removeEventListener('mousemove', move, true); line.remove(); };
@@ -290,7 +295,9 @@
   // Reading mask — dim everything except a horizontal band around the cursor.
   function maskOn() {
     var top = document.createElement('div'), bot = document.createElement('div');
-    top.className = bot.className = 'adaptify-mask'; document.body.appendChild(top); document.body.appendChild(bot);
+    top.className = bot.className = 'adaptify-mask';
+    top.style.top = '0'; bot.style.bottom = '0'; // anchor each band explicitly
+    document.documentElement.appendChild(top); document.documentElement.appendChild(bot);
     function move(e) {
       var band = 80;
       top.style.height = Math.max(0, e.clientY - band / 2) + 'px';
@@ -395,7 +402,6 @@
       // reading aids + magnifier
       + '#adaptify-guide{position:fixed;left:0;width:100%;height:0;border-top:3px solid ' + esc(cfg.color) + ';box-shadow:0 0 0 9999px rgba(0,0,0,.0);z-index:2147483500;pointer-events:none;opacity:.85}'
       + '.adaptify-mask{position:fixed;left:0;width:100%;background:rgba(0,0,0,.62);z-index:2147483500;pointer-events:none}'
-      + '.adaptify-mask:first-of-type{top:0}.adaptify-mask:last-of-type{bottom:0}'
       + '#adaptify-mag{position:fixed;z-index:2147483600;max-width:340px;background:#111;color:#fff;font-size:22px;line-height:1.4;font-weight:600;padding:10px 14px;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.4);pointer-events:none;display:none}'
       + '</style>';
   }
