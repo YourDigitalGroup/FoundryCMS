@@ -421,6 +421,8 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-device-btn.on{background:var(--ember-soft);color:var(--ember);border-color:var(--ember)}
 .ve-canvas{flex:1;overflow:auto;background:#DDDAD4;padding:20px;display:flex;justify-content:center;align-items:flex-start}
 .ve-frame-wrap{background:#FFF;border-radius:8px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.14);transition:width .2s,height .2s}
+/* Fullscreen: the canvas fills the monitor and centers the 16:9 preview. */
+.ve-canvas:fullscreen{align-items:center;padding:24px;background:#23201d}
 .ve-page-list{width:196px;border-right:1px solid var(--border);background:var(--surface);overflow-y:auto;flex-shrink:0;display:flex;flex-direction:column}
 .ve-page-item{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:13px;color:var(--text-2);cursor:pointer;transition:all .1s;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ve-page-item:hover{background:var(--surface-3);color:var(--text)}
@@ -1187,6 +1189,9 @@ textarea.fb-input{resize:vertical}
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
             </button>
           </div>
+          <button class="fd-btn-secondary" id="vd-fullscreen" onclick="veToggleFullscreen()" title="Fill the screen (Esc to exit)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
+          </button>
           <button class="fd-btn-secondary" id="ve-undo-btn" onclick="veUndo()" disabled title="Undo (Ctrl+Z)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/></svg>
           </button>
@@ -1549,6 +1554,19 @@ textarea.fb-input{resize:vertical}
                 <button class="fd-btn-primary" onclick="gaSaveCreds()">Save Credentials</button>
                 <div id="ga-cred-status" style="font-size:12px;margin-top:10px;color:var(--muted)">Checking…</div>
               </div>
+            </div>
+            <div class="ga-setup-card" style="margin-top:16px">
+              <h3>3 · Custom code (header &amp; body)</h3>
+              <p>Paste any extra tracking or script snippets beyond GA4/GTM/Ads. <strong>Header</strong> code is injected into <code>&lt;head&gt;</code>; <strong>body</strong> code just before the closing <code>&lt;/body&gt;</code>. They're grouped by purpose (to line up with a consent banner) but all load today. After saving, click <strong>Apply Tracking to All Pages</strong> (card 1) to publish.</p>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div class="fg"><label>Functional — header</label><textarea id="cc-func-head" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="essential scripts (fonts, etc.)"></textarea></div>
+                <div class="fg"><label>Functional — body</label><textarea id="cc-func-body" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%"></textarea></div>
+                <div class="fg"><label>Analytics — header</label><textarea id="cc-an-head" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="analytics tags"></textarea></div>
+                <div class="fg"><label>Analytics — body</label><textarea id="cc-an-body" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%"></textarea></div>
+                <div class="fg"><label>Marketing — header</label><textarea id="cc-mkt-head" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="ad / remarketing pixels"></textarea></div>
+                <div class="fg"><label>Marketing — body</label><textarea id="cc-mkt-body" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%"></textarea></div>
+              </div>
+              <button class="fd-btn-primary" onclick="gaSaveCustomCode()" style="margin-top:6px">Save custom code</button>
             </div>
           </div>
       </div>
@@ -1937,7 +1955,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.5.2';
+const CMS_VERSION='1.6.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2267,7 +2285,9 @@ async function initApp(){
     if(d&&d.user){
       const fresh=d.user;
       localStorage.setItem('cd_user',JSON.stringify({
+        id:fresh.id,
         username:fresh.username,
+        email:fresh.email||'',
         role:fresh.role||'editor',
         permissions:fresh.permissions||{},
         architect:!!fresh.architect,
@@ -3864,6 +3884,10 @@ function initAnalytics(){
   const a=gaCfg();
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v||'';};
   set('ga-id-ga4',a.ga4); set('ga-id-gtm',a.gtm); set('ga-id-ads',a.ads); set('ga-prop-id',a.propertyId);
+  const c=a.custom||{};
+  set('cc-func-head',c.funcHead); set('cc-func-body',c.funcBody);
+  set('cc-an-head',c.anHead);     set('cc-an-body',c.anBody);
+  set('cc-mkt-head',c.mktHead);   set('cc-mkt-body',c.mktBody);
   // Default report month = previous month
   const mEl=document.getElementById('ga-rep-month');
   if(mEl&&!mEl.value){ const d=new Date(); d.setMonth(d.getMonth()-1); mEl.value=d.toISOString().slice(0,7); }
@@ -3921,6 +3945,18 @@ async function gaSaveIds(){
   catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 
+async function gaSaveCustomCode(){
+  const a=gaCfg();
+  const v=id=>document.getElementById(id)?.value||'';
+  a.custom={
+    funcHead:v('cc-func-head'), funcBody:v('cc-func-body'),
+    anHead:v('cc-an-head'),     anBody:v('cc-an-body'),
+    mktHead:v('cc-mkt-head'),   mktBody:v('cc-mkt-body')
+  };
+  try{ await gaPersistSite(); toast('Custom code saved — click “Apply Tracking to All Pages” to publish','ok'); }
+  catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+
 async function gaSaveCreds(){
   const raw=document.getElementById('ga-cred-json')?.value.trim();
   const prop=document.getElementById('ga-prop-id')?.value.trim();
@@ -3940,6 +3976,23 @@ const GA_HEAD_START='<!-- foundry-analytics:start -->';
 const GA_HEAD_END  ='<!-- foundry-analytics:end -->';
 const GA_BODY_START='<!-- foundry-analytics-body:start -->';
 const GA_BODY_END  ='<!-- foundry-analytics-body:end -->';
+// Custom code injection points (Functional/Analytics/Marketing × header/body),
+// kept in their own managed blocks so they're independent of the GA snippet.
+const CC_HEAD_START='<!-- foundry-custom-head:start -->';
+const CC_HEAD_END  ='<!-- foundry-custom-head:end -->';
+const CC_BODY_START='<!-- foundry-custom-body:start -->';
+const CC_BODY_END  ='<!-- foundry-custom-body:end -->';
+const CC_KEYS=[['funcHead','funcBody','Functional'],['anHead','anBody','Analytics'],['mktHead','mktBody','Marketing']];
+function gaBuildCustomHead(){
+  const c=gaCfg().custom||{}; const parts=[];
+  CC_KEYS.forEach(([h,,label])=>{ if((c[h]||'').trim()) parts.push('<!-- '+label+' -->\n'+c[h]); });
+  return parts.length ? CC_HEAD_START+'\n'+parts.join('\n')+'\n'+CC_HEAD_END : '';
+}
+function gaBuildCustomBody(){
+  const c=gaCfg().custom||{}; const parts=[];
+  CC_KEYS.forEach(([,b,label])=>{ if((c[b]||'').trim()) parts.push('<!-- '+label+' -->\n'+c[b]); });
+  return parts.length ? CC_BODY_START+'\n'+parts.join('\n')+'\n'+CC_BODY_END : '';
+}
 
 function gaBuildHeadSnippet(){
   const a=gaCfg();
@@ -3967,19 +4020,32 @@ function gaBuildBodySnippet(){
 function gaEscRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
 
 function gaApplySnippets(html){
-  const headBlockRe=new RegExp(gaEscRe(GA_HEAD_START)+'[\\s\\S]*?'+gaEscRe(GA_HEAD_END),'g');
-  const bodyBlockRe=new RegExp(gaEscRe(GA_BODY_START)+'[\\s\\S]*?'+gaEscRe(GA_BODY_END),'g');
-  const head=gaBuildHeadSnippet(), body=gaBuildBodySnippet();
-  // Strip existing managed blocks (and surrounding blank line)
-  html=html.replace(headBlockRe,'').replace(bodyBlockRe,'');
+  // Strip a managed block AND one adjacent newline on each side, so re-applying
+  // is byte-for-byte idempotent (no blank-line creep on repeated "Apply").
+  const mk=(s,e)=>new RegExp('\\n?'+gaEscRe(s)+'[\\s\\S]*?'+gaEscRe(e)+'\\n?','g');
+  // Strip ALL managed blocks first so re-applying is idempotent.
+  html=html.replace(mk(GA_HEAD_START,GA_HEAD_END),'')
+           .replace(mk(GA_BODY_START,GA_BODY_END),'')
+           .replace(mk(CC_HEAD_START,CC_HEAD_END),'')
+           .replace(mk(CC_BODY_START,CC_BODY_END),'');
   const a=gaCfg();
-  const hasAny=a.ga4||a.gtm||a.ads;
-  if(hasAny){
-    if(/<head[^>]*>/i.test(html)) html=html.replace(/<head([^>]*)>/i,'<head$1>\n'+head);
-    else html=head+'\n'+html;
-    if(body){
-      if(/<body[^>]*>/i.test(html)) html=html.replace(/<body([^>]*)>/i,'<body$1>\n'+body);
-    }
+  const gaHead=(a.ga4||a.gtm||a.ads)?gaBuildHeadSnippet():'';
+  const gaBody=(a.gtm)?gaBuildBodySnippet():'';
+  const ccHead=gaBuildCustomHead();
+  const ccBody=gaBuildCustomBody();
+  // HEAD: GA snippet then custom code, immediately after <head>.
+  const headInsert=[gaHead,ccHead].filter(Boolean).join('\n');
+  if(headInsert){
+    if(/<head[^>]*>/i.test(html)) html=html.replace(/<head([^>]*)>/i,'<head$1>\n'+headInsert);
+    else html=headInsert+'\n'+html;
+  }
+  // BODY: GTM noscript must sit right after <body>…
+  if(gaBody && /<body[^>]*>/i.test(html)) html=html.replace(/<body([^>]*)>/i,'<body$1>\n'+gaBody);
+  // …custom body code goes just before </body> (end of document).
+  if(ccBody){
+    if(/<\/body>/i.test(html)) html=html.replace(/<\/body>/i,ccBody+'\n</body>');
+    else if(/<body[^>]*>/i.test(html)) html=html.replace(/<body([^>]*)>/i,'<body$1>\n'+ccBody);
+    else html=html+'\n'+ccBody;
   }
   return html;
 }
@@ -3987,16 +4053,18 @@ function gaApplySnippets(html){
 async function gaInjectAll(){ return gaWalkPages(true); }
 async function gaRemoveAll(){
   const a=gaCfg();
-  const ids={ga4:a.ga4,gtm:a.gtm,ads:a.ads};
-  a.ga4='';a.gtm='';a.ads='';
+  const saved={ga4:a.ga4,gtm:a.gtm,ads:a.ads,custom:a.custom};
+  a.ga4='';a.gtm='';a.ads='';a.custom={};   // blank everything so the walk strips all managed blocks
   const r=await gaWalkPages(false);
-  a.ga4=ids.ga4;a.gtm=ids.gtm;a.ads=ids.ads; // restore config — only files were stripped
+  a.ga4=saved.ga4;a.gtm=saved.gtm;a.ads=saved.ads;a.custom=saved.custom; // restore config — only files were stripped
   return r;
 }
+// True when any custom header/body field has content.
+function gaHasCustom(){ const c=gaCfg().custom||{}; return Object.keys(c).some(k=>(c[k]||'').trim()); }
 
 async function gaWalkPages(inject){
   const a=gaCfg();
-  if(inject && !a.ga4 && !a.gtm && !a.ads){ toast('Save at least one tracking ID first','err'); return; }
+  if(inject && !a.ga4 && !a.gtm && !a.ads && !gaHasCustom()){ toast('Save a tracking ID or custom code first','err'); return; }
   const{url,token}=getApiCfg();
   if(!url||!token){ toast('Configure Server API in Settings first','err'); return; }
   const ids=Object.keys(_pages||{});
@@ -5682,23 +5750,32 @@ function veSetDevice(mode,btn){
   _veDevice=mode;
   veApplyDeviceSize();
 }
-// Desktop preview is ALWAYS a true 1440×810 (16:9) viewport, scaled to fit the
-// canvas — so even on a laptop the page renders its desktop layout, not a
-// squished tablet width. Tablet/mobile keep their device widths and fill height.
+// Desktop preview always renders a 16:9 viewport and grows to FILL the canvas:
+//  • the 16:9 box is the largest that fits the available width AND height;
+//  • the page renders at a real desktop width — at least 1440 (so a laptop shows
+//    the desktop layout, not a squished tablet width), and at the box's actual
+//    width on a larger monitor (a true big-screen preview). We only ever scale
+//    DOWN, never up, so it stays crisp.
+// Tablet/mobile keep their device widths and fill height.
 function veApplyDeviceSize(){
   const wrap=document.getElementById('ve-frame-wrap');
   const frame=document.getElementById('visual-iframe');
   const canvas=document.querySelector('.ve-canvas');
   if(!wrap||!frame) return;
   if(_veDevice==='desktop'){
-    const DW=1440, DH=810; // 16:9
-    const avail=Math.max(320,(canvas?canvas.clientWidth:wrap.clientWidth)-40);
-    const scale=Math.min(1, avail/DW);
-    frame.style.width=DW+'px'; frame.style.height=DH+'px';
+    const pad=canvas&&canvas.matches(':fullscreen')?48:32;
+    const availW=Math.max(320,(canvas?canvas.clientWidth:wrap.clientWidth)-pad);
+    const availH=Math.max(240,(canvas?canvas.clientHeight:600)-pad);
+    // largest 16:9 box that fits the available canvas (width- or height-bound)
+    let boxW=availW, boxH=Math.round(boxW*9/16);
+    if(boxH>availH){ boxH=availH; boxW=Math.round(boxH*16/9); }
+    // render at >=1440 logical width; scale the box to it (downscale only)
+    const logicalW=Math.max(1440,boxW), logicalH=Math.round(logicalW*9/16);
+    const scale=boxW/logicalW;
+    frame.style.width=logicalW+'px'; frame.style.height=logicalH+'px';
     frame.style.transformOrigin='top left';
     frame.style.transform='scale('+scale+')';
-    wrap.style.width=Math.round(DW*scale)+'px';
-    wrap.style.height=Math.round(DH*scale)+'px';
+    wrap.style.width=boxW+'px'; wrap.style.height=boxH+'px';
   } else {
     const W={tablet:768,mobile:390}[_veDevice]||768;
     const H=(canvas?canvas.clientHeight:0)-40;
@@ -5709,7 +5786,16 @@ function veApplyDeviceSize(){
     wrap.style.height=(H>200?H:800)+'px';
   }
 }
-// Re-fit the scaled desktop preview when the window resizes.
+// Fill-screen toggle: put the canvas into native fullscreen so the 16:9 preview
+// fills the whole monitor. Esc exits (native). Refit on enter/exit.
+function veToggleFullscreen(){
+  const canvas=document.getElementById('ve-canvas');
+  if(!canvas) return;
+  if(document.fullscreenElement){ document.exitFullscreen&&document.exitFullscreen(); }
+  else if(canvas.requestFullscreen){ canvas.requestFullscreen().catch(()=>toast('Fullscreen was blocked by the browser','err')); }
+}
+document.addEventListener('fullscreenchange', ()=>{ setTimeout(veApplyDeviceSize,60); });
+// Re-fit the desktop preview when the window resizes.
 window.addEventListener('resize', ()=>{ if(_veDevice==='desktop') veApplyDeviceSize(); });
 
 // ── SAVE PAGE ───────────────────────────────────────────────────
@@ -7655,7 +7741,7 @@ function doLogout(){
 function enterAppAs(user){
   localStorage.setItem('cd_session','1');
   localStorage.setItem('cd_session_ts',String(Date.now()));
-  localStorage.setItem('cd_user',JSON.stringify({username:user.username,role:user.role||'editor',permissions:user.permissions||{},architect:!!user.architect,firstName:user.firstName||'',lastName:user.lastName||'',displayName:user.displayName||''}));
+  localStorage.setItem('cd_user',JSON.stringify({id:user.id,username:user.username,email:user.email||'',role:user.role||'editor',permissions:user.permissions||{},architect:!!user.architect,firstName:user.firstName||'',lastName:user.lastName||'',displayName:user.displayName||''}));
   if(window.fxEnterShell){ window.fxEnterShell(initApp); }
   else{
     const ls=document.getElementById('login-screen'); if(ls) ls.style.display='none';
