@@ -1562,17 +1562,9 @@ textarea.fb-input{resize:vertical}
           <div class="fg"><label>API Key</label><input type="password" id="s-claude" placeholder="sk-ant-…"></div>
           <button class="fd-btn-primary" onclick="saveClaudeKey()">Save</button>
         </div>
-        <div class="si-sec"><h2>Auto-Update</h2><div class="desc">This site pulls CMS updates from the Fourge repository. Checked about once a day, after login.</div>
-          <div class="fg"><label>CMS Repo</label><input type="text" id="s-tpl-repo" placeholder="scottecklund/foundrycms"></div>
-          <div class="fg"><label>Update Mode</label>
-            <select id="s-update-mode" style="width:100%">
-              <option value="notify">Notify — check daily, ask before installing</option>
-              <option value="auto">Automatic — install updates at login</option>
-              <option value="off">Off — only when I click “Check Now”</option>
-            </select>
-            <div class="desc" style="margin-top:4px">Updates the CMS engine files (<code>index.html</code>, <code>db.php</code>, page renderers). <code>api.php</code> (this site's API token + Mailgun keys) is never touched — if a release changes it, update it by hand. Private repos need the GitHub PAT set above.</div>
-          </div>
-          <div style="display:flex;gap:8px"><button class="fd-btn-primary" onclick="saveTplRepo()">Save</button><button class="fd-btn-secondary" onclick="checkForUpdates()">Check Now</button></div>
+        <div class="si-sec"><h2>Updates</h2><div class="desc">Updates are <strong>automatic</strong>. This site installs the latest Fourge engine at login, so it's always current — there's no manual step and no way to run an old build. <code>api.php</code> (this site's API token + Mailgun keys) is never touched automatically; if a release changes it, deploy it by hand.</div>
+          <div class="fg architect-only"><label>CMS Repo (Architect)</label><input type="text" id="s-tpl-repo" placeholder="scottecklund/foundrycms"><div class="desc" style="margin-top:4px">The engine source this site auto-updates from. Leave blank to use the default. Private repos need the GitHub PAT set above.</div></div>
+          <button class="fd-btn-primary architect-only" onclick="saveTplRepo()">Save Repo</button>
         </div>
         <!-- Login Screen Labels removed — the login panel now shows the Site Name
              (Client) and the footer "Site by …" credit (Site By), both pulled from
@@ -1920,7 +1912,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.4.0';
+const CMS_VERSION='1.5.1';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2265,10 +2257,9 @@ async function initApp(){
 }
 
 // Runs at the tail of post-login init while the loader is still up.
-// Respects the update mode: 'off' skips entirely, 'notify' checks daily and
-// asks before installing, 'auto' checks daily and installs. The check is
-// throttled to ~once a day (see updateCheckDue); "Check Now" in Settings
-// bypasses both the throttle and the mode.
+// Updates are always automatic: on every login this checks the repo and, if a
+// newer version is published, installs it and reloads before entering the CMS —
+// so no site can run a stale build. A failed or offline check never blocks login.
 async function initUpdateGate(){
   // Ensure site-wide config is loaded before reading update settings,
   // so a fresh device/browser still sees the repo + mode from site.json.
@@ -2281,11 +2272,11 @@ async function initUpdateGate(){
   }
   const tpl=getTplRepo();
   if(!tpl) return;                 // no repo configured → nothing to check
-  const mode=getUpdateMode();
-  if(mode==='off') return;         // updates disabled (Check Now still works)
-  if(!updateCheckDue()) return;    // already checked within the daily window
+  // Always-auto: check on EVERY login (no daily throttle) so a freshly pushed
+  // fix reaches every site the next time anyone signs in. version.json is tiny
+  // and a failed check never blocks login (see _updateGateInner).
   window.__fxHold=true;            // keep the loader up until we resolve
-  try{ await _updateGateInner(mode); } finally { window.__fxHold=false; }
+  try{ await _updateGateInner('auto'); } finally { window.__fxHold=false; }
 }
 async function _updateGateInner(mode){
   const status=document.getElementById('fxl-status');
@@ -4225,7 +4216,6 @@ function loadSettings(){
   const mgKeyEl=document.getElementById('s-mg-key');if(mgKeyEl){mgKeyEl.value='';mgKeyEl.placeholder=(_secretStatus&&_secretStatus.mg_api_key)?'Key saved on server':'key…';}
   const clEl=document.getElementById('s-claude');if(clEl){clEl.value='';clEl.placeholder=(_secretStatus&&_secretStatus.claude_key)?'Key saved on server':'sk-ant-…';}
   const tplEl=document.getElementById('s-tpl-repo');if(tplEl)tplEl.value=getTplRepo();
-  const umEl=document.getElementById('s-update-mode');if(umEl)umEl.value=getUpdateMode();
   const whoami=document.getElementById('s-pw-whoami');if(whoami)whoami.textContent=getSessionUser().username||'';
   const rcSite=document.getElementById('s-rc-site');if(rcSite)rcSite.value=(_site&&_site.recaptcha&&_site.recaptcha.siteKey)||'';
   const rcSec=document.getElementById('s-rc-secret');if(rcSec){rcSec.value='';rcSec.placeholder=(_site&&_site.recaptcha&&_site.recaptcha.hasSecret)?'Secret saved on server':'6Lc… (kept on server)';}
@@ -4454,14 +4444,11 @@ function getUpdateCfg(){return (_site&&_site.update)||{};}
 // out of the box. A site can override this in Settings → Auto-Update.
 const DEFAULT_TPL_REPO='scottecklund/foundrycms';
 function getTplRepo(){const u=getUpdateCfg();return (u.repo||DEFAULT_TPL_REPO);}
-// Modes: 'off' (only "Check Now"), 'notify' (daily check + ask before installing),
-// 'auto' (daily check + install at login). Legacy 'manual' maps to 'notify'.
-function getUpdateMode(){
-  const u=getUpdateCfg();
-  let m=(u.mode||'notify');
-  if(m==='manual') m='notify';
-  return (m==='off'||m==='auto'||m==='notify')?m:'notify';
-}
+// Updates are ALWAYS automatic: every site installs the latest engine at login
+// so no one can run a stale build (critical for pushing bug fixes). The old
+// off/notify/auto setting is intentionally ignored — this always returns 'auto'.
+// (For a major release that needs a heads-up, re-introduce a gate before shipping.)
+function getUpdateMode(){ return 'auto'; }
 
 // Real semantic-version compare. Returns 1 if a>b, -1 if a<b, 0 equal.
 function semverCmp(a,b){
@@ -6511,7 +6498,7 @@ async function viewRevision(revId){
 // Settings live server-side in data/adaptify.json. The public adaptify.js reads
 // that file on every page, so toggling/recoloring here updates the widget
 // site-wide with no per-page edit. "Install on all pages" is a one-time DOM
-// sweep that drops the <script> tag into each page and seeds the engine file.
+// sweep that drops the widget loader tag into each page and seeds the engine file.
 const ADA_DEFAULTS={enabled:true,position:'bottom-right',color:'#C8531E',iconColor:'#FFFFFF'};
 
 // <input type=color> needs a 6-digit #rrggbb; coerce common forms (#abc, abc…).
@@ -6579,7 +6566,7 @@ async function saveAdaptify(){
 }
 
 // One-time setup: seed the config, make sure the engine file exists, then drop
-// <script src="/adaptify.js" defer></script> into every page that lacks it.
+// the widget loader tag (src="/adaptify.js" defer) into every page that lacks it.
 async function adaptifyInstallAll(){
   if(!canCallApi()){ toast('Sign in again to install','err'); return; }
   const pages=getPageList();
@@ -6898,15 +6885,15 @@ async function saveMailgunCfg(){
 }
 async function saveTplRepo(){
   const v=document.getElementById('s-tpl-repo')?.value.trim()||'';
-  const m=document.getElementById('s-update-mode')?.value||'notify';
   if(!v){ toast('Enter repo path','err'); return; }
-  // Persist site-wide in data/site.json so all devices agree
+  // Persist site-wide in data/site.json so all devices agree. Mode is always
+  // 'auto' now (see getUpdateMode) — stored for clarity/back-compat.
   if(!_site.update) _site.update={};
-  _site.update.repo=v; _site.update.mode=m;
+  _site.update.repo=v; _site.update.mode='auto';
   if(!canCallApi()){ toast('Sign in again to save','err'); return; }
   try{
     await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)});
-    toast('Update settings saved site-wide','ok');
+    toast('CMS repo saved site-wide','ok');
   }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 async function pushUsersSites(){toast('Push to sites coming soon','ok');}

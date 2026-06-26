@@ -31,6 +31,12 @@ return [
     // Protects your bill if a session is shared or a client mashes the button.
     'ai_rate_per_hour' => 40,
 
+    // ── Security ──
+    // Require HTTPS for sign-in and credential/secret changes (default true).
+    // Localhost/dev is always exempt. Set to false ONLY for a deliberate
+    // plain-HTTP setup — sending passwords over HTTP exposes them in transit.
+    // 'require_https'    => true,
+
     // ── SQLite backend (accounts + sessions + encrypted secrets) ──
     // REQUIRED. Master key used to encrypt stored secrets (GitHub PAT, Claude
     // key, etc.) with libsodium. Use a long random value and NEVER change it

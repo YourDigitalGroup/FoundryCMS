@@ -27,6 +27,11 @@ define('MG_API_KEY',   (string)($__secret['mg_api_key']   ?? ''));
 define('MG_FROM',      (string)($__secret['mg_from']      ?? 'Fourge CMS <postmaster@mg.example.com>'));
 define('MG_NOTIFY_TO', (string)($__secret['mg_notify_to'] ?? ''));
 
+// Require a secure (HTTPS) connection for sign-in and credential/secret changes.
+// Defaults ON. Localhost/dev is always exempt. To allow plain HTTP in an unusual
+// setup, add  'require_https' => false  to your config.secret.php array.
+define('REQUIRE_HTTPS', array_key_exists('require_https', $__secret) ? (bool)$__secret['require_https'] : true);
+
 // Folders to always exclude from scan (relative paths from public_html root)
 // Add any site-specific paths you want hidden from import
 define('SKIP_PATHS', [
@@ -47,6 +52,29 @@ define('SKIP_DIRS', [
 // IMPORTANT: must be specific enough to never match a regular HTML file.
 // Only the generated makeShell() output contains this exact string.
 define('CMS_PATTERN', 'src="../block-renderer.jsx"');
+
+// ── HTTPS HELPERS ──────────────────────────────────────────────────────────
+// True when the request reached us over TLS. Also handles reverse proxies /
+// load balancers that terminate TLS at the edge and forward plain HTTP to PHP
+// (common on shared hosts), where $_SERVER['HTTPS'] is unset but an
+// X-Forwarded-Proto / X-Forwarded-SSL header marks the visitor's leg as HTTPS.
+function fourgeIsHttps() {
+    if (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off') return true;
+    if ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443) return true;
+    $xfp = strtolower(trim(explode(',', (string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+    if ($xfp === 'https') return true;
+    if (strtolower((string)($_SERVER['HTTP_X_FORWARDED_SSL'] ?? '')) === 'on') return true;
+    return false;
+}
+// True for local development hosts, which are exempt from the HTTPS requirement
+// so you can work over http://localhost without a certificate.
+function fourgeIsLocalRequest() {
+    $host = strtolower(preg_replace('/:\d+$/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
+    if (in_array($host, ['localhost', '127.0.0.1', '::1', '[::1]'], true)) return true;
+    if (preg_match('/(\.local|\.localhost|\.test)$/', $host)) return true;
+    $ra = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+    return ($ra === '127.0.0.1' || $ra === '::1');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -99,6 +127,19 @@ if (!in_array($action, $PUBLIC_ACTIONS, true)) {
         ob_end_clean(); http_response_code(401);
         echo json_encode(['error' => 'Unauthorized. Provide a valid Server API token or sign in.']); exit;
     }
+}
+
+// ── REQUIRE HTTPS FOR CREDENTIALS ───────────────────────────────────────────
+// Passwords are hashed at rest, but a login or secret sent over plain HTTP is
+// exposed in transit. The root .htaccess redirects HTTP→HTTPS site-wide; this
+// is the server-side backstop for hosts that don't honor .htaccess (e.g. nginx)
+// or have mod_rewrite disabled. Localhost/dev is exempt; set 'require_https' =>
+// false in config.secret.php only for a deliberate plain-HTTP setup.
+$HTTPS_REQUIRED_ACTIONS = ['login', 'change_password', 'set_secret', 'save_user', 'ga_save_credentials'];
+if (REQUIRE_HTTPS && in_array($action, $HTTPS_REQUIRED_ACTIONS, true) && !fourgeIsHttps() && !fourgeIsLocalRequest()) {
+    ob_end_clean(); http_response_code(403);
+    echo json_encode(['error' => 'For your security, signing in and changing credentials require a secure (HTTPS) connection. Please load this site over https:// and try again.']);
+    exit;
 }
 
 try {
