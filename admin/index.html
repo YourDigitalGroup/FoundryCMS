@@ -1193,6 +1193,9 @@ textarea.fb-input{resize:vertical}
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> Code
             </button>
           </div>
+          <!-- This spacer + the one before the toggle center the Visual/Code
+               toggle; everything below stays right-aligned. -->
+          <div class="tb-spacer"></div>
           <!-- Device toggles -->
           <div id="ve-device-group" style="display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:7px;border:1px solid var(--border)">
             <button class="ve-device-btn on" id="vd-desktop" onclick="veSetDevice('desktop',this)" title="Desktop">
@@ -1461,6 +1464,7 @@ textarea.fb-input{resize:vertical}
         <div class="ta" id="seo-ta"></div>
         <div class="tab-row" id="seo-tabs"></div>
         <div id="seo-body"></div>
+        <div id="seo-global"></div>
       </div>
 
       <!-- ══════════════════════════════════════════════════════
@@ -1983,7 +1987,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.7.0';
+const CMS_VERSION='1.8.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -3824,41 +3828,247 @@ function pickMedia(blockId,fieldKey){const grid=document.getElementById('media-p
 function chooseMedia(blockId,fieldKey,url){const el=document.getElementById('f-'+blockId+'-'+fieldKey);if(el)el.value=url;updateField(blockId,fieldKey,url);closeM('m-media-pick');}
 
 // ── SEO ───────────────────────────────────────
+// ── SEO ────────────────────────────────────────────────────────────────────
+// Per-page SEO lives in _seo[pid]; site-wide settings + schema in _seo.__site.
+function seoGlobal(){ if(!_seo.__site) _seo.__site={separator:'|',defaultOg:'',orgType:'LocalBusiness',includeOrg:true,robotsTxt:''}; return _seo.__site; }
+
 async function initSEO(){
-  try{const{content,sha}=await ghRead(F_SEO);_seo=JSON.parse(content);}catch{_seo={};}
-  if(!Object.keys(_pages).length)await loadPages();
+  // Load seo.json server-first (works without GitHub), then GitHub, then empty.
+  try{ const d=await apiCall('read_file',{path:'data/seo.json'}); _seo=JSON.parse(d.content||'{}'); }
+  catch{ try{ const{content}=await ghRead(F_SEO); _seo=JSON.parse(content); }catch{ _seo={}; } }
+  if(!_seo||typeof _seo!=='object'||Array.isArray(_seo)) _seo={};
+  if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList();
-  if(!pages.length){document.getElementById('seo-body').innerHTML='<div class="empty"><i class="fa-regular fa-file"></i><h3>No pages yet</h3><p>Create pages first.</p></div>';return;}
-  if(!_curSEOPage||!_pages[_curSEOPage])_curSEOPage=pages[0].id;
-  document.getElementById('seo-tabs').innerHTML=pages.map(p=>`<button class="tab-btn${p.id===_curSEOPage?' on':''}" onclick="selSEOPage('${p.id}',this)">${esc(p.label)}</button>`).join('');
-  document.getElementById('seo-ta').innerHTML=`<button class="btn btn-p btn-sm" onclick="genAllSEO()"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate All</button>`;
-  renderSEO(_curSEOPage);
+  const ta=document.getElementById('seo-ta');
+  if(ta) ta.innerHTML='<button class="fd-btn-primary" onclick="saveSEO()">Save</button>'
+    +'<button class="fd-btn-secondary" onclick="seoApplyAll()" title="Write SEO meta + schema into every page, regenerate sitemap.xml + robots.txt">Apply to all pages</button>'
+    +'<button class="fd-btn-secondary" onclick="genAllSEO()">Generate all with AI</button>';
+  if(!pages.length){ document.getElementById('seo-body').innerHTML='<div class="empty"><h3>No pages yet</h3><p>Upload your .html pages and they appear here.</p></div>'; }
+  else{
+    if(!_curSEOPage||!_pages[_curSEOPage]) _curSEOPage=pages[0].id;
+    document.getElementById('seo-tabs').innerHTML=pages.map(p=>`<button class="tab-btn${p.id===_curSEOPage?' on':''}" onclick="selSEOPage('${p.id}',this)">${esc(p.label)}</button>`).join('');
+    renderSEO(_curSEOPage);
+  }
+  renderSEOGlobal();
 }
-function selSEOPage(pid,el){_curSEOPage=pid;document.querySelectorAll('#seo-tabs .tab-btn').forEach(b=>b.classList.remove('on'));if(el)el.classList.add('on');renderSEO(pid);}
-function seoScore(s){let score=0;if(s.title)score+=35;if(s.description)score+=35;if(s.ogImage)score+=20;if(s.title&&s.title.length>30&&s.title.length<60)score+=10;return score;}
+function selSEOPage(pid,el){ _curSEOPage=pid; document.querySelectorAll('#seo-tabs .tab-btn').forEach(b=>b.classList.remove('on')); if(el)el.classList.add('on'); renderSEO(pid); }
+function updateSEO(pid,key,val){ if(!_seo[pid])_seo[pid]={}; _seo[pid][key]=val;
+  if(['title','description','focusKeyword','ogImage','canonical'].includes(key)){ seoRenderAnalysis(pid); seoRenderPreview(pid); }
+  const tc=document.getElementById('seo-title-count'); if(tc&&key==='title') tc.textContent=(val||'').length+'/60';
+  const dc=document.getElementById('seo-desc-count'); if(dc&&key==='description') dc.textContent=(val||'').length+'/160';
+}
+
+// Rank Math-style on-page checklist, computed from the fields + slug.
+function seoChecks(pid){
+  const s=_seo[pid]||{}; const kw=(s.focusKeyword||'').toLowerCase().trim();
+  const title=s.title||'', desc=s.description||'', slug=String(_pages[pid]?.path||_pages[pid]?.file||pid).toLowerCase();
+  const inc=(hay,n)=> !!n && hay.toLowerCase().includes(n);
+  return [
+    {ok:!!kw, label:'Focus keyword set'},
+    {ok:inc(title,kw), label:'Keyword in SEO title'},
+    {ok:inc(desc,kw), label:'Keyword in meta description'},
+    {ok:!!kw&&inc(slug,kw.replace(/\s+/g,'-')), label:'Keyword in URL'},
+    {ok:title.length>=50&&title.length<=60, label:'Title length 50–60'},
+    {ok:desc.length>=120&&desc.length<=160, label:'Description length 120–160'},
+    {ok:!!(s.ogImage||seoGlobal().defaultOg), label:'Social image set'},
+    {ok:!!title&&!!desc, label:'Title & description present'}
+  ];
+}
+function seoScore(pid){ const c=seoChecks(pid); return Math.round(c.filter(x=>x.ok).length/c.length*100); }
+function seoRenderAnalysis(pid){
+  const el=document.getElementById('seo-analysis'); if(!el) return;
+  const c=seoChecks(pid), sc=seoScore(pid), grade=sc>=80?'A':sc>=55?'B':'C';
+  el.innerHTML='<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div class="score-ring '+grade+'">'+grade+'</div><div style="font-size:12px;color:var(--muted)">SEO score '+sc+'/100</div></div>'
+    +c.map(x=>'<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;color:'+(x.ok?'var(--text)':'var(--muted)')+'"><span style="color:'+(x.ok?'#16a34a':'#e1483b')+';font-size:14px">'+(x.ok?'●':'○')+'</span> '+x.label+'</div>').join('');
+}
+function seoRenderPreview(pid){
+  const el=document.getElementById('seo-preview'); if(!el) return;
+  const s=_seo[pid]||{}, base=normSiteBase()||'https://example.com', path=String(_pages[pid]?.path||_pages[pid]?.file||'').replace(/^\/+/,'');
+  el.innerHTML='<div style="color:#1a0dab;font-size:15px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(decodeHtml(s.title||_pages[pid]?.title||'Page title'))+'</div>'
+    +'<div style="color:#006621;font-size:12px;margin:2px 0">'+esc(base+'/'+path)+'</div>'
+    +'<div style="color:#545454;font-size:12px;line-height:1.4">'+esc(s.description||'Add a meta description to control this snippet.')+'</div>';
+}
 function renderSEO(pid){
-  const s=_seo[pid]||{};const sc=seoScore(s);const grade=sc>=80?'A':sc>=55?'B':'C';
-  document.getElementById('seo-body').innerHTML=`<div style="display:flex;align-items:center;gap:16px;margin-bottom:18px"><div class="score-ring ${grade}">${grade}</div><div><div style="font-size:13px;font-weight:600">${esc(decodeHtml(_pages[pid]?.title||capitalize(pid)))}</div><div style="font-size:11px;color:var(--muted)">SEO score: ${sc}/100</div></div><button class="btn btn-p btn-sm" onclick="genSEO('${pid}')"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate</button></div>
-    <div class="fg"><label>SEO Title <span style="font-weight:400;color:var(--muted)">(50–60 chars)</span></label><input type="text" id="seo-title" value="${esc(decodeHtml(s.title||''))}" maxlength="60" oninput="updateSEO('${pid}','title',this.value)" placeholder="Page title for search results"><small>${decodeHtml(s.title||'').length}/60</small></div>
-    <div class="fg"><label>Meta Description <span style="font-weight:400;color:var(--muted)">(120–160 chars)</span></label><textarea id="seo-desc" rows="3" maxlength="160" oninput="updateSEO('${pid}','description',this.value)" placeholder="Describe this page for search engines">${esc(s.description||'')}</textarea><small>${(s.description||'').length}/160</small></div>
-    <div class="fg"><label>OG / Social Image URL</label><input type="text" id="seo-og" value="${esc(s.ogImage||'')}" oninput="updateSEO('${pid}','ogImage',this.value)" placeholder="https://…"></div>
-    <button class="btn btn-g btn-sm" onclick="saveSEO()"><i class="fa-solid fa-cloud-arrow-up"></i> Save SEO</button>`;
+  const s=_seo[pid]||{}, pg=_pages[pid]||{};
+  const opt=(list,cur)=>list.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('');
+  document.getElementById('seo-body').innerHTML=
+    '<div style="display:flex;gap:22px;flex-wrap:wrap"><div style="flex:1;min-width:330px">'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><div style="font-size:14px;font-weight:700">'+esc(decodeHtml(pg.title||capitalize(pid)))+'</div>'
+    +'<button class="fd-btn-secondary" style="font-size:12px" onclick="genSEO(\''+pid+'\')">✨ Generate with AI</button></div>'
+    +'<div class="fg"><label>Focus Keyword</label><input type="text" value="'+esc(s.focusKeyword||'')+'" oninput="updateSEO(\''+pid+'\',\'focusKeyword\',this.value)" placeholder="primary keyword for this page"></div>'
+    +'<div class="fg"><label>SEO Title <span style="font-weight:400;color:var(--muted)">(50–60)</span></label><input type="text" value="'+esc(decodeHtml(s.title||''))+'" maxlength="70" oninput="updateSEO(\''+pid+'\',\'title\',this.value)"><small id="seo-title-count">'+(s.title||'').length+'/60</small></div>'
+    +'<div class="fg"><label>Meta Description <span style="font-weight:400;color:var(--muted)">(120–160)</span></label><textarea rows="3" maxlength="200" oninput="updateSEO(\''+pid+'\',\'description\',this.value)">'+esc(s.description||'')+'</textarea><small id="seo-desc-count">'+(s.description||'').length+'/160</small></div>'
+    +'<div class="fr"><div class="fg"><label>Canonical URL <span style="font-weight:400;color:var(--muted)">(blank = auto)</span></label><input type="text" value="'+esc(s.canonical||'')+'" oninput="updateSEO(\''+pid+'\',\'canonical\',this.value)" placeholder="auto from Website URL + path"></div>'
+    +'<div class="fg"><label>Schema type</label><select onchange="updateSEO(\''+pid+'\',\'schemaType\',this.value)">'+opt(['WebPage','Article','Service','LocalBusiness','AboutPage','ContactPage','FAQPage','none'],s.schemaType||'WebPage')+'</select></div></div>'
+    +'<div class="fr"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.noindex?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'noindex\',this.checked)"> noindex (hide from search)</label>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.nofollow?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'nofollow\',this.checked)"> nofollow</label></div>'
+    +'<div class="si-sec"><h2 style="font-size:13px">Social (Open Graph / Twitter)</h2>'
+    +'<div class="fg"><label>Social title <span style="font-weight:400;color:var(--muted)">(blank = SEO title)</span></label><input type="text" value="'+esc(s.ogTitle||'')+'" oninput="updateSEO(\''+pid+'\',\'ogTitle\',this.value)"></div>'
+    +'<div class="fg"><label>Social description</label><textarea rows="2" oninput="updateSEO(\''+pid+'\',\'ogDescription\',this.value)">'+esc(s.ogDescription||'')+'</textarea></div>'
+    +'<div class="fg"><label>Social image URL</label><input type="text" value="'+esc(s.ogImage||'')+'" oninput="updateSEO(\''+pid+'\',\'ogImage\',this.value)" placeholder="https://…"></div>'
+    +'<div class="fg"><label>Twitter card</label><select onchange="updateSEO(\''+pid+'\',\'twitterCard\',this.value)">'+opt(['summary_large_image','summary'],s.twitterCard||'summary_large_image')+'</select></div></div>'
+    +'<button class="fd-btn-primary" onclick="saveSEO()" style="margin-top:6px">Save SEO</button>'
+    +'</div><div style="width:280px;flex-shrink:0">'
+    +'<div class="si-sec"><h2 style="font-size:13px">Analysis</h2><div id="seo-analysis"></div></div>'
+    +'<div class="si-sec"><h2 style="font-size:13px">Google preview</h2><div id="seo-preview"></div></div>'
+    +'</div></div>';
+  seoRenderAnalysis(pid); seoRenderPreview(pid);
 }
-function updateSEO(pid,key,val){if(!_seo[pid])_seo[pid]={};_seo[pid][key]=val;}
-async function saveSEO(){try{const sha=await ghSHA(F_SEO);await ghWrite(F_SEO,JSON.stringify(_seo,null,2),sha,'CMS: SEO update');toast('SEO saved','ok');}catch(e){toast('SEO save failed: '+e.message,'err');}}
+function renderSEOGlobal(){
+  const el=document.getElementById('seo-global'); if(!el) return;
+  const g=seoGlobal();
+  const opt=(list,cur)=>list.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('');
+  el.innerHTML='<div style="border-top:1px solid var(--border);margin-top:26px;padding-top:20px;max-width:760px">'
+    +'<div class="si-sec"><h2>Schema &amp; Business (site-wide)</h2><div class="desc">Feeds the structured data (JSON-LD) on every page. Address / phone / social come from Design → Contact.</div>'
+    +'<div class="fr"><div class="fg"><label>Organization type</label><select onchange="seoGlobal().orgType=this.value">'+opt(['LocalBusiness','Organization','ProfessionalService','HomeAndConstructionBusiness','GeneralContractor','Store','Restaurant'],g.orgType||'LocalBusiness')+'</select></div>'
+    +'<div class="fg"><label>Default social image URL</label><input type="text" value="'+esc(g.defaultOg||'')+'" oninput="seoGlobal().defaultOg=this.value" placeholder="https://… used when a page has no image"></div></div>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(g.includeOrg!==false?'checked':'')+' onchange="seoGlobal().includeOrg=this.checked"> Include Organization/LocalBusiness schema on every page</label></div>'
+    +'<div class="si-sec"><h2>Sitemap</h2><div class="desc">Generates <code>/sitemap.xml</code> from your pages + posts (noindex excluded) and links it from robots.txt.</div>'
+    +'<button class="fd-btn-secondary" onclick="seoGenerateSitemap()">Generate sitemap.xml now</button><div id="seo-sitemap-status" style="font-size:12px;color:var(--muted);margin-top:8px"></div></div>'
+    +'<div class="si-sec"><h2>robots.txt</h2><div class="desc">Leave blank for a sensible default (allow all + sitemap link). Saved to <code>/robots.txt</code>.</div>'
+    +'<textarea id="seo-robots" rows="4" style="font-family:var(--font-mono);font-size:12px;width:100%" oninput="seoGlobal().robotsTxt=this.value" placeholder="User-agent: *\nAllow: /">'+esc(g.robotsTxt||'')+'</textarea>'
+    +'<button class="fd-btn-secondary" onclick="seoWriteRobots(true)" style="margin-top:6px">Save robots.txt</button></div></div>';
+}
+
+// Save per-page + site-wide SEO to data/seo.json (server first, GitHub optional).
+async function saveSEO(){
+  const json=JSON.stringify(_seo,null,2); let ok=false;
+  if(canCallApi()){ try{ await apiCall('write_file',{path:'data/seo.json',content:json}); ok=true; }catch(e){} }
+  const{repo,pat}=ghCfg();
+  if(repo&&pat){ try{ const sha=await ghSHA(F_SEO); await ghWrite(F_SEO,json,sha,'Fourge: SEO update'); ok=true; }catch(e){} }
+  toast(ok?'SEO saved ✓':'Save failed — configure Server API or GitHub', ok?'ok':'err');
+}
+
+// Read a page's real visible text (for AI generation) — fixes the old bug where
+// SEO was generated from empty CMS "blocks" on scanned static pages.
+async function seoReadPageText(pg){
+  let html='';
+  try{ const d=await apiCall('read_file',{path:pg.path||pg.file}); html=d.content||''; }catch{}
+  if(!html){ try{ const base=normSiteBase(); const r=await fetch((base?base+'/':'../')+String(pg.path||pg.file).replace(/^\/+/,'')); if(r.ok) html=await r.text(); }catch{} }
+  if(!html) return {title:'',headings:'',text:''};
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  doc.querySelectorAll('script,style,noscript,svg,nav,header,footer').forEach(el=>el.remove());
+  const title=(doc.querySelector('title')?.textContent||'').trim();
+  const headings=[...doc.querySelectorAll('h1,h2,h3')].map(h=>h.textContent.trim()).filter(Boolean).slice(0,14).join(' | ');
+  const text=(doc.body?.textContent||'').replace(/\s+/g,' ').trim().slice(0,3500);
+  return {title,headings,text};
+}
 async function genSEO(pid){
-  const apiKey='';  // the server-side proxy uses the Markup key stored in the DB
-  const pg=_pages[pid];if(!pg){toast('Page not found','err');return;}
+  const pg=_pages[pid]; if(!pg){ toast('Page not found','err'); return; }
+  toast('Reading the page…');
+  const {title,headings,text}=await seoReadPageText(pg);
+  if(!text && !headings){ toast('Could not read this page’s content to generate SEO','err'); return; }
+  const site=_site||{}, addr=site.address||{};
+  const loc=[addr.city,addr.state].filter(Boolean).join(', ');
+  const ctx='Business: '+(site.name||'')+'. '+(site.tagline||'')+(loc?(' Location: '+loc+'.'):'');
+  const prompt='You are an expert SEO copywriter. Write search-optimized metadata for THIS specific page of a real business website. '
+    +ctx+'\nExisting <title>: "'+title+'". Page headings: '+headings+'\nPage text: '+text
+    +'\n\nReturn ONLY valid JSON with these keys: '
+    +'"title" (a compelling 50-60 char title tag with the primary keyword and, where natural, the brand or location), '
+    +'"description" (a benefit-driven 120-160 char meta description ending with a soft call to action), '
+    +'"focusKeyword" (the single best primary keyword phrase for this page), '
+    +'"ogTitle" (a shareable social title), "ogDescription" (a social description). '
+    +'Base everything on the actual page content above — do NOT invent services. NEVER output "Page Not Found" or placeholder text.';
   toast('Generating SEO…');
-  const text=JSON.stringify(pg.blocks?.map(b=>b.data)||[]).slice(0,2000);
   try{
-    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:300,messages:[{role:'user',content:`Write SEO metadata for this page content. Return ONLY valid JSON with keys: title (50-60 chars), description (120-160 chars). Content: ${text}`}]}, apiKey);
-    const raw=(Array.isArray(d.content)?(d.content.find(b=>b.type==='text')?.text||'{}'):'{}');
-    const clean=raw.replace(/```json?|```/g,'').trim();const seo=JSON.parse(clean);
-    if(!_seo[pid])_seo[pid]={};Object.assign(_seo[pid],seo);renderSEO(pid);toast('SEO generated','ok');
-  }catch(e){toast('Generate failed: '+e.message,'err');}
+    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:600,messages:[{role:'user',content:prompt}]},'');
+    const raw=Array.isArray(d.content)?(d.content.find(b=>b.type==='text')?.text||'{}'):'{}';
+    const seo=JSON.parse(raw.replace(/```json?|```/g,'').trim());
+    if(!_seo[pid])_seo[pid]={}; Object.assign(_seo[pid],seo);
+    renderSEO(pid); toast('SEO generated ✓','ok');
+  }catch(e){ toast('Generate failed: '+e.message,'err'); }
 }
-async function genAllSEO(){const pages=getPageList();for(const p of pages){await genSEO(p.id);await new Promise(r=>setTimeout(r,500));}await saveSEO();}
+async function genAllSEO(){ const pages=getPageList(); for(const p of pages){ await genSEO(p.id); await new Promise(r=>setTimeout(r,400)); } await saveSEO(); }
+
+// ── Apply SEO to the actual page files (managed meta + JSON-LD) ─────────────
+function seoBuildSchema(pg,s,canon){
+  const g=seoGlobal(), site=_site||{}, graph=[];
+  if(g.includeOrg!==false && site.name){
+    const org={'@type':g.orgType||'Organization', name:site.name};
+    const base=normSiteBase(); if(base) org.url=base;
+    if(site.logo) org.logo=site.logo;
+    if(site.phone) org.telephone=site.phone;
+    if(site.email) org.email=site.email;
+    const a=site.address||{};
+    if(a.street||a.city) org.address={'@type':'PostalAddress',streetAddress:a.street||'',addressLocality:a.city||'',addressRegion:a.state||'',postalCode:a.zip||'',addressCountry:a.country||'US'};
+    const sameAs=Object.values(site.social||{}).filter(Boolean); if(sameAs.length) org.sameAs=sameAs;
+    graph.push(org);
+  }
+  const type=s.schemaType||'WebPage';
+  if(type&&type!=='none'){ const node={'@type':type, name:s.title||pg.label||pg.title||''}; if(canon)node.url=canon; if(s.description)node.description=s.description; graph.push(node); }
+  return graph.length?{'@context':'https://schema.org','@graph':graph}:null;
+}
+function seoInjectIntoHtml(html,pg,base){
+  const pid=pageIdFromPath(pg.path||pg.file)||pg.id, s=_seo[pid]||{};
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const head=doc.head||doc.documentElement;
+  // Take over the standard SEO tags + remove any of our prior managed nodes.
+  doc.querySelectorAll('meta[name="description"],meta[name="robots"],link[rel="canonical"],meta[property^="og:"],meta[name^="twitter:"],[data-fourge-seo]').forEach(el=>el.remove());
+  const add=(tag,attrs)=>{ const el=doc.createElement(tag); for(const k in attrs) el.setAttribute(k,attrs[k]); el.setAttribute('data-fourge-seo',''); head.appendChild(el); return el; };
+  if(s.title){ let t=doc.querySelector('title'); if(!t){ t=doc.createElement('title'); head.appendChild(t); } t.textContent=s.title; }
+  if(s.description) add('meta',{name:'description',content:s.description});
+  let canon=s.canonical;
+  if(!canon && base){ const path=String(pg.path||pg.file).replace(/^\/+/,'').replace(/index\.html?$/i,''); canon=base+'/'+path; }
+  if(canon) add('link',{rel:'canonical',href:canon});
+  add('meta',{name:'robots',content:(s.noindex?'noindex':'index')+','+(s.nofollow?'nofollow':'follow')});
+  const ogTitle=s.ogTitle||s.title, ogDesc=s.ogDescription||s.description, ogImg=s.ogImage||seoGlobal().defaultOg;
+  if(ogTitle) add('meta',{property:'og:title',content:ogTitle});
+  if(ogDesc) add('meta',{property:'og:description',content:ogDesc});
+  if(ogImg) add('meta',{property:'og:image',content:ogImg});
+  if(canon) add('meta',{property:'og:url',content:canon});
+  add('meta',{property:'og:type',content:String(pid).indexOf('post')===0?'article':'website'});
+  add('meta',{name:'twitter:card',content:s.twitterCard||'summary_large_image'});
+  if(ogTitle) add('meta',{name:'twitter:title',content:ogTitle});
+  if(ogDesc) add('meta',{name:'twitter:description',content:ogDesc});
+  if(ogImg) add('meta',{name:'twitter:image',content:ogImg});
+  const schema=seoBuildSchema(pg,s,canon);
+  if(schema){ const sc=add('script',{type:'application/ld+json'}); sc.textContent=JSON.stringify(schema); }
+  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+}
+async function seoApplyAll(){
+  if(!canCallApi()){ toast('Sign in again to apply SEO','err'); return; }
+  const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
+  if(!confirm('Write SEO meta tags + schema into all '+pages.length+' page file(s), and regenerate sitemap.xml + robots.txt?')) return;
+  await saveSEO();
+  const base=normSiteBase(); let done=0,failed=0;
+  const st=document.getElementById('seo-apply-status');
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp){ continue; }
+    try{
+      const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
+      await apiCall('write_file',{path:fp,content:seoInjectIntoHtml(html,pg,base)});
+      done++;
+    }catch(e){ console.warn('SEO apply failed for '+fp,e.message); failed++; }
+  }
+  try{ await seoWriteSitemap(); }catch(e){}
+  try{ await seoWriteRobots(false); }catch(e){}
+  toast(done?('SEO applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'')+' + sitemap/robots updated'):'Nothing applied','ok');
+}
+// ── Sitemap + robots.txt ────────────────────────────────────────────────────
+function seoBuildSitemap(){
+  const base=normSiteBase(); if(!base) return null;
+  const seen=new Set(), urls=[];
+  getPageList().forEach(p=>{ const pid=pageIdFromPath(p.path||p.file); if((_seo[pid]||{}).noindex) return;
+    let u=base+'/'+String(p.path||p.file).replace(/^\/+/,'').replace(/index\.html?$/i,''); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
+  (_posts||[]).forEach(po=>{ const path=po.path||(po.slug?('blog/'+po.slug):''); if(!path) return; const u=base+'/'+String(path).replace(/^\/+/,''); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
+  const lastmod=new Date().toISOString().slice(0,10);
+  return '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    +urls.map(u=>'  <url><loc>'+u.replace(/&/g,'&amp;')+'</loc><lastmod>'+lastmod+'</lastmod></url>').join('\n')+'\n</urlset>\n';
+}
+async function seoWriteSitemap(){ const xml=seoBuildSitemap(); if(!xml){ throw new Error('Set Website URL in Design → General first'); } await apiCall('write_file',{path:'sitemap.xml',content:xml}); }
+async function seoGenerateSitemap(){
+  const st=document.getElementById('seo-sitemap-status');
+  try{ if(!Object.keys(_pages).length) await loadPages(); await seoWriteSitemap(); const n=(seoBuildSitemap().match(/<url>/g)||[]).length;
+    if(st) st.textContent='Wrote /sitemap.xml ('+n+' URLs)'; toast('sitemap.xml generated ✓','ok'); }
+  catch(e){ if(st) st.textContent=e.message; toast('Sitemap failed: '+e.message,'err'); }
+}
+async function seoWriteRobots(notify){
+  const g=seoGlobal(), base=normSiteBase();
+  let txt=(g.robotsTxt||'').trim() || 'User-agent: *\nAllow: /';
+  if(base && !/^sitemap:/im.test(txt)) txt+='\nSitemap: '+base+'/sitemap.xml';
+  await apiCall('write_file',{path:'robots.txt',content:txt+'\n'});
+  if(notify) toast('robots.txt saved ✓','ok');
+}
 
 // ── SITE INFO ─────────────────────────────────
 async function loadSiteInfo(){
@@ -5886,7 +6096,7 @@ function veSetMode(mode){
     _veMode='visual';
     if(codeWrap) codeWrap.classList.remove('on');
     if(canvas) canvas.style.display='';
-    if(devGroup) devGroup.style.display='';
+    if(devGroup) devGroup.style.display='flex'; // restore flex (inline display:flex) — '' would reset to block and stack the buttons
     if(fsBtn) fsBtn.style.display='';
     // Ingest hand-edits only when the code actually changed (avoids needless reload/flicker).
     if(code!=null && code!==_cmLoadedValue){
