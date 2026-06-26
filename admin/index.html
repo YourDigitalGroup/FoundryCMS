@@ -423,6 +423,13 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-frame-wrap{background:#FFF;border-radius:8px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.14);transition:width .2s,height .2s}
 /* Fullscreen: the canvas fills the monitor and centers the 16:9 preview. */
 .ve-canvas:fullscreen{align-items:center;padding:24px;background:#23201d}
+/* Code editor (CodeMirror) — VS Code-style source view, toggled with the canvas. */
+#ve-code-wrap{flex:1;display:none;min-height:0;min-width:0;background:#212121;position:relative}
+#ve-code-wrap.on{display:flex;flex-direction:column}
+#ve-code-wrap .CodeMirror{height:100%;font-size:13px;line-height:1.5;font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
+.ve-mode-seg{display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:7px;border:1px solid var(--border)}
+.ve-mode-btn{display:flex;align-items:center;gap:5px;padding:5px 12px;border:none;border-radius:5px;background:transparent;color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;transition:all .12s}
+.ve-mode-btn.on{background:var(--ember-soft);color:var(--ember)}
 .ve-page-list{width:196px;border-right:1px solid var(--border);background:var(--surface);overflow-y:auto;flex-shrink:0;display:flex;flex-direction:column}
 .ve-page-item{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:13px;color:var(--text-2);cursor:pointer;transition:all .1s;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ve-page-item:hover{background:var(--surface-3);color:var(--text)}
@@ -1177,8 +1184,17 @@ textarea.fb-input{resize:vertical}
             <span class="ve-unsaved-dot" id="ve-unsaved" title="Unsaved changes"></span>
           </div>
           <div class="tb-spacer"></div>
+          <!-- Visual / Code mode toggle -->
+          <div class="ve-mode-seg">
+            <button class="ve-mode-btn on" id="vm-visual" onclick="veSetMode('visual')" title="Visual editor">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Visual
+            </button>
+            <button class="ve-mode-btn" id="vm-code" onclick="veSetMode('code')" title="Code editor">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> Code
+            </button>
+          </div>
           <!-- Device toggles -->
-          <div style="display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:7px;border:1px solid var(--border)">
+          <div id="ve-device-group" style="display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:7px;border:1px solid var(--border)">
             <button class="ve-device-btn on" id="vd-desktop" onclick="veSetDevice('desktop',this)" title="Desktop">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             </button>
@@ -1242,6 +1258,8 @@ textarea.fb-input{resize:vertical}
                 <iframe id="visual-iframe" title="Page editor"></iframe>
               </div>
             </div>
+            <!-- Code view (CodeMirror enhances this textarea on first switch) -->
+            <div id="ve-code-wrap"><textarea id="ve-code-area" spellcheck="false"></textarea></div>
           </div>
 
           <!-- Properties panel -->
@@ -1906,6 +1924,16 @@ textarea.fb-input{resize:vertical}
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- CodeMirror 5 — VS Code-style source editor for the page Code view (HTML + inline CSS/JS, dark theme). -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closetag.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
 <script>
 
 // ── SHA-256 (verified correct) ───────────────────────────────────────────
@@ -1955,7 +1983,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.6.0';
+const CMS_VERSION='1.7.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5798,6 +5826,80 @@ document.addEventListener('fullscreenchange', ()=>{ setTimeout(veApplyDeviceSize
 // Re-fit the desktop preview when the window resizes.
 window.addEventListener('resize', ()=>{ if(_veDevice==='desktop') veApplyDeviceSize(); });
 
+// ── CODE EDITOR (Visual ⇄ Code) ─────────────────────────────────────────────
+let _veMode='visual', _cmEditor=null, _cmLoadedValue='';
+
+// Produce clean page HTML from the LIVE visual document (clone + strip the
+// editing bridge) — identical to what veSavePage writes. Returns null if the
+// iframe has no document yet.
+function veSerializeClean(){
+  const iframe=document.getElementById('visual-iframe');
+  const doc=iframe&&iframe.contentDocument;
+  if(!doc||!doc.documentElement) return null;
+  const root=doc.documentElement.cloneNode(true);
+  ['__fe_done__','__fe_ov__','__fe_badge__','__foundry_bridge__','__ve_pause_style__'].forEach(id=>{ root.querySelector('#'+id)?.remove(); });
+  root.querySelectorAll('style').forEach(s=>{ if(s.textContent.includes('__fe_')||s.dataset.foundry) s.remove(); });
+  root.classList.remove('__ve_paused');
+  root.querySelectorAll('[style*="2147483"]').forEach(el=>{ el.style.removeProperty('outline'); el.style.removeProperty('z-index'); });
+  root.querySelectorAll('[data-fid],[data-feid]').forEach(el=>{ el.removeAttribute('data-fid'); el.removeAttribute('data-feid'); });
+  root.querySelectorAll('.fe-sel,.fe-hover').forEach(el=>{ el.classList.remove('fe-sel','fe-hover'); });
+  return ('<!DOCTYPE html>\n'+root.outerHTML).replace(/<script type="text\/foundry-ga"/gi,'<script');
+}
+
+// Lazily turn the textarea into a VS Code-style CodeMirror instance.
+function veInitCM(){
+  if(_cmEditor) return _cmEditor;
+  const ta=document.getElementById('ve-code-area');
+  if(!ta||!window.CodeMirror) return null;
+  _cmEditor=CodeMirror.fromTextArea(ta,{
+    mode:'htmlmixed', theme:'material-darker', lineNumbers:true, lineWrapping:false,
+    autoCloseTags:true, matchBrackets:true, indentUnit:2, tabSize:2,
+    extraKeys:{'Ctrl-S':()=>veSavePage(),'Cmd-S':()=>veSavePage()}
+  });
+  _cmEditor.setSize('100%','100%');
+  _cmEditor.on('change',()=>{ if(_veMode==='code') document.getElementById('ve-unsaved')?.classList.add('on'); });
+  return _cmEditor;
+}
+
+// Toggle Visual ⇄ Code. Entering Code loads the current clean HTML into the
+// editor; returning to Visual feeds any hand-edits back through veRenderHtml so
+// the visual editor ingests them and re-arms its bridge.
+function veSetMode(mode){
+  if(mode===_veMode) return;
+  const canvas=document.getElementById('ve-canvas');
+  const codeWrap=document.getElementById('ve-code-wrap');
+  const devGroup=document.getElementById('ve-device-group');
+  const fsBtn=document.getElementById('vd-fullscreen');
+  if(mode==='code'){
+    if(!window.CodeMirror){ toast('Code editor is still loading — try again in a moment','err'); return; }
+    const cm=veInitCM(); if(!cm){ toast('Could not open the code editor','err'); return; }
+    const html=veSerializeClean()||_veHtml[_curPage]||'';
+    _cmLoadedValue=html; cm.setValue(html);
+    _veMode='code';
+    if(canvas) canvas.style.display='none';
+    if(codeWrap) codeWrap.classList.add('on');
+    if(devGroup) devGroup.style.display='none';
+    if(fsBtn) fsBtn.style.display='none';
+    setTimeout(()=>cm.refresh(),30); // CodeMirror must refresh once visible
+  } else {
+    const code=_cmEditor?_cmEditor.getValue():null;
+    _veMode='visual';
+    if(codeWrap) codeWrap.classList.remove('on');
+    if(canvas) canvas.style.display='';
+    if(devGroup) devGroup.style.display='';
+    if(fsBtn) fsBtn.style.display='';
+    // Ingest hand-edits only when the code actually changed (avoids needless reload/flicker).
+    if(code!=null && code!==_cmLoadedValue){
+      _veHtml[_curPage]=code;
+      if(code!==_veOrigHtml[_curPage]) document.getElementById('ve-unsaved')?.classList.add('on');
+      veRenderHtml(_curPage,code);
+      setTimeout(veApplyDeviceSize,60);
+    }
+  }
+  document.getElementById('vm-visual')?.classList.toggle('on',_veMode==='visual');
+  document.getElementById('vm-code')?.classList.toggle('on',_veMode==='code');
+}
+
 // ── SAVE PAGE ───────────────────────────────────────────────────
 // ── AI EDITOR FUNCTIONS ──────────────────────────────────────────
 function veAiPanel(){
@@ -6563,7 +6665,7 @@ function renderMediaGrid(){
       const thumb = isImg
         ? '<img src="'+esc(m.url)+'" alt="'+esc(m.name)+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.parentElement.style.background=\'var(--bg-2)\'">'
         : '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:6px;color:var(--muted)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:10px;font-weight:700;letter-spacing:.05em">'+ext+'</span></div>';
-      return '<div style="border-radius:10px;overflow:hidden;border:1.5px solid var(--border);cursor:pointer;background:var(--surface);transition:all .12s" onclick="selMedia('+i+')" onmouseover="this.style.borderColor=\'var(--ember)\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'none\';this.style.boxShadow=\'none\'">'
+      return '<div style="border-radius:10px;overflow:hidden;border:1.5px solid var(--border);cursor:pointer;background:var(--surface);transition:all .12s" onclick="selMedia('+_media.indexOf(m)+')" onmouseover="this.style.borderColor=\'var(--ember)\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'none\';this.style.boxShadow=\'none\'">'
         + '<div style="aspect-ratio:4/3;background:var(--bg);overflow:hidden">'+thumb+'</div>'
         + '<div style="padding:8px 10px;border-top:1px solid var(--border)">'
         + '<div style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(m.name)+'">'+esc(m.name)+'</div>'
@@ -6810,48 +6912,17 @@ function initPermissionToggles(){
 async function veSavePage(){
   const pg=_pages[_curPage];
   if(!pg){ toast('No page loaded','err'); return; }
-  const iframe=document.getElementById('visual-iframe');
-  if(!iframe?.contentDocument){ toast('Page not loaded yet','err'); return; }
+  // Source of truth: the Code editor's text in Code mode; otherwise a clean
+  // serialization of the live visual document (clone with the editing bridge
+  // stripped — see veSerializeClean).
+  let html;
+  if(_veMode==='code' && _cmEditor){ html=_cmEditor.getValue(); }
+  else { html=veSerializeClean(); if(html==null){ toast('Page not loaded yet','err'); return; } }
 
   const btn=document.getElementById('ve-save-btn');
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
 
   try{
-    const doc=iframe.contentDocument;
-    // IMPORTANT: serialize from a CLONE, never the live document. Stripping the
-    // editing bridge (overlay, data-feid tracking attrs, bridge script) off the
-    // live iframe would leave nothing for the NEXT edit to attach to — the page
-    // would then only save once per page reload. Cloning keeps the live editing
-    // surface fully intact while we produce a clean HTML string to write.
-    const root=doc.documentElement.cloneNode(true);
-    // Remove ALL bridge artifacts from the clone before serializing
-    ['__fe_done__','__fe_ov__','__fe_badge__','__foundry_bridge__','__ve_pause_style__'].forEach(id=>{
-      root.querySelector('#'+id)?.remove();
-    });
-    // Remove injected bridge styles (data-foundry attr, or by content)
-    root.querySelectorAll('style').forEach(s=>{
-      if(s.textContent.includes('__fe_') || s.dataset.foundry) s.remove();
-    });
-    // Drop the animation-pause class (editing-only)
-    root.classList.remove('__ve_paused');
-    // Remove selection outlines / dashed borders injected as inline styles
-    root.querySelectorAll('[style*="2147483"]').forEach(el=>{
-      el.style.removeProperty('outline');
-      el.style.removeProperty('z-index');
-    });
-    // Remove ALL editor tracking attributes (bridge uses data-feid; legacy used data-fid)
-    root.querySelectorAll('[data-fid],[data-feid]').forEach(el=>{
-      el.removeAttribute('data-fid');
-      el.removeAttribute('data-feid');
-    });
-    // Remove any selection class
-    root.querySelectorAll('.fe-sel,.fe-hover').forEach(el=>{
-      el.classList.remove('fe-sel','fe-hover');
-    });
-
-    const html=('<!DOCTYPE html>\n'+root.outerHTML)
-      // Re-arm analytics scripts that veRenderHtml neutralized for the editor
-      .replace(/<script type="text\/foundry-ga"/gi,'<script');
     const filePath=pg.path||pg.file;
 
     // 0. Log a revision: a ledger entry (who / when / which page) PLUS a full
