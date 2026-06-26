@@ -102,6 +102,14 @@ html,body{height:100%;font-family:var(--font-sans);font-size:14px;color:var(--te
 .tb-new-btn{display:flex;align-items:center;gap:5px;padding:7px 14px;background:var(--ember);color:white;border:none;font-family:var(--font-sans);font-size:12px;font-weight:600;cursor:pointer;border-radius:var(--r-full);transition:background .15s;white-space:nowrap}
 .tb-new-btn:hover{background:var(--ember-deep)}
 .tb-user-av{width:30px;height:30px;border-radius:50%;background:var(--ember);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:white;cursor:pointer;flex-shrink:0}
+.tb-user-wrap{position:relative;flex-shrink:0}
+.tb-user-menu{position:absolute;top:42px;right:0;min-width:230px;background:var(--surface,#fff);border:1px solid var(--border);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.20);padding:6px;display:none;z-index:1200}
+.tb-user-menu.on{display:block}
+.tb-user-menu-head{display:flex;align-items:center;gap:10px;padding:8px 8px 12px;border-bottom:1px solid var(--border);margin-bottom:6px}
+.tb-user-menu-name{font-size:13px;font-weight:700;color:var(--text);line-height:1.2}
+.tb-user-menu-email{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;max-width:160px;white-space:nowrap}
+.tb-user-menu-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border:none;background:none;cursor:pointer;font-family:var(--font-sans);font-size:13px;font-weight:500;color:var(--text);border-radius:7px}
+.tb-user-menu-item:hover{background:var(--surface-3)}
 #update-banner{display:none;background:var(--ember);color:white;padding:8px 20px;font-size:12px;font-weight:600;align-items:center;gap:10px;flex-shrink:0}
 #update-banner.show{display:flex}
 .body-row{flex:1;display:flex;overflow:hidden}
@@ -995,9 +1003,19 @@ textarea.fb-input{resize:vertical}
       <kbd>⌘K</kbd>
     </div>
     <div class="tb-spacer"></div>
-    <button class="tb-icon-btn" title="Notifications"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
     <button class="tb-new-btn" onclick="navTo('pages');openNewPageModal()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New page</button>
-    <div class="tb-user-av" id="tb-user-av">JM</div>
+    <div class="tb-user-wrap" id="tb-user-wrap">
+      <div class="tb-user-av" id="tb-user-av" onclick="toggleUserMenu(event)" title="Account" role="button" tabindex="0">JM</div>
+      <div class="tb-user-menu" id="tb-user-menu">
+        <div class="tb-user-menu-head">
+          <div class="tb-user-av" id="tb-user-av2" style="cursor:default">JM</div>
+          <div style="min-width:0"><div class="tb-user-menu-name" id="tb-user-menu-name">—</div><div class="tb-user-menu-email" id="tb-user-menu-email">—</div></div>
+        </div>
+        <button class="tb-user-menu-item" onclick="openAccount()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Account</button>
+        <button class="tb-user-menu-item" onclick="closeUserMenu();openChangePw()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> Change password</button>
+        <button class="tb-user-menu-item" onclick="closeUserMenu();doLogout()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sign out</button>
+      </div>
+    </div>
   </div>
 
   <div class="body-row">
@@ -1060,13 +1078,8 @@ textarea.fb-input{resize:vertical}
           <div id="pg-tree-body"></div>
         </div>
       </div>
-      <div style="margin-top:auto">
+      <!-- Account actions (Account / Change password / Sign out) moved to the profile menu (top-right avatar). -->
 
-        <div style="padding:0 8px 10px">
-          <button class="lo-btn" onclick="openChangePw()" style="margin-bottom:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> Change password</button>
-          <button class="lo-btn" onclick="doLogout()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sign out</button>
-        </div>
-      </div>
     </div><!-- /sb -->
 
     <div class="main">
@@ -1553,19 +1566,16 @@ textarea.fb-input{resize:vertical}
         </div>
         <!-- Server API is automatic: the admin panel talks to its co-located
              api.php using your login session. No per-browser URL/token to set. -->
-        <div class="si-sec"><h2>Mailgun (Forms)</h2><div class="desc">Used for contact form submissions.</div>
-          <div class="fr"><div class="fg"><label>Sending Domain</label><input type="text" id="s-mg-domain" placeholder="mg.example.com"></div><div class="fg"><label>API Key</label><input type="password" id="s-mg-key" placeholder="key…"></div></div>
-          <div class="fr"><div class="fg"><label>From Address</label><input type="text" id="s-mg-from" placeholder="postmaster@mg.example.com"></div><div class="fg"><label>Notify Email</label><input type="text" id="s-mg-notify" placeholder="client@example.com"></div></div>
-          <button class="fd-btn-primary" onclick="saveMailgunCfg()">Save Mailgun</button>
-        </div>
+        <!-- Mailgun (Forms) is configured server-side in admin/config.secret.php
+             (mg_domain / mg_api_key / mg_from / mg_notify_to) so the API key never
+             passes through the browser or reaches GitHub. -->
         <div class="si-sec architect-only"><h2>Markup API Key</h2><div class="desc">Powers Markup generation (SEO + block extraction). Visible to the Architect account only.</div>
           <div class="fg"><label>API Key</label><input type="password" id="s-claude" placeholder="sk-ant-…"></div>
           <button class="fd-btn-primary" onclick="saveClaudeKey()">Save</button>
         </div>
-        <div class="si-sec"><h2>Updates</h2><div class="desc">Updates are <strong>automatic</strong>. This site installs the latest Fourge engine at login, so it's always current — there's no manual step and no way to run an old build. <code>api.php</code> (this site's API token + Mailgun keys) is never touched automatically; if a release changes it, deploy it by hand.</div>
-          <div class="fg architect-only"><label>CMS Repo (Architect)</label><input type="text" id="s-tpl-repo" placeholder="scottecklund/foundrycms"><div class="desc" style="margin-top:4px">The engine source this site auto-updates from. Leave blank to use the default. Private repos need the GitHub PAT set above.</div></div>
-          <button class="fd-btn-primary architect-only" onclick="saveTplRepo()">Save Repo</button>
-        </div>
+        <!-- Updates card removed — updates are fully automatic (installed at login).
+             The engine source can still be overridden via the architect-only
+             "Repository Override" card above if a site ever needs a non-default repo. -->
         <!-- Login Screen Labels removed — the login panel now shows the Site Name
              (Client) and the footer "Site by …" credit (Site By), both pulled from
              data/site.json so they persist across cache clears. -->
@@ -1860,6 +1870,21 @@ textarea.fb-input{resize:vertical}
     <div class="mf"><button class="fd-btn-secondary" onclick="closeM('m-changepw')">Cancel</button><button class="fd-btn-primary" onclick="submitChangePw()">Change Password</button></div>
   </div>
 </div>
+
+<div class="mw" id="m-account">
+  <div class="modal" style="width:460px">
+    <div class="mh"><h2>My Account</h2><button class="ib" onclick="closeM('m-account')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:14px">Signed in as <strong id="ac-username">—</strong></p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="fg"><label>First Name</label><input type="text" id="ac-first"></div>
+        <div class="fg"><label>Last Name</label><input type="text" id="ac-last"></div>
+      </div>
+      <div class="fg"><label>Email</label><input type="text" id="ac-email" placeholder="you@example.com"></div>
+    </div>
+    <div class="mf"><button class="fd-btn-secondary" onclick="closeM('m-account');openChangePw()">Change password</button><div style="flex:1"></div><button class="fd-btn-secondary" onclick="closeM('m-account')">Cancel</button><button class="fd-btn-primary" onclick="saveMyProfile()">Save</button></div>
+  </div>
+</div>
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -1912,7 +1937,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.5.1';
+const CMS_VERSION='1.5.2';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2089,7 +2114,15 @@ function filterDashPages(f,btn){document.querySelectorAll('.pf-btn').forEach(b=>
 
 // ── AUTH HELPERS ────────────────────────────────────────────────
 function getSessionUser(){try{return JSON.parse(localStorage.getItem('cd_user')||'{}');}catch{return{};}}
-function updateUserDisplay(){const u=getSessionUser();const initials=(((u.firstName||'')[0]||'')+((u.lastName||'')[0]||'')||(u.username||'AD').split('@')[0].slice(0,2)).toUpperCase();['tb-user-av','tb-ws-av'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=initials;});const wsName=document.getElementById('tb-ws-name');if(wsName)wsName.textContent=_site.name||'Workspace';}
+function updateUserDisplay(){
+  const u=getSessionUser();
+  const initials=(((u.firstName||'')[0]||'')+((u.lastName||'')[0]||'')||(u.username||'AD').split('@')[0].slice(0,2)).toUpperCase();
+  ['tb-user-av','tb-ws-av','tb-user-av2'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=initials;});
+  const wsName=document.getElementById('tb-ws-name');if(wsName)wsName.textContent=_site.name||'Workspace';
+  const nm=document.getElementById('tb-user-menu-name');
+  if(nm)nm.textContent=(((u.firstName||'')+' '+(u.lastName||'')).trim())||u.displayName||u.username||'Account';
+  const em=document.getElementById('tb-user-menu-email');if(em)em.textContent=u.email||u.username||'';
+}
 // ── ARCHITECT ────────────────────────────────────────────────────────────
 // The single account allowed to view/edit GitHub + secret keys. Identified by
 // an explicit architect:true flag in users.json, with the architect email as a
@@ -4209,13 +4242,10 @@ function loadSettings(){
   const{repo,pat}=ghCfg();
   const sRepoInfo=document.getElementById('s-repo-info');if(sRepoInfo)sRepoInfo.innerHTML=`Repo: <strong>${repo||'Not set — add github.repo to data/site.json'}</strong>`;
   const roEl=document.getElementById('s-repo-override');if(roEl&&!roEl.value)roEl.value=(_secrets&&_secrets.repo_override)||'';
-  // Server API is automatic now (co-located api.php + login session) — no fields to populate.
-  // Mailgun + Markup key live in the encrypted DB (server-side), surfaced via get_secrets.
-  const mgFields=[['s-mg-domain','mg_domain','mg.example.com'],['s-mg-from','mg_from','postmaster@mg.example.com'],['s-mg-notify','mg_notify_to','']];
-  mgFields.forEach(([id,name,def])=>{const el=document.getElementById(id);if(el)el.value=(_secrets&&_secrets[name])||def;});
-  const mgKeyEl=document.getElementById('s-mg-key');if(mgKeyEl){mgKeyEl.value='';mgKeyEl.placeholder=(_secretStatus&&_secretStatus.mg_api_key)?'Key saved on server':'key…';}
+  // Server API is automatic (co-located api.php + login session) and Mailgun is
+  // configured server-side in config.secret.php — neither has UI fields to fill.
+  // The Markup (Claude) key still lives in the encrypted DB, surfaced via get_secrets.
   const clEl=document.getElementById('s-claude');if(clEl){clEl.value='';clEl.placeholder=(_secretStatus&&_secretStatus.claude_key)?'Key saved on server':'sk-ant-…';}
-  const tplEl=document.getElementById('s-tpl-repo');if(tplEl)tplEl.value=getTplRepo();
   const whoami=document.getElementById('s-pw-whoami');if(whoami)whoami.textContent=getSessionUser().username||'';
   const rcSite=document.getElementById('s-rc-site');if(rcSite)rcSite.value=(_site&&_site.recaptcha&&_site.recaptcha.siteKey)||'';
   const rcSec=document.getElementById('s-rc-secret');if(rcSec){rcSec.value='';rcSec.placeholder=(_site&&_site.recaptcha&&_site.recaptcha.hasSecret)?'Secret saved on server':'6Lc… (kept on server)';}
@@ -4288,6 +4318,43 @@ async function submitChangePw(){
     toast('Password changed successfully','ok');
     closeM('m-changepw');
   }catch(e){toast('Password change failed: '+e.message,'err');}
+}
+
+// ── PROFILE MENU (top-right avatar) ───────────────────────────────────────
+function toggleUserMenu(e){ if(e){e.stopPropagation();} const m=document.getElementById('tb-user-menu'); if(m) m.classList.toggle('on'); }
+function closeUserMenu(){ const m=document.getElementById('tb-user-menu'); if(m) m.classList.remove('on'); }
+// Close the menu when clicking anywhere outside it.
+document.addEventListener('click',function(e){ const w=document.getElementById('tb-user-wrap'); if(w && !w.contains(e.target)) closeUserMenu(); });
+
+// Edit your OWN profile (name + email). Role/permissions are unchanged — those
+// stay admin-controlled. Username is the login key, so it's shown but not edited.
+function openAccount(){
+  closeUserMenu();
+  const u=getSessionUser();
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v||'';};
+  set('ac-first',u.firstName); set('ac-last',u.lastName); set('ac-email',u.email);
+  const un=document.getElementById('ac-username'); if(un) un.textContent=u.username||'';
+  openM('m-account');
+}
+async function saveMyProfile(){
+  const u=getSessionUser();
+  if(u.id==null){ toast('Please sign in again to edit your profile','err'); return; }
+  const body={
+    id:u.id,
+    username:(u.username||'').trim(),               // keep the login key stable
+    email:document.getElementById('ac-email')?.value.trim()||'',
+    firstName:document.getElementById('ac-first')?.value.trim()||'',
+    lastName:document.getElementById('ac-last')?.value.trim()||'',
+    role:u.role||'editor'                            // send current role so it's unchanged (no permissions → server keeps existing)
+  };
+  try{
+    await apiCall('save_user',body);
+    // Refresh the cached session user so the header + next open reflect the edit.
+    try{ const d=await apiCall('session'); if(d&&d.user) localStorage.setItem('cd_user',JSON.stringify(d.user)); }catch{}
+    updateUserDisplay();
+    toast('Profile updated','ok');
+    closeM('m-account');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 
 // ── USERS ─────────────────────────────────────
@@ -6868,21 +6935,9 @@ function selPageTree(){}
 async function saveInjections(){try{const sha=await ghSHA(F_INJECT);await ghWrite(F_INJECT,JSON.stringify(_inject,null,2),sha,'CMS: injections save');toast('Plugins saved','ok');}catch(e){toast('Save failed: '+e.message,'err');}}
 
 // ── SETTINGS ──────────────────────────────────
-async function saveMailgunCfg(){
-  // Mailgun lives in the encrypted DB (Super Admin+), not the browser, so it
-  // survives a cache clear and is shared across devices.
-  if(!canCallApi()){ toast('Sign in again to save','err'); return; }
-  const get=id=>(document.getElementById(id)?.value||'').trim();
-  try{
-    for(const [name,val] of [['mg_domain',get('s-mg-domain')],['mg_from',get('s-mg-from')],['mg_notify_to',get('s-mg-notify')]]){
-      if(val) await apiCall('set_secret',{name,value:val});
-    }
-    const key=get('s-mg-key');
-    if(key){ await apiCall('set_secret',{name:'mg_api_key',value:key}); const k=document.getElementById('s-mg-key'); if(k){k.value='';k.placeholder='Key saved on server';} }
-    await loadSecrets();
-    toast('Mailgun saved','ok');
-  }catch(e){ toast('Save failed: '+e.message,'err'); }
-}
+// Mailgun is configured manually in admin/config.secret.php (mg_domain /
+// mg_api_key / mg_from / mg_notify_to). There is no in-CMS Mailgun form, so the
+// API key never passes through the browser. (api.php reads it from config.)
 async function saveTplRepo(){
   const v=document.getElementById('s-tpl-repo')?.value.trim()||'';
   if(!v){ toast('Enter repo path','err'); return; }
