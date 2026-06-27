@@ -1491,6 +1491,17 @@ textarea.fb-input{resize:vertical}
           <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Core palette used across the site.</div>
             <div class="fr3"><div class="fg"><label>Primary</label><input type="color" id="si-color-primary" value="#052942"></div><div class="fg"><label>Accent</label><input type="color" id="si-color-accent" value="#C8531E"></div><div class="fg"><label>Green</label><input type="color" id="si-color-green" value="#16A34A"></div></div>
           </div>
+          <div class="si-sec"><h2>Favicon</h2><div class="desc">The small icon shown in browser tabs, bookmarks, and history. Use a square PNG, SVG, or ICO — at least 32×32px (512×512 recommended).</div>
+            <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+              <div id="si-favicon-prev"></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <button type="button" class="fd-btn-secondary" onclick="document.getElementById('si-favicon-file').click()"><i class="fa-solid fa-upload"></i> Upload favicon</button>
+                <button type="button" id="si-favicon-remove" class="fd-btn-secondary" style="display:none" onclick="faviconRemove()"><i class="fa-solid fa-trash-can"></i> Remove</button>
+                <button type="button" class="fd-btn-primary" onclick="faviconApplyAll()"><i class="fa-solid fa-check-double"></i> Apply to all pages</button>
+                <input type="file" id="si-favicon-file" accept="image/png,image/svg+xml,image/x-icon,.ico,image/gif,image/jpeg" style="display:none" onchange="uploadFavicon(this.files[0])">
+              </div>
+            </div>
+          </div>
         </div>
         <div class="tab-panel" id="si-contact">
           <div class="si-sec"><h2>Contact Info</h2>
@@ -1651,6 +1662,14 @@ textarea.fb-input{resize:vertical}
           <div class="fg"><label>Confirm</label><input type="password" id="s-pw-confirm"></div>
           <button class="fd-btn-primary" onclick="changePassword()">Change Password</button>
         </div>
+
+        <div class="si-sec architect-only"><h2>Go Live — Find &amp; Replace URL</h2>
+          <div class="desc">Swap a domain across every page when a site goes live — e.g. replace a staging/preview URL with the production domain. Scans all pages, posts, <code>sitemap.xml</code> and <code>robots.txt</code>. Run <strong>Preview</strong> first; the replace is a literal text swap and can't be undone (keep your git history).</div>
+          <div class="fg"><label>Find</label><input type="text" id="go-find" placeholder="https://staging.example.com" spellcheck="false" style="font-family:var(--font-mono);font-size:12px"></div>
+          <div class="fg"><label>Replace with</label><input type="text" id="go-replace" placeholder="https://www.example.com" spellcheck="false" style="font-family:var(--font-mono);font-size:12px"></div>
+          <div style="display:flex;gap:8px"><button class="fd-btn-secondary" onclick="goliveScan(false)"><i class="fa-solid fa-magnifying-glass"></i> Preview</button><button class="fd-btn-primary" onclick="goliveScan(true)"><i class="fa-solid fa-rotate"></i> Replace in all files</button></div>
+          <div id="go-status" style="display:none;margin-top:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--text)"></div>
+        </div>
         </div>
       </div>
 
@@ -1661,7 +1680,7 @@ textarea.fb-input{resize:vertical}
 
         <!-- Vertical tab sidebar -->
         <div style="width:180px;flex-shrink:0;border-right:1px solid var(--border);background:var(--surface);padding:14px 10px;display:flex;flex-direction:column;gap:3px">
-          <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--muted);padding:4px 8px;margin-bottom:4px">SITE FACTORY</div>
+          <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--muted);padding:4px 8px;margin-bottom:4px">SITE FOUNDRY</div>
           <button class="sf-tab on" id="sf-tab-server"   onclick="sfTab('server')"  >&#8679; Import from Server</button>
           <button class="sf-tab"    id="sf-tab-zip"      onclick="sfTab('zip')"     >&#8679; Import ZIP</button>
           <button class="sf-tab"    id="sf-tab-newrepo"  onclick="sfTab('newrepo')" >&#43; New Repository</button>
@@ -1934,6 +1953,9 @@ textarea.fb-input{resize:vertical}
     <div class="mb">
       <input type="hidden" id="ps-pid">
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:16px"><input type="checkbox" id="ps-draft" style="width:16px;height:16px"> Draft — exclude from the sitemap and mark <code>noindex</code> (kept out of search)</label>
+      <div class="fg"><label>Heading Styles <span style="font-weight:400;color:var(--muted)">— override the site design on this page (blank = use the design)</span></label>
+        <div id="ps-headings" style="display:flex;flex-direction:column;gap:9px"></div>
+      </div>
       <div class="fg"><label>Custom Page CSS <span style="font-weight:400;color:var(--muted)">— applies to this page only</span></label><textarea id="ps-css" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="/* overrides the Design module for this page, e.g. */&#10;h1{font-size:3rem;color:#c0392b}"></textarea></div>
       <div class="fg"><label>Custom Page JavaScript <span style="font-weight:400;color:var(--muted)">— runs on this page only</span></label><textarea id="ps-js" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="// runs just before &lt;/body&gt; on this page only"></textarea></div>
       <div class="desc">Saved with the page. Custom CSS is injected into <code>&lt;head&gt;</code> and JS just before <code>&lt;/body&gt;</code> the next time you <strong>Save</strong> the page.</div>
@@ -2009,7 +2031,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.9.0';
+const CMS_VERSION='1.10.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -4099,6 +4121,119 @@ async function loadSiteInfo(){
   const fields=[['si-name','name'],['si-tagline','tagline'],['si-website','website'],['si-notify','notifyEmail'],['si-phone','phone'],['si-email','email'],['si-street','address.street'],['si-city','address.city'],['si-state','address.state'],['si-zip','address.zip'],['si-facebook','social.facebook'],['si-instagram','social.instagram'],['si-linkedin','social.linkedin'],['si-youtube','social.youtube']];
   fields.forEach(([id,path])=>{const el=document.getElementById(id);if(!el)return;const keys=path.split('.');let val=_site;keys.forEach(k=>val=val?.[k]);el.value=val||'';});
   ['primary','accent','green'].forEach(k=>{const el=document.getElementById('si-color-'+k);if(el&&_site.colors?.[k])el.value=_site.colors[k];});
+  faviconRender();
+}
+
+// ── FAVICON ───────────────────────────────────
+function faviconRender(){
+  const url=_site.favicon||'';
+  const prev=document.getElementById('si-favicon-prev');
+  if(prev) prev.innerHTML = url
+    ? `<img src="${esc(url)}" alt="Favicon" style="width:48px;height:48px;object-fit:contain;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:5px">`
+    : `<div style="width:48px;height:48px;border:1.5px dashed var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><i class="fa-regular fa-image"></i></div>`;
+  const rm=document.getElementById('si-favicon-remove'); if(rm) rm.style.display=url?'inline-flex':'none';
+}
+async function uploadFavicon(file){
+  if(!file) return;
+  const{url,token}=getApiCfg();
+  if(!url||!token){ toast('Configure Server API in Settings to upload','err'); return; }
+  toast('Uploading favicon…');
+  try{
+    const fd=new FormData();
+    fd.append('action','upload'); fd.append('token',token); fd.append('files',file);
+    const res=await fetch(url,{method:'POST',headers:authHeaders(),body:fd});
+    const d=await res.json(); if(d.error) throw new Error(d.error);
+    const result=d.results?.[0]; if(!result?.success) throw new Error(result?.error||'Upload failed');
+    const siteBase=url.replace(/\/admin\/api\.php.*/i,'').replace(/\/$/,'');
+    _site.favicon=siteBase+'/'+result.path;
+    await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)});
+    faviconRender();
+    toast('Favicon uploaded — click "Apply to all pages" to publish it','ok');
+  }catch(e){ toast('Upload failed: '+e.message,'err'); }
+}
+function faviconRemove(){
+  if(!confirm('Clear the favicon? Click "Apply to all pages" afterward to remove it from the live pages.')) return;
+  _site.favicon='';
+  apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}).catch(()=>{});
+  faviconRender();
+  toast('Favicon cleared — click "Apply to all pages" to update the pages','ok');
+}
+// Injects a managed <link rel="icon"> (idempotent — replaces any prior Fourge favicon nodes)
+function faviconInjectIntoHtml(html,url){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const head=doc.head||doc.documentElement;
+  doc.querySelectorAll('[data-fourge-favicon]').forEach(el=>el.remove());
+  if(url){
+    const ext=(url.split(/[?#]/)[0].split('.').pop()||'').toLowerCase();
+    const type={svg:'image/svg+xml',png:'image/png',ico:'image/x-icon',gif:'image/gif',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'}[ext]||'';
+    const add=attrs=>{const el=doc.createElement('link');for(const k in attrs)el.setAttribute(k,attrs[k]);el.setAttribute('data-fourge-favicon','');head.appendChild(el);};
+    add(type?{rel:'icon',type:type,href:url}:{rel:'icon',href:url});
+    add({rel:'apple-touch-icon',href:url});
+  }
+  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+}
+async function faviconApplyAll(){
+  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
+  const url=_site.favicon||'';
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
+  if(!confirm((url?'Set the favicon on':'Remove the favicon from')+' all '+pages.length+' page file(s)?')) return;
+  let done=0,failed=0;
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{ const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){failed++;continue;}
+      await apiCall('write_file',{path:fp,content:faviconInjectIntoHtml(html,url)}); done++;
+    }catch(e){ console.warn('Favicon apply failed for '+fp,e.message); failed++; }
+  }
+  toast(done?('Favicon '+(url?'set on':'removed from')+' '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated','ok');
+}
+
+// ── GO LIVE — find & replace a URL across every site file ─────────
+function golivePages(){
+  const files=new Set();
+  getPageList().forEach(p=>{ const fp=p.path||p.file; if(fp&&veIsSafePath(fp)) files.add(fp); });
+  (_posts||[]).forEach(po=>{ const fp=po.path||(po.slug?('blog/'+po.slug+'.html'):''); if(fp&&veIsSafePath(fp)) files.add(fp); });
+  files.add('sitemap.xml'); files.add('robots.txt');
+  return [...files];
+}
+async function goliveScan(apply){
+  const find=(document.getElementById('go-find')?.value||'').trim();
+  const repl=document.getElementById('go-replace')?.value||'';
+  const st=document.getElementById('go-status');
+  if(!find){ toast('Enter the URL or text to find','err'); return; }
+  if(!canCallApi()){ toast('Sign in again to run this','err'); return; }
+  if(apply && find===repl){ toast('Find and Replace are identical — nothing to do','err'); return; }
+  if(apply && !confirm('Replace every occurrence of:\n\n  '+find+'\n\nwith:\n\n  '+(repl||'(empty string)')+'\n\nacross all site files? This is a literal text swap and cannot be undone — make sure your work is committed to git first.')) return;
+  if(!Object.keys(_pages).length) await loadPages();
+  const files=golivePages();
+  let scanned=0, hits=0, filesWithHits=0, changed=0, failed=0; const details=[];
+  for(const fp of files){
+    let html;
+    try{ const d=await apiCall('read_file',{path:fp}); html=d.content; }
+    catch(e){ continue; } // file may not exist (e.g. no sitemap yet) — skip quietly
+    if(html==null) continue;
+    scanned++;
+    const count=html.split(find).length-1;
+    if(count>0){
+      hits+=count; filesWithHits++; details.push(fp+' — '+count+'×');
+      if(apply){ try{ await apiCall('write_file',{path:fp,content:html.split(find).join(repl)}); changed++; }catch(e){ failed++; details[details.length-1]+=' (write failed)'; } }
+    }
+  }
+  // On apply, also fix the website URL stored in site.json if it referenced the old domain
+  if(apply && _site && typeof _site.website==='string' && _site.website.indexOf(find)>=0){
+    _site.website=_site.website.split(find).join(repl);
+    const w=document.getElementById('si-website'); if(w) w.value=_site.website;
+    try{ await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}); }catch(e){}
+  }
+  if(st){
+    st.style.display='block';
+    st.innerHTML=(apply
+      ? `<strong>Replaced</strong> ${hits} occurrence(s) across ${changed} file(s)${failed?` — <span style="color:var(--ember)">${failed} write(s) failed</span>`:''}.`
+      : (hits?`<strong>Preview:</strong> found ${hits} occurrence(s) in ${filesWithHits} of ${scanned} file(s). Click <strong>Replace in all files</strong> to apply.`
+            : `<strong>Preview:</strong> no occurrences found in ${scanned} file(s).`))
+      +(details.length?`<div style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--muted);max-height:170px;overflow:auto">`+details.map(d=>esc(d)).join('<br>')+`</div>`:'');
+  }
+  toast(apply?('Replaced in '+changed+' file(s)'+(failed?' ('+failed+' failed)':'')):('Found '+hits+' occurrence(s) in '+filesWithHits+' file(s)'), apply&&failed?'err':'ok');
 }
 
 // ── PLUGINS ───────────────────────────────────
@@ -5180,7 +5315,40 @@ function openPageSettings(pid){
   document.getElementById('ps-draft').checked=!!pg.draft;
   document.getElementById('ps-css').value=pg.customCss||'';
   document.getElementById('ps-js').value=pg.customJs||'';
+  psRenderHeadings(pg.headingStyles||{});
   openM('m-pagesettings');
+}
+// Per-page H1/H2/H3 overrides — build the editor rows and read them back
+function psRenderHeadings(hs){
+  const wrap=document.getElementById('ps-headings'); if(!wrap) return;
+  const weights=['','300','400','500','600','700','800','900'];
+  const aligns=['','left','center','right'];
+  wrap.innerHTML=['h1','h2','h3'].map(tag=>{
+    const s=hs[tag]||{};
+    const wopt=weights.map(w=>`<option value="${w}"${String(s.weight||'')===w?' selected':''}>${w||'weight'}</option>`).join('');
+    const aopt=aligns.map(a=>`<option value="${a}"${(s.align||'')===a?' selected':''}>${a||'align'}</option>`).join('');
+    const hasColor=!!s.color;
+    return `<div style="display:grid;grid-template-columns:34px 1fr 92px 84px 40px;gap:8px;align-items:center">
+      <span style="font-weight:700;font-size:13px;color:var(--text);text-transform:uppercase">${tag}</span>
+      <input type="text" id="ps-${tag}-size" value="${esc(s.size||'')}" placeholder="size e.g. 2.5rem" style="font-size:12px">
+      <select id="ps-${tag}-weight" style="font-size:12px">${wopt}</select>
+      <select id="ps-${tag}-align" style="font-size:12px">${aopt}</select>
+      <input type="color" id="ps-${tag}-color" value="${hasColor?esc(s.color):'#000000'}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (click to set; blank stays on the design)" style="width:40px;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+    </div>`;
+  }).join('');
+}
+function psReadHeadings(){
+  const out={};
+  ['h1','h2','h3'].forEach(tag=>{
+    const size=(document.getElementById('ps-'+tag+'-size')?.value||'').trim();
+    const weight=document.getElementById('ps-'+tag+'-weight')?.value||'';
+    const align=document.getElementById('ps-'+tag+'-align')?.value||'';
+    const colEl=document.getElementById('ps-'+tag+'-color');
+    const color=(colEl&&colEl.dataset.set==='1')?colEl.value:'';
+    const o={}; if(size)o.size=size; if(weight)o.weight=weight; if(align)o.align=align; if(color)o.color=color;
+    if(Object.keys(o).length) out[tag]=o;
+  });
+  return out;
 }
 async function savePagesJson(){
   const json=JSON.stringify(_pages,null,2); let ok=false;
@@ -5194,6 +5362,7 @@ async function savePageSettings(){
   pg.draft=document.getElementById('ps-draft').checked;
   pg.customCss=document.getElementById('ps-css').value;
   pg.customJs=document.getElementById('ps-js').value;
+  const hs=psReadHeadings(); if(Object.keys(hs).length) pg.headingStyles=hs; else delete pg.headingStyles;
   const ok=await savePagesJson();
   renderVePageList();
   closeM('m-pagesettings');
@@ -5220,16 +5389,37 @@ async function deletePageNow(){
     toast('Page deleted','ok');
   }catch(e){ toast('Delete failed: '+e.message,'err'); }
 }
-// Inject per-page custom CSS/JS as managed, idempotent blocks into the saved HTML.
+// Compile the per-page H1/H2/H3 overrides into CSS. Scoped to `body` + !important so
+// they reliably win over the site design (this is an explicit per-page override).
+function pageHeadingCss(pg){
+  const h=pg&&pg.headingStyles; if(!h) return '';
+  const norm=v=>{ v=String(v||'').trim(); return /^[0-9.]+$/.test(v)?v+'px':v; };
+  const out=[];
+  ['h1','h2','h3'].forEach(tag=>{
+    const s=h[tag]||{}; const d=[];
+    if(s.size)   d.push('font-size:'+norm(s.size)+' !important');
+    if(s.weight) d.push('font-weight:'+s.weight+' !important');
+    if(s.align)  d.push('text-align:'+s.align+' !important');
+    if(s.color)  d.push('color:'+s.color+' !important');
+    if(d.length) out.push('body '+tag+'{'+d.join(';')+'}');
+  });
+  return out.join('\n');
+}
+// Inject per-page heading overrides + custom CSS/JS as managed, idempotent blocks.
 function pageInjectCustom(html, pg){
   if(!pg) return html;
-  const hasCss=(pg.customCss||'').trim(), hasJs=(pg.customJs||'').trim();
+  const headCss=pageHeadingCss(pg);
+  const parts=[];
+  if(headCss) parts.push('/* Fourge per-page heading styles */\n'+headCss);
+  if((pg.customCss||'').trim()) parts.push(pg.customCss);
+  const css=parts.join('\n\n');
+  const hasCss=!!css.trim(), hasJs=(pg.customJs||'').trim();
   if(!hasCss && !hasJs && !/data-fourge-page/.test(html)) return html; // nothing to do
   try{
     const doc=new DOMParser().parseFromString(html,'text/html');
     const head=doc.head||doc.documentElement, body=doc.body||doc.documentElement;
     doc.querySelectorAll('[data-fourge-page]').forEach(el=>el.remove()); // clear prior managed blocks
-    if(hasCss){ const st=doc.createElement('style'); st.id='fourge-page-css'; st.setAttribute('data-fourge-page',''); st.textContent=pg.customCss; head.appendChild(st); }
+    if(hasCss){ const st=doc.createElement('style'); st.id='fourge-page-css'; st.setAttribute('data-fourge-page',''); st.textContent=css; head.appendChild(st); }
     if(hasJs){ const sc=doc.createElement('script'); sc.id='fourge-page-js'; sc.setAttribute('data-fourge-page',''); sc.textContent=pg.customJs; body.appendChild(sc); }
     return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
   }catch(e){ console.warn('pageInjectCustom failed',e.message); return html; }
@@ -5505,6 +5695,8 @@ return '(function(){\n'
 +'      html:isImg?"":t.innerHTML,\n'
 +'      src:t.src||t.currentSrc||t.getAttribute("src")||"",\n'
 +'      href:t.getAttribute("href")||"",\n'
++'      target:t.getAttribute("target")||"",\n'
++'      anchorId:(t.id&&t.id.indexOf("__fe_")!==0)?t.id:"",\n'
 +'      alt:t.alt||"", isImg:isImg, isLink:isLink,\n'
 +'      imgLink:imgLink, imgLinkFid:imgLinkFid, isLi:isLi, liCount:liCount,\n'
 +'      isFaq:isFaq, faqQuestion:faqQ, faqAnswer:faqA, faqCount:faqCount,\n'
@@ -5584,6 +5776,8 @@ return '(function(){\n'
 +'      el2.style.setProperty("background-image","url("+m.value+")","important");\n'
 +'    }\n'
 +'    if(m.field==="href") el2.setAttribute("href",m.value);\n'
++'    if(m.field==="target"){if(m.value){el2.setAttribute("target",m.value);el2.setAttribute("rel","noopener noreferrer");}else{el2.removeAttribute("target");el2.removeAttribute("rel");}}\n'
++'    if(m.field==="anchorId"){var _aid=String(m.value||"").trim().replace(/\\s+/g,"-").replace(/[^A-Za-z0-9_\\-]/g,"");if(_aid){el2.id=_aid;}else if(el2.id&&el2.id.indexOf("__fe_")!==0){el2.removeAttribute("id");}}\n'
 +'    if(m.field==="alt") el2.alt=m.value;\n'
 +'    if(m.field==="color") el2.style.color=m.value;\n'
 +'    if(m.field==="bg"||m.field==="bgColor") el2.style.backgroundColor=m.value;\n'
@@ -5774,6 +5968,14 @@ function veShowProps(info){
       </div>
     </div>`;
 
+  // Anchor / ID — any element (esp. sections & columns) can become a #jump target
+  const anchorField = `
+    <div class="ve-style-divider"><span>Anchor / ID</span></div>
+    <div class="ve-field"><label>Anchor ID <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(jump here with #id)</span></label>
+      <input type="text" id="vp-anchor" value="${esc(info.anchorId||'')}" placeholder="e.g. services, contact" oninput="this.value=this.value.replace(/\\s+/g,'-').replace(/[^A-Za-z0-9_\\-]/g,'')">
+      ${info.anchorId?`<div class="desc" style="margin:6px 0 0;font-size:11px">Link to this spot: <code style="background:var(--surface-3);padding:1px 5px;border-radius:4px">#${esc(info.anchorId)}</code></div>`:''}
+    </div>`;
+
   if(isImg){
     const imgSrc = info.src || info.bgImage || '';
     fields = `
@@ -5799,6 +6001,7 @@ function veShowProps(info){
       ${(info.imgNatW&&info.imgNatH)?`<div class="desc" style="margin:-4px 0 8px">Natural size: ${info.imgNatW}×${info.imgNatH}px. Set width only and leave height blank to keep aspect ratio.</div>`:`<div class="desc" style="margin:-4px 0 8px">Tip: set width only (e.g. 200px) and leave height blank to keep the aspect ratio.</div>`}
       <button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veResetImgSize()">Reset to natural size</button>
       ${spacingFields}
+      ${anchorField}
       <div class="ve-btn-pair" style="margin-bottom:12px;margin-top:12px">
         <button class="ve-apply-btn" style="margin:0" onclick="veApplyImg()">Apply</button>
         <button class="ve-apply-btn" style="margin:0;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veOpenImgPicker()">Browse Library</button>
@@ -5816,8 +6019,11 @@ function veShowProps(info){
         <textarea id="vp-text" rows="4">${esc(info.text||'')}</textarea>
       </div>
       ${isLink?`<div class="ve-field"><label>Link URL</label>
-        <input type="url" id="vp-href" value="${esc(info.href||'')}" placeholder="https://…">
-      </div>`:''}
+        <input type="url" id="vp-href" value="${esc(info.href||'')}" placeholder="https://… or #anchor">
+      </div>
+      <label class="ve-newtab" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);margin:-2px 0 12px;cursor:pointer">
+        <input type="checkbox" id="vp-newtab"${info.target==='_blank'?' checked':''} style="width:auto;margin:0;cursor:pointer"> Open in a new tab
+      </label>`:''}
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Color</label>
           <input type="color" id="vp-color" value="${st.color||'#000000'}" data-dirty="0" oninput="this.dataset.dirty='1'" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
@@ -5841,6 +6047,7 @@ function veShowProps(info){
         </div>
       </div>
       ${spacingFields}
+      ${anchorField}
       <button class="ve-apply-btn" onclick="veApplyText()">Apply Changes</button>
       ${info.isFaq?`<div class="ve-style-divider"><span>FAQ Item</span></div>
       <div class="ve-field"><label>Question</label>
@@ -5977,7 +6184,11 @@ function veApplyText(){
   const o=_veOrigStyles||{};
   const send=d=>ifrm.contentWindow.postMessage({type:'ve-update',fid:_veCurSel.fid,...d},'*');
   if(text!==undefined && text!==_veCurSel.text) send({field:'text',value:text});
-  if(href && href!==_veCurSel.href) send({field:'href',value:href});
+  if(href!==undefined && href!==_veCurSel.href) send({field:'href',value:href});
+  const newtabEl=document.getElementById('vp-newtab');
+  if(newtabEl){ const want=newtabEl.checked?'_blank':''; if(want!==(_veCurSel.target||'')) send({field:'target',value:want}); }
+  const anchorEl=document.getElementById('vp-anchor');
+  if(anchorEl){ const av=anchorEl.value.trim(); if(av!==(_veCurSel.anchorId||'')) send({field:'anchorId',value:av}); }
   const colorEl=document.getElementById('vp-color');
   if(colorEl && colorEl.dataset.dirty==='1') send({field:'color',value:colorEl.value});
   if(size && size!==(o.fontSize||'')) send({field:'size',value:size});
@@ -6049,6 +6260,8 @@ function veApplyImg(){
     if(src) send({field:'src',value:src});
     if(alt!==undefined && alt!==_veCurSel.alt) send({field:'alt',value:alt});
   }
+  const anchorEl=document.getElementById('vp-anchor');
+  if(anchorEl){ const av=anchorEl.value.trim(); if(av!==(_veCurSel.anchorId||'')) send({field:'anchorId',value:av}); }
   veSendStyles(send);
   document.getElementById('ve-unsaved')?.classList.add('on');
   toast('Image updated — click Save to publish','ok');
