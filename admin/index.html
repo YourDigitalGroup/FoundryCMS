@@ -435,6 +435,9 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-page-item:hover{background:var(--surface-3);color:var(--text)}
 .ve-page-item.on{background:var(--ember-soft);color:var(--ember);font-weight:600}
 .ve-page-item-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.ve-page-gear{border:none;background:none;color:var(--muted);cursor:pointer;padding:2px 5px;font-size:12px;flex-shrink:0;border-radius:4px;opacity:.55;transition:all .12s}
+.ve-page-item:hover .ve-page-gear{opacity:1}
+.ve-page-gear:hover{color:var(--ember);background:var(--surface-3)}
 .ve-props{width:272px;border-left:1px solid var(--border);background:var(--surface);overflow-y:auto;flex-shrink:0;display:flex;flex-direction:column}
 #ve-props-header{padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;background:var(--surface)}
 #ve-props-tag{font-family:var(--font-mono);font-size:10px;font-weight:700;padding:2px 7px;background:var(--ember-soft);color:var(--ember);border-radius:4px}
@@ -1070,7 +1073,7 @@ textarea.fb-input{resize:vertical}
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> SEO
         </div>
         <div class="ni" onclick="navTo('factory')" id="ni-factory" data-perm="siteFactory">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Site Factory
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Site Foundry
         </div>
         <div class="ni" onclick="navTo('settings')" id="ni-settings">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg> Settings
@@ -1631,7 +1634,7 @@ textarea.fb-input{resize:vertical}
               <div class="fd-toggle" id="perm-toggle-aiEdit" onclick="toggleEditorPerm('aiEdit',this)"><div class="fd-toggle-knob"></div></div>
             </label>
             <label style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;gap:16px">
-              <div><div style="font-size:13px;font-weight:600;color:var(--text)">Site Factory</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Import pages and scan server structure</div></div>
+              <div><div style="font-size:13px;font-weight:600;color:var(--text)">Site Foundry</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Import pages and scan server structure</div></div>
               <div class="fd-toggle" id="perm-toggle-siteFactory" onclick="toggleEditorPerm('siteFactory',this)"><div class="fd-toggle-knob"></div></div>
             </label>
             <label style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer;gap:16px">
@@ -1925,6 +1928,25 @@ textarea.fb-input{resize:vertical}
     <div class="mf"><button class="fd-btn-secondary" onclick="closeM('m-account');openChangePw()">Change password</button><div style="flex:1"></div><button class="fd-btn-secondary" onclick="closeM('m-account')">Cancel</button><button class="fd-btn-primary" onclick="saveMyProfile()">Save</button></div>
   </div>
 </div>
+<div class="mw" id="m-pagesettings">
+  <div class="modal" style="width:600px;max-height:90vh;overflow-y:auto">
+    <div class="mh"><h2>Page Settings — <span id="ps-title">—</span></h2><button class="ib" onclick="closeM('m-pagesettings')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb">
+      <input type="hidden" id="ps-pid">
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:16px"><input type="checkbox" id="ps-draft" style="width:16px;height:16px"> Draft — exclude from the sitemap and mark <code>noindex</code> (kept out of search)</label>
+      <div class="fg"><label>Custom Page CSS <span style="font-weight:400;color:var(--muted)">— applies to this page only</span></label><textarea id="ps-css" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="/* overrides the Design module for this page, e.g. */&#10;h1{font-size:3rem;color:#c0392b}"></textarea></div>
+      <div class="fg"><label>Custom Page JavaScript <span style="font-weight:400;color:var(--muted)">— runs on this page only</span></label><textarea id="ps-js" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="// runs just before &lt;/body&gt; on this page only"></textarea></div>
+      <div class="desc">Saved with the page. Custom CSS is injected into <code>&lt;head&gt;</code> and JS just before <code>&lt;/body&gt;</code> the next time you <strong>Save</strong> the page.</div>
+    </div>
+    <div class="mf">
+      <button class="btn btn-r btn-sm" onclick="deletePageNow()" title="Permanently delete the .html file from the server"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg> Delete page</button>
+      <button class="fd-btn-secondary" onclick="pageSettingsRemove()" title="Hide from the CMS list — the file stays on the server">Remove from CMS</button>
+      <div style="flex:1"></div>
+      <button class="fd-btn-secondary" onclick="closeM('m-pagesettings')">Cancel</button>
+      <button class="fd-btn-primary" onclick="savePageSettings()">Save settings</button>
+    </div>
+  </div>
+</div>
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -1987,7 +2009,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.8.0';
+const CMS_VERSION='1.9.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2030,7 +2052,7 @@ function goPanel(id){
     )n.classList.add('on');});
   const ptWrap=document.getElementById('sb-pages-tree-wrap');if(ptWrap)ptWrap.style.display=id==='p-pages'?'block':'none';
   const bc=document.getElementById('tb-breadcrumb');
-  if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-settings':'Settings','p-factory':'Site Factory','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
+  if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
   else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject')initPlugins();else if(id==='p-analytics')initAnalytics();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-users')initUsers();
@@ -2139,7 +2161,7 @@ async function loadDash(){
   try{await loadPages();const pg=getPageList();const stP=document.getElementById('st-pages');if(stP)stP.textContent=pg.length;const niP=document.getElementById('ni-pg-count');if(niP)niP.textContent=pg.length;
     const tbody=document.getElementById('dash-pages-body');
     if(tbody){if(!pg.length){
-        tbody.innerHTML='<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No pages yet. Use Site Factory to import.</div>';
+        tbody.innerHTML='<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No pages yet. Use Site Foundry to import.</div>';
       } else {
         const cols='1fr 80px 80px 100px 60px';
         const head=document.querySelector('#dash-pages-table .pg-tbl-head');
@@ -2208,7 +2230,7 @@ const EDITOR_MODULES = [
   {key:'seo',         label:'SEO Panel',        desc:'Manage meta titles, descriptions, and SEO settings'},
   {key:'aiEdit',      label:'General Markup',   desc:'Markup tools in the page editor toolbar'},
   {key:'revisions',   label:'Revisions',        desc:'View history and restore previous page versions'},
-  {key:'siteFactory', label:'Site Factory',     desc:'Import pages and scan server structure'},
+  {key:'siteFactory', label:'Site Foundry',     desc:'Import pages and scan server structure'},
   {key:'design',      label:'Design / Site Info',desc:'Edit site-wide design and information'},
   {key:'plugins',     label:'Plugins',          desc:'Manage code injections and plugins'},
 ];
@@ -3779,7 +3801,7 @@ async function initMedia(){
     if(!url||!token){
       grid.innerHTML='<div class="empty" style="grid-column:1/-1"><i class="fa-regular fa-image"></i><h3>Server API not configured</h3><p>Go to <strong>Settings → Server API</strong> to connect, then return here.</p></div>';
     } else {
-      grid.innerHTML='<div class="empty" style="grid-column:1/-1"><i class="fa-regular fa-image"></i><h3>No images found</h3><p>Run <strong>Site Factory → Import from Server</strong> to scan your site for images, then return here.</p></div>';
+      grid.innerHTML='<div class="empty" style="grid-column:1/-1"><i class="fa-regular fa-image"></i><h3>No images found</h3><p>Run <strong>Site Foundry → Import from Server</strong> to scan your site for images, then return here.</p></div>';
     }
     return;
   }
@@ -3842,7 +3864,7 @@ async function initSEO(){
   const ta=document.getElementById('seo-ta');
   if(ta) ta.innerHTML='<button class="fd-btn-primary" onclick="saveSEO()">Save</button>'
     +'<button class="fd-btn-secondary" onclick="seoApplyAll()" title="Write SEO meta + schema into every page, regenerate sitemap.xml + robots.txt">Apply to all pages</button>'
-    +'<button class="fd-btn-secondary" onclick="genAllSEO()">Generate all with AI</button>';
+    +'<button class="fd-btn-secondary" onclick="genAllSEO()"><i class="fa-solid fa-wand-magic"></i> Generate All</button>';
   if(!pages.length){ document.getElementById('seo-body').innerHTML='<div class="empty"><h3>No pages yet</h3><p>Upload your .html pages and they appear here.</p></div>'; }
   else{
     if(!_curSEOPage||!_pages[_curSEOPage]) _curSEOPage=pages[0].id;
@@ -3894,7 +3916,7 @@ function renderSEO(pid){
   document.getElementById('seo-body').innerHTML=
     '<div style="display:flex;gap:22px;flex-wrap:wrap"><div style="flex:1;min-width:330px">'
     +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><div style="font-size:14px;font-weight:700">'+esc(decodeHtml(pg.title||capitalize(pid)))+'</div>'
-    +'<button class="fd-btn-secondary" style="font-size:12px" onclick="genSEO(\''+pid+'\')">✨ Generate with AI</button></div>'
+    +'<button class="fd-btn-secondary" style="font-size:12px" onclick="genSEO(\''+pid+'\')"><i class="fa-solid fa-wand-magic"></i> Generate</button></div>'
     +'<div class="fg"><label>Focus Keyword</label><input type="text" value="'+esc(s.focusKeyword||'')+'" oninput="updateSEO(\''+pid+'\',\'focusKeyword\',this.value)" placeholder="primary keyword for this page"></div>'
     +'<div class="fg"><label>SEO Title <span style="font-weight:400;color:var(--muted)">(50–60)</span></label><input type="text" value="'+esc(decodeHtml(s.title||''))+'" maxlength="70" oninput="updateSEO(\''+pid+'\',\'title\',this.value)"><small id="seo-title-count">'+(s.title||'').length+'/60</small></div>'
     +'<div class="fg"><label>Meta Description <span style="font-weight:400;color:var(--muted)">(120–160)</span></label><textarea rows="3" maxlength="200" oninput="updateSEO(\''+pid+'\',\'description\',this.value)">'+esc(s.description||'')+'</textarea><small id="seo-desc-count">'+(s.description||'').length+'/160</small></div>'
@@ -4010,7 +4032,8 @@ function seoInjectIntoHtml(html,pg,base){
   let canon=s.canonical;
   if(!canon && base){ const path=String(pg.path||pg.file).replace(/^\/+/,'').replace(/index\.html?$/i,''); canon=base+'/'+path; }
   if(canon) add('link',{rel:'canonical',href:canon});
-  add('meta',{name:'robots',content:(s.noindex?'noindex':'index')+','+(s.nofollow?'nofollow':'follow')});
+  const noindex=s.noindex || (_pages[pid]&&_pages[pid].draft);   // draft pages are noindex
+  add('meta',{name:'robots',content:(noindex?'noindex':'index')+','+(s.nofollow?'nofollow':'follow')});
   const ogTitle=s.ogTitle||s.title, ogDesc=s.ogDescription||s.description, ogImg=s.ogImage||seoGlobal().defaultOg;
   if(ogTitle) add('meta',{property:'og:title',content:ogTitle});
   if(ogDesc) add('meta',{property:'og:description',content:ogDesc});
@@ -4048,7 +4071,7 @@ async function seoApplyAll(){
 function seoBuildSitemap(){
   const base=normSiteBase(); if(!base) return null;
   const seen=new Set(), urls=[];
-  getPageList().forEach(p=>{ const pid=pageIdFromPath(p.path||p.file); if((_seo[pid]||{}).noindex) return;
+  getPageList().forEach(p=>{ const pid=pageIdFromPath(p.path||p.file); if((_seo[pid]||{}).noindex || (_pages[pid]&&_pages[pid].draft)) return;
     let u=base+'/'+String(p.path||p.file).replace(/^\/+/,'').replace(/index\.html?$/i,''); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
   (_posts||[]).forEach(po=>{ const path=po.path||(po.slug?('blog/'+po.slug):''); if(!path) return; const u=base+'/'+String(path).replace(/^\/+/,''); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
   const lastmod=new Date().toISOString().slice(0,10);
@@ -4306,7 +4329,7 @@ async function gaWalkPages(inject){
   const{url,token}=getApiCfg();
   if(!url||!token){ toast('Configure Server API in Settings first','err'); return; }
   const ids=Object.keys(_pages||{});
-  if(!ids.length){ toast('No pages found — import via Site Factory first','err'); return; }
+  if(!ids.length){ toast('No pages found — import via Site Foundry first','err'); return; }
   const statusEl=document.getElementById('ga-inject-status');
   let done=0,failed=0;
   for(const id of ids){
@@ -5035,7 +5058,7 @@ function getPageList(){
   }));
 }
 
-// Derive a stable page id from a relative path. MUST match the Site Factory
+// Derive a stable page id from a relative path. MUST match the Site Foundry
 // import scheme so a scanned file and its imported counterpart share one entry
 // (e.g. index.html → "home", about/index.html → "about-index").
 function pageIdFromPath(relPath){
@@ -5091,11 +5114,14 @@ async function loadPages(){
   }
 
   // Drop pages the user removed from the CMS (the .html files stay on the server).
-  const hidden=new Set((_site.hiddenPages||[]).map(p=>String(p).toLowerCase()));
+  // Match the hidden key against the page's path, file, AND id — a removed entry
+  // may have been stored as any of these, so check all three (the old code only
+  // tested path||file as one value and missed the others → "remove" didn't stick).
+  const hidden=new Set((_site.hiddenPages||[]).map(p=>String(p).toLowerCase().replace(/^\/+/,'')));
   if(hidden.size){
     for(const id in merged){
-      const p=String(merged[id].path||merged[id].file||'').toLowerCase();
-      if(hidden.has(p)) delete merged[id];
+      const cands=[merged[id].path, merged[id].file, id].map(v=>String(v||'').toLowerCase().replace(/^\/+/,''));
+      if(cands.some(c=>c && hidden.has(c))) delete merged[id];
     }
   }
 
@@ -5132,12 +5158,81 @@ function renderVePageList(){
     el.innerHTML='<div style="padding:16px;text-align:center;font-size:12px;color:var(--muted)">No pages found.<br>Upload .html files and<br>they appear automatically.</div>';
     return;
   }
-  el.innerHTML=pages.map(p=>`
-    <div class="ve-page-item${p.id===_curPage?' on':''}" onclick="veSelectPage('${p.id}')">
-      <span class="ve-page-item-dot"></span>
-      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(p.label)}</span>
-      ${_veHtml[p.id]&&_veHtml[p.id]!==_veOrigHtml[p.id]?'<span style="width:6px;height:6px;border-radius:50%;background:var(--ember);flex-shrink:0"></span>':''}
-    </div>`).join('');
+  el.innerHTML=pages.map(p=>{
+    const pg=_pages[p.id]||{};
+    const tlp=!!pg.tlp;                                   // generated by Targeted Landing Pages → red dot
+    const draft=!!pg.draft;
+    const unsaved=_veHtml[p.id]&&_veHtml[p.id]!==_veOrigHtml[p.id];
+    return '<div class="ve-page-item'+(p.id===_curPage?' on':'')+'" onclick="veSelectPage(\''+p.id+'\')">'
+      +'<span class="ve-page-item-dot"'+(tlp?' style="background:#e1483b" title="Targeted landing page"':'')+'></span>'
+      +'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+esc(p.label)+(draft?' <span style="color:var(--muted);font-size:10px;font-weight:600">· DRAFT</span>':'')+'</span>'
+      +(unsaved?'<span style="width:6px;height:6px;border-radius:50%;background:var(--ember);flex-shrink:0" title="Unsaved changes"></span>':'')
+      +'<button class="ve-page-gear" title="Page settings" onclick="event.stopPropagation();openPageSettings(\''+p.id+'\')"><i class="fa-solid fa-gear"></i></button>'
+      +'</div>';
+  }).join('');
+}
+
+// ── PAGE SETTINGS (gear icon on each page row) ──────────────────────────────
+function openPageSettings(pid){
+  const pg=_pages[pid]; if(!pg){ toast('Page not found','err'); return; }
+  document.getElementById('ps-pid').value=pid;
+  document.getElementById('ps-title').textContent=decodeHtml(pg.title||capitalize(pid));
+  document.getElementById('ps-draft').checked=!!pg.draft;
+  document.getElementById('ps-css').value=pg.customCss||'';
+  document.getElementById('ps-js').value=pg.customJs||'';
+  openM('m-pagesettings');
+}
+async function savePagesJson(){
+  const json=JSON.stringify(_pages,null,2); let ok=false;
+  if(canCallApi()){ try{ await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
+  const{repo,pat}=ghCfg(); if(repo&&pat){ try{ const sha=await ghSHA(F_PAGES); await ghWrite(F_PAGES,json,sha,'Fourge: page settings'); ok=true; }catch(e){} }
+  return ok;
+}
+async function savePageSettings(){
+  const pid=document.getElementById('ps-pid').value, pg=_pages[pid];
+  if(!pg){ toast('Page not found','err'); return; }
+  pg.draft=document.getElementById('ps-draft').checked;
+  pg.customCss=document.getElementById('ps-css').value;
+  pg.customJs=document.getElementById('ps-js').value;
+  const ok=await savePagesJson();
+  renderVePageList();
+  closeM('m-pagesettings');
+  toast(ok?'Page settings saved — Save the page to apply CSS/JS to the file':'Could not save page settings', ok?'ok':'err');
+}
+function pageSettingsRemove(){
+  const pid=document.getElementById('ps-pid').value, pg=_pages[pid]; if(!pg) return;
+  closeM('m-pagesettings');
+  removePageFromCMS(pg.path||pg.file||'');
+}
+async function deletePageNow(){
+  const pid=document.getElementById('ps-pid').value, pg=_pages[pid]; if(!pg){ toast('Page not found','err'); return; }
+  const fp=pg.path||pg.file;
+  if(!confirm('Delete this page?\n\nThis permanently deletes '+fp+' from the server and cannot be undone.')) return;
+  if(!canCallApi()){ toast('Sign in again to delete','err'); return; }
+  try{
+    await apiCall('delete_file',{path:fp});
+    delete _pages[pid]; delete _veHtml[pid]; delete _veOrigHtml[pid];
+    await savePagesJson();
+    closeM('m-pagesettings');
+    if(_curPage===pid){ const rest=getPageList(); _curPage=rest[0]?rest[0].id:''; }
+    renderVePageList();
+    if(_curPage) veLoadPage(_curPage); else veShowEmpty('No pages. Upload .html files and they appear here.');
+    toast('Page deleted','ok');
+  }catch(e){ toast('Delete failed: '+e.message,'err'); }
+}
+// Inject per-page custom CSS/JS as managed, idempotent blocks into the saved HTML.
+function pageInjectCustom(html, pg){
+  if(!pg) return html;
+  const hasCss=(pg.customCss||'').trim(), hasJs=(pg.customJs||'').trim();
+  if(!hasCss && !hasJs && !/data-fourge-page/.test(html)) return html; // nothing to do
+  try{
+    const doc=new DOMParser().parseFromString(html,'text/html');
+    const head=doc.head||doc.documentElement, body=doc.body||doc.documentElement;
+    doc.querySelectorAll('[data-fourge-page]').forEach(el=>el.remove()); // clear prior managed blocks
+    if(hasCss){ const st=doc.createElement('style'); st.id='fourge-page-css'; st.setAttribute('data-fourge-page',''); st.textContent=pg.customCss; head.appendChild(st); }
+    if(hasJs){ const sc=doc.createElement('script'); sc.id='fourge-page-js'; sc.setAttribute('data-fourge-page',''); sc.textContent=pg.customJs; body.appendChild(sc); }
+    return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+  }catch(e){ console.warn('pageInjectCustom failed',e.message); return html; }
 }
 
 function veSelectPage(id){
@@ -6732,7 +6827,7 @@ function veRenderImgPicker(filter=''){
   ).filter(m=>/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name));
 
   if(!items.length){
-    grid.innerHTML='<div class="ve-img-picker-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><strong>No images found</strong><span>Upload images using the button above, or run Site Factory → Import to scan your server.</span></div>';
+    grid.innerHTML='<div class="ve-img-picker-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><strong>No images found</strong><span>Upload images using the button above, or run Site Foundry → Import to scan your server.</span></div>';
     return;
   }
   grid.innerHTML = items.map((m,i)=>`
@@ -7128,6 +7223,7 @@ async function veSavePage(){
   let html;
   if(_veMode==='code' && _cmEditor){ html=_cmEditor.getValue(); }
   else { html=veSerializeClean(); if(html==null){ toast('Page not loaded yet','err'); return; } }
+  html=pageInjectCustom(html, pg);   // per-page custom CSS/JS (Page Settings)
 
   const btn=document.getElementById('ve-save-btn');
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
@@ -7555,7 +7651,7 @@ function initImportFromServer(){
   status.innerHTML = ifsStatusBadge('Server', ok, ok ? ' · connected' : ' · sign in again');
   if(!ok){
     const body=document.getElementById('ifs-body');
-    if(body) body.innerHTML = '<div class="warn-b">Your session expired — sign in again to use Site Factory.</div>';
+    if(body) body.innerHTML = '<div class="warn-b">Your session expired — sign in again to use Site Foundry.</div>';
     const btn=document.getElementById('ifs-scan-btn'); if(btn) btn.disabled = true;
   } else {
     const btn=document.getElementById('ifs-scan-btn'); if(btn) btn.disabled = false;
