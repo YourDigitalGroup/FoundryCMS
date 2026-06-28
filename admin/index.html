@@ -124,6 +124,7 @@ body.sb-collapsed .sb{width:0;min-width:0;border-right-width:0;overflow:hidden}
 body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 #p-pages.vepl-collapsed .vepl-collapse svg{transform:rotate(180deg)}
 .sb-nav{flex:1;padding:10px 8px 8px}
+.sb-version{flex-shrink:0;padding:8px 14px 12px;font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;color:var(--muted);opacity:.5;white-space:nowrap;user-select:text}
 .sb-sec{font-size:9px;font-weight:700;color:var(--muted);letter-spacing:.16em;text-transform:uppercase;padding:12px 8px 5px}
 .ni{display:flex;align-items:center;gap:8px;padding:7px 10px;color:var(--sb-text);font-size:13px;font-weight:500;cursor:pointer;transition:all .1s;user-select:none;border-radius:var(--r-sm)}
 .ni:hover{color:var(--sb-text-hover);background:var(--surface-3)}
@@ -1102,7 +1103,7 @@ textarea.fb-input{resize:vertical}
         </div>
       </div>
       <!-- Account actions (Account / Change password / Sign out) moved to the profile menu (top-right avatar). -->
-
+      <div class="sb-version" id="sb-version" title="Fourge CMS version"></div>
     </div><!-- /sb -->
 
     <div class="main">
@@ -2054,7 +2055,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.2';
+const CMS_VERSION='1.13.3';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2121,6 +2122,7 @@ function applySidebarPrefs(){
     const p=document.getElementById('p-pages');
     if(p && localStorage.getItem('fourge_vepl_collapsed')==='1') p.classList.add('vepl-collapsed');
   }catch(e){}
+  const vEl=document.getElementById('sb-version'); if(vEl) vEl.textContent='v'+CMS_VERSION;
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',applySidebarPrefs); else applySidebarPrefs();
 
