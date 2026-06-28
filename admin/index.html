@@ -1993,6 +1993,16 @@ textarea.fb-input{resize:vertical}
     </div>
   </div>
 </div>
+<div class="mw" id="m-fontpicker" style="z-index:900">
+  <div class="modal" style="width:520px;max-height:82vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Choose a font</h2><button class="ib" onclick="closeM('m-fontpicker')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" style="display:flex;flex-direction:column;gap:10px;min-height:0">
+      <input type="text" id="fp-search" placeholder="Search all Google Fonts…" oninput="fontPickerRender()" autocomplete="off" style="width:100%">
+      <div id="fp-status" style="font-size:11px;color:var(--muted)"></div>
+      <div id="fp-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:4px;min-height:260px"></div>
+    </div>
+  </div>
+</div>
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -2055,7 +2065,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.4';
+const CMS_VERSION='1.13.5';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5457,7 +5467,11 @@ function psRenderHeadings(hs){
     const s=hs[tag]||{};
     const wopt=weights.map(w=>`<option value="${w}"${String(s.weight||'')===w?' selected':''}>${w||'weight'}</option>`).join('');
     const aopt=aligns.map(a=>`<option value="${a}"${(s.align||'')===a?' selected':''}>${a||'align'}</option>`).join('');
-    const fopt='<option value="">— font (default)</option>'+GOOGLE_FONTS.map(f=>`<option value="${esc(f)}"${(s.font||'')===f?' selected':''}>${esc(f)}</option>`).join('');
+    const inCur=GOOGLE_FONTS.indexOf(s.font||'')>=0;
+    const fopt='<option value="">— font (default)</option>'
+      +GOOGLE_FONTS.map(f=>`<option value="${esc(f)}"${(s.font||'')===f?' selected':''} style="font-family:'${esc(f)}',sans-serif">${esc(f)}</option>`).join('')
+      +((s.font&&!inCur)?`<option value="${esc(s.font)}" selected style="font-family:'${esc(s.font)}',sans-serif">${esc(s.font)}</option>`:'')
+      +'<option value="__more__">More fonts…</option>';
     const hasColor=!!s.color;
     return `<div style="border:1px solid var(--border);border-radius:8px;padding:9px 11px">
       <div style="display:flex;align-items:center;gap:8px">
@@ -5469,9 +5483,76 @@ function psRenderHeadings(hs){
         <select id="ps-${tag}-weight" style="font-size:12px">${wopt}</select>
         <select id="ps-${tag}-align" style="font-size:12px">${aopt}</select>
       </div>
-      <select id="ps-${tag}-font" style="width:100%;font-size:12px;margin-top:6px">${fopt}</select>
+      <select id="ps-${tag}-font" data-prev="${esc(s.font||'')}" onchange="psFontChange('${tag}',this)" style="width:100%;font-size:12px;margin-top:6px;font-family:'${esc(s.font||'')}',inherit">${fopt}</select>
     </div>`;
   }).join('');
+  adminLoadFonts(GOOGLE_FONTS);  // load the curated fonts so the dropdown previews them
+  HEADING_TAGS.forEach(t=>{ const f=hs[t]&&hs[t].font; if(f) adminLoadFonts([f]); });
+}
+// The font <select> shows "More fonts…" → open the full Google Fonts picker.
+function psFontChange(tag, sel){
+  if(sel.value==='__more__'){ sel.value=sel.dataset.prev||''; openFontPicker(tag); return; }
+  sel.dataset.prev=sel.value;
+  sel.style.fontFamily=sel.value?("'"+sel.value+"',inherit"):'inherit';
+}
+// Load Google Fonts into the ADMIN document so pickers/dropdowns preview them.
+// Accumulates into one managed <link> so repeated calls don't thrash.
+let _adminFontSet=null;
+function adminLoadFonts(fonts){
+  if(!_adminFontSet) _adminFontSet=new Set();
+  let changed=false;
+  (fonts||[]).forEach(f=>{ if(f && f!=='__more__' && !_adminFontSet.has(f)){ _adminFontSet.add(f); changed=true; } });
+  let lk=document.getElementById('fourge-admin-fonts');
+  if(!changed && lk) return;
+  if(!lk){ lk=document.createElement('link'); lk.id='fourge-admin-fonts'; lk.rel='stylesheet'; document.head.appendChild(lk); }
+  lk.href='https://fonts.googleapis.com/css2?'+[..._adminFontSet].map(f=>'family='+encodeURIComponent(f).replace(/%20/g,'+')).join('&')+'&display=swap';
+}
+// ── FULL GOOGLE FONTS PICKER (searchable, previews each font) ──────────────
+let _allFonts=null, _fontPickerTag=null;
+async function openFontPicker(tag){
+  _fontPickerTag=tag;
+  openM('m-fontpicker');
+  const s=document.getElementById('fp-search'); if(s){ s.value=''; setTimeout(()=>s.focus(),50); }
+  if(!_allFonts) await loadAllFonts();
+  fontPickerRender();
+}
+async function loadAllFonts(){
+  const status=document.getElementById('fp-status'); if(status) status.textContent='Loading the font library…';
+  try{
+    const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),6000);
+    const res=await fetch('https://api.fontsource.org/v1/fonts',{signal:ctrl.signal}); clearTimeout(to);
+    if(res.ok){ const d=await res.json(); if(Array.isArray(d)){ _allFonts=d.filter(f=>f&&f.family&&(f.type==='google'||!f.type)).map(f=>f.family).sort((a,b)=>a.localeCompare(b)); } }
+  }catch(e){}
+  if(!_allFonts||!_allFonts.length){ _allFonts=GOOGLE_FONTS.slice().sort((a,b)=>a.localeCompare(b)); if(status) status.textContent='Showing the built-in fonts (the full library couldn’t be reached).'; }
+}
+function fontPickerRender(){
+  const list=document.getElementById('fp-list'), status=document.getElementById('fp-status'); if(!list) return;
+  const q=(document.getElementById('fp-search')?.value||'').trim();
+  const ql=q.toLowerCase();
+  const fonts=_allFonts||GOOGLE_FONTS;
+  const matches=ql?fonts.filter(f=>f.toLowerCase().includes(ql)):fonts;
+  const shown=matches.slice(0,60);
+  // Load just the visible fonts for preview (separate link that replaces each render).
+  let plk=document.getElementById('fourge-picker-fonts');
+  if(!plk){ plk=document.createElement('link'); plk.id='fourge-picker-fonts'; plk.rel='stylesheet'; document.head.appendChild(plk); }
+  if(shown.length) plk.href='https://fonts.googleapis.com/css2?'+shown.map(f=>'family='+encodeURIComponent(f).replace(/%20/g,'+')).join('&')+'&display=swap';
+  const row=f=>`<button type="button" onclick="fontPickerPick('${esc(f).replace(/'/g,'&apos;')}')" style="text-align:left;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-size:17px;font-family:'${esc(f)}',sans-serif">${esc(f)}</button>`;
+  // Exact-typed escape hatch — apply ANY Google font by name even if not in the list.
+  const typedRow=(q && !matches.some(f=>f.toLowerCase()===ql))?`<button type="button" onclick="fontPickerPick('${esc(q).replace(/'/g,'&apos;')}')" style="text-align:left;padding:9px 12px;border:1px dashed var(--ember);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-size:14px">Use “${esc(q)}”</button>`:'';
+  list.innerHTML=typedRow+(shown.map(row).join('')||'<div style="color:var(--muted);font-size:13px;padding:10px">No matches.</div>');
+  if(status) status.textContent=matches.length+' font'+(matches.length===1?'':'s')+(matches.length>60?' — showing first 60; keep typing to narrow':'');
+}
+function fontPickerPick(family){
+  const tag=_fontPickerTag;
+  if(tag){
+    const sel=document.getElementById('ps-'+tag+'-font');
+    if(sel){
+      if(!Array.from(sel.options).some(o=>o.value===family)){ const o=document.createElement('option'); o.value=family; o.textContent=family; o.style.fontFamily="'"+family+"',sans-serif"; const more=sel.querySelector('option[value="__more__"]'); sel.insertBefore(o,more); }
+      sel.value=family; sel.dataset.prev=family; sel.style.fontFamily="'"+family+"',inherit";
+    }
+    adminLoadFonts([family]);
+  }
+  closeM('m-fontpicker');
 }
 function psReadHeadings(){
   const out={};
