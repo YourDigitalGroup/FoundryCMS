@@ -2045,7 +2045,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.11.0';
+const CMS_VERSION='1.12.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5616,6 +5616,7 @@ return '(function(){\n'
 +'  });\n'
 // Index all selectable elements
 +'  var idx=0, sel=null, hov=null, selResizable=false, resizing=null, resizeGuard=false;\n'
++'  var curDevice="desktop", respData={tablet:{},mobile:{}}, fgeSeq=0;\n'
 +'  var SKIP={"HTML":1,"BODY":1,"SCRIPT":1,"STYLE":1,"NOSCRIPT":1,"META":1,"LINK":1,"HEAD":1,"BR":1,"HR":1};\n'
 +'  var LEAF={"H1":1,"H2":1,"H3":1,"H4":1,"H5":1,"H6":1,"P":1,"LI":1,"TD":1,"TH":1,"A":1,"BUTTON":1,"LABEL":1,"BLOCKQUOTE":1,"IMG":1,"SPAN":1,"STRONG":1,"EM":1,"B":1,"I":1,"FIGCAPTION":1,"CAPTION":1,"DT":1,"DD":1,"TIME":1,"MARK":1,"SMALL":1,"INPUT":1,"TEXTAREA":1,"SELECT":1};\n'
 +'  function isOurs(el){return el&&el.id&&el.id.indexOf("__fe_")===0;}\n'
@@ -5686,10 +5687,11 @@ return '(function(){\n'
 +'    if(!resizing||!sel) return;\n'
 +'    e.preventDefault();\n'
 +'    var dx=e.clientX-resizing.sx, dy=e.clientY-resizing.sy, dir=resizing.dir, MIN=20;\n'
-+'    if(dir.indexOf("e")>=0){var nw=Math.max(MIN,resizing.w+dx);sel.style.setProperty("width",nw+"px","important");sel.style.setProperty("max-width",nw+"px","important");}\n'
-+'    if(dir.indexOf("w")>=0){var nw2=Math.max(MIN,resizing.w-dx);sel.style.setProperty("width",nw2+"px","important");sel.style.setProperty("max-width",nw2+"px","important");sel.style.marginLeft=(resizing.ml+(resizing.w-nw2))+"px";}\n'
-+'    if(dir.indexOf("s")>=0){var nh=Math.max(MIN,resizing.h+dy);sel.style.setProperty("height",nh+"px","important");}\n'
-+'    if(dir.indexOf("n")>=0){var nh2=Math.max(MIN,resizing.h-dy);sel.style.setProperty("height",nh2+"px","important");sel.style.marginTop=(resizing.mt+(resizing.h-nh2))+"px";}\n'
++'    var rsz=function(prop,val){if(curDevice==="desktop"){if(prop==="margin-left")sel.style.marginLeft=val;else if(prop==="margin-top")sel.style.marginTop=val;else sel.style.setProperty(prop,val,"important");}else{setResp(sel,prop,val,curDevice);}};\n'
++'    if(dir.indexOf("e")>=0){var nw=Math.max(MIN,resizing.w+dx);rsz("width",nw+"px");rsz("max-width",nw+"px");}\n'
++'    if(dir.indexOf("w")>=0){var nw2=Math.max(MIN,resizing.w-dx);rsz("width",nw2+"px");rsz("max-width",nw2+"px");rsz("margin-left",(resizing.ml+(resizing.w-nw2))+"px");}\n'
++'    if(dir.indexOf("s")>=0){var nh=Math.max(MIN,resizing.h+dy);rsz("height",nh+"px");}\n'
++'    if(dir.indexOf("n")>=0){var nh2=Math.max(MIN,resizing.h-dy);rsz("height",nh2+"px");rsz("margin-top",(resizing.mt+(resizing.h-nh2))+"px");}\n'
 +'    var p=pos(sel); if(p){ paintOverlay(sel,true); positionHandles(p); hbox.style.display="block"; }\n'
 +'  }\n'
 +'  function onResizeUp(e){\n'
@@ -5698,6 +5700,26 @@ return '(function(){\n'
 +'    document.removeEventListener("mousemove",onResizeMove,true);\n'
 +'    document.removeEventListener("mouseup",onResizeUp,true);\n'
 +'    if(sel){ selectEl(sel); }\n'
++'  }\n'
+// ── RESPONSIVE OVERRIDES (per-device CSS, funnels desktop→tablet→mobile) ──
++'  function ensureRespStyle(){var s=document.getElementById("fourge-responsive");if(!s){s=document.createElement("style");s.id="fourge-responsive";s.setAttribute("data-fourge-resp","");(document.head||document.documentElement).appendChild(s);}return s;}\n'
++'  function fgeClass(el){var cn=el.getAttribute("class")||"";var m=cn.match(/\\bfge-r(\\d+)\\b/);if(m)return "fge-r"+m[1];fgeSeq++;var c="fge-r"+fgeSeq;el.classList.add(c);return c;}\n'
++'  function regenResp(){\n'
++'    var s=ensureRespStyle(), out="";\n'
++'    [["tablet","1024"],["mobile","600"]].forEach(function(pair){\n'
++'      var map=respData[pair[0]]||{}, rules="";\n'
++'      Object.keys(map).forEach(function(cls){var d=map[cls],body="";Object.keys(d).forEach(function(p){if(d[p]!=="")body+=p+":"+d[p]+" !important;";});if(body)rules+="."+cls+"{"+body+"}";});\n'
++'      if(rules)out+="@media (max-width:"+pair[1]+"px){"+rules+"}\\n";\n'
++'    });\n'
++'    s.textContent=out;\n'
++'    if(!out&&s.parentNode)s.parentNode.removeChild(s);\n'
++'  }\n'
++'  function setResp(el,prop,val,dev){if(dev!=="tablet"&&dev!=="mobile")return;var cls=fgeClass(el);if(!respData[dev][cls])respData[dev][cls]={};if(val===""||val==null)delete respData[dev][cls][prop];else respData[dev][cls][prop]=val;regenResp();}\n'
++'  function applyStyleProp(el,prop,val){if(curDevice==="desktop"){if(val===""||val==null)el.style.removeProperty(prop);else el.style.setProperty(prop,val);}else{setResp(el,prop,val,curDevice);}}\n'
++'  function initResp(){\n'
++'    try{document.querySelectorAll("[class*=fge-r]").forEach(function(el){var cn=el.getAttribute("class")||"";var mm=cn.match(/\\bfge-r(\\d+)\\b/g);if(mm)mm.forEach(function(x){var n=parseInt(x.replace("fge-r",""),10);if(n>fgeSeq)fgeSeq=n;});});}catch(e){}\n'
++'    var s=document.getElementById("fourge-responsive");if(!s||!s.sheet)return;\n'
++'    try{var rr=s.sheet.cssRules;for(var i=0;i<rr.length;i++){var r=rr[i];if(r.type!==4)continue;var dev=(r.media.mediaText.indexOf("600")>=0)?"mobile":(r.media.mediaText.indexOf("1024")>=0?"tablet":null);if(!dev)continue;for(var j=0;j<r.cssRules.length;j++){var sr=r.cssRules[j];var cls=(sr.selectorText||"").replace(/^\\./,"");if(!cls)continue;respData[dev][cls]=respData[dev][cls]||{};for(var k=0;k<sr.style.length;k++){var p=sr.style[k];respData[dev][cls][p]=sr.style.getPropertyValue(p);}}}}catch(e){}\n'
 +'  }\n'
 // ── UNDO / REDO (full-body snapshots) ──
 +'  var undoStack=[], redoStack=[], MAXH=40;\n'
@@ -5789,6 +5811,7 @@ return '(function(){\n'
 +'      imgW:imgW, imgH:imgH, imgNatW:imgNatW, imgNatH:imgNatH,\n'
 +'      bgImage:(function(){try{var b=cs.backgroundImage;if(b&&b!=="none"){var m=b.match(/url\\(([^)]+)\\)/);if(m)return m[1].replace(/["]/g,"").replace(/[\\x27]/g,"");return "";}return "";}catch(e){return "";}}()),\n'
 +'      inHeader:inH, inFooter:inF, inNav:inN,\n'
++'      isFlex:(function(){try{var dsp=cs.display;return dsp==="flex"||dsp==="inline-flex";}catch(e){return false;}}()), flexDir:(function(){try{return cs.flexDirection||"";}catch(e){return "";}}()),\n'
 +'      styles:{padding:cs.padding,margin:cs.margin,fontSize:cs.fontSize,fontWeight:cs.fontWeight,textAlign:cs.textAlign,borderRadius:cs.borderRadius,lineHeight:cs.lineHeight,color:rgb2hex(cs.color),bgColor:rgb2hex(cs.backgroundColor)},\n'
 +'      canUp:!!realSibling(t,-1), canDown:!!realSibling(t,1),\n'
 +'      hasParent:!!(par&&par.tagName!=="BODY"&&par.tagName!=="HTML"),\n'
@@ -5821,6 +5844,8 @@ return '(function(){\n'
 // Receive updates + actions
 +'  window.addEventListener("message",function(e){\n'
 +'    var m=e.data; if(!m) return;\n'
++'    if(m.type==="ve-device"){ curDevice=m.device||"desktop"; return; }\n'
++'    if(m.type==="ve-reselect"){ if(sel) selectEl(sel); return; }\n'
 +'    if(m.type==="ve-undo"){ doUndo(); return; }\n'
 +'    if(m.type==="ve-redo"){ doRedo(); return; }\n'
 +'    if(m.type==="ve-action"){\n'
@@ -5868,17 +5893,18 @@ return '(function(){\n'
 +'    if(m.field==="target"){if(m.value){el2.setAttribute("target",m.value);el2.setAttribute("rel","noopener noreferrer");}else{el2.removeAttribute("target");el2.removeAttribute("rel");}}\n'
 +'    if(m.field==="anchorId"){var _aid=String(m.value||"").trim().replace(/\\s+/g,"-").replace(/[^A-Za-z0-9_\\-]/g,"");if(_aid){el2.id=_aid;}else if(el2.id&&el2.id.indexOf("__fe_")!==0){el2.removeAttribute("id");}}\n'
 +'    if(m.field==="alt") el2.alt=m.value;\n'
-+'    if(m.field==="color") el2.style.color=m.value;\n'
-+'    if(m.field==="bg"||m.field==="bgColor") el2.style.backgroundColor=m.value;\n'
-+'    if(m.field==="size") el2.style.fontSize=m.value;\n'
-+'    if(m.field==="weight") el2.style.fontWeight=m.value;\n'
-+'    if(m.field==="align") el2.style.textAlign=m.value;\n'
-+'    if(m.field==="lineHeight") el2.style.lineHeight=m.value;\n'
-+'    if(m.field==="padding") el2.style.padding=m.value;\n'
-+'    if(m.field==="margin") el2.style.margin=m.value;\n'
-+'    if(m.field==="radius") el2.style.borderRadius=m.value;\n'
-+'    if(m.field==="width"){if(m.value){el2.style.setProperty("width",m.value,"important");el2.style.setProperty("max-width",m.value,"important");el2.removeAttribute("width");}else{el2.style.removeProperty("width");el2.style.removeProperty("max-width");}}\n'
-+'    if(m.field==="height"){if(m.value){el2.style.setProperty("height",m.value,"important");el2.removeAttribute("height");}else{el2.style.removeProperty("height");}}\n'
++'    if(m.field==="color") applyStyleProp(el2,"color",m.value);\n'
++'    if(m.field==="bg"||m.field==="bgColor") applyStyleProp(el2,"background-color",m.value);\n'
++'    if(m.field==="size") applyStyleProp(el2,"font-size",m.value);\n'
++'    if(m.field==="weight") applyStyleProp(el2,"font-weight",m.value);\n'
++'    if(m.field==="align") applyStyleProp(el2,"text-align",m.value);\n'
++'    if(m.field==="lineHeight") applyStyleProp(el2,"line-height",m.value);\n'
++'    if(m.field==="padding") applyStyleProp(el2,"padding",m.value);\n'
++'    if(m.field==="margin") applyStyleProp(el2,"margin",m.value);\n'
++'    if(m.field==="radius") applyStyleProp(el2,"border-radius",m.value);\n'
++'    if(m.field==="flexDir") applyStyleProp(el2,"flex-direction",m.value);\n'
++'    if(m.field==="width"){if(curDevice==="desktop"){if(m.value){el2.style.setProperty("width",m.value,"important");el2.style.setProperty("max-width",m.value,"important");el2.removeAttribute("width");}else{el2.style.removeProperty("width");el2.style.removeProperty("max-width");}}else{setResp(el2,"width",m.value,curDevice);setResp(el2,"max-width",m.value,curDevice);}}\n'
++'    if(m.field==="height"){if(curDevice==="desktop"){if(m.value){el2.style.setProperty("height",m.value,"important");el2.removeAttribute("height");}else{el2.style.removeProperty("height");}}else{setResp(el2,"height",m.value,curDevice);}}\n'
 +'    if(m.field==="resetSize"){el2.style.removeProperty("width");el2.style.removeProperty("max-width");el2.style.removeProperty("height");el2.removeAttribute("width");el2.removeAttribute("height");}\n'
 +'    if(m.field==="imgHref"){var ap2=el2.closest("a");if(m.value){if(ap2){ap2.setAttribute("href",m.value);}else{var na=document.createElement("a");na.setAttribute("href",m.value);el2.parentNode.insertBefore(na,el2);na.appendChild(el2);}}else if(ap2){ap2.parentNode.insertBefore(el2,ap2);ap2.parentNode.removeChild(ap2);}}\n'
 +'    if(m.field==="addListItem"){var lst=el2.tagName==="LI"?el2.parentElement:((el2.tagName==="UL"||el2.tagName==="OL")?el2:null);if(lst){var ni=document.createElement("li");ni.textContent=m.value||"New item";if(el2.tagName==="LI"&&el2.parentElement===lst){lst.insertBefore(ni,el2.nextSibling);}else{lst.appendChild(ni);}selectEl(ni);}}\n'
@@ -5892,6 +5918,7 @@ return '(function(){\n'
 // Reposition on scroll/resize
 +'  document.addEventListener("scroll",function(){if(sel){paintOverlay(sel,true);refreshHandles();}},true);\n'
 +'  window.addEventListener("resize",function(){if(sel){paintOverlay(sel,true);refreshHandles();}});\n'
++'  initResp();\n'
 +'  window.parent.postMessage({type:"ve-ready"},"*");\n'
 +'  notifyHistory();\n'
 +'})();\n';
@@ -5951,7 +5978,11 @@ function veRenderHtml(id,html){
 // Handle messages from iframe
 window.addEventListener('message',function(e){
   if(!e.data) return;
-  if(e.data.type==='ve-ready') return; // silent ack
+  if(e.data.type==='ve-ready'){ // re-sync device target to the freshly-armed bridge
+    const ifrm=document.getElementById('visual-iframe');
+    if(ifrm&&ifrm.contentWindow&&_veDevice!=='desktop') ifrm.contentWindow.postMessage({type:'ve-device',device:_veDevice},'*');
+    return;
+  }
   if(e.data.type==='ve-select'&&e.data.data) veShowProps(e.data.data);
   if(e.data.type==='ve-deselect') veDeselect();
   if(e.data.type==='ve-history'){
@@ -6012,6 +6043,13 @@ function veShowProps(info){
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
         <span>In <strong>${templateZone}</strong> — applies to all pages</span>
         <button class="ve-template-save-btn" onclick="veSaveTemplateToAll('${templateZone}')">Save to All</button>
+      </div>` : '';
+
+  // Responsive editing banner — shown when targeting tablet/mobile via the device toggle
+  const devBanner = _veDevice!=='desktop'
+    ? `<div style="display:flex;align-items:center;gap:8px;background:#fdf0e8;border:1px solid #f3c8ad;color:#9a3b12;font-size:11.5px;font-weight:600;padding:8px 11px;border-radius:8px;margin-bottom:12px">
+        <i class="fa-solid fa-${_veDevice==='tablet'?'tablet-screen-button':'mobile-screen-button'}" style="font-size:13px"></i>
+        <span>Editing <strong>${_veDevice==='tablet'?'Tablet':'Mobile'}</strong> styles — applies at ≤${_veDevice==='tablet'?'1024':'600'}px. Desktop values cascade down unless changed here.</span>
       </div>` : '';
 
   let fields = '';
@@ -6137,6 +6175,13 @@ function veShowProps(info){
       </div>
       ${spacingFields}
       ${anchorField}
+      ${info.isFlex?`<div class="ve-style-divider"><span>Layout · Flex${_veDevice!=='desktop'?' ('+(_veDevice==='tablet'?'Tablet':'Mobile')+')':''}</span></div>
+      <div class="ve-field"><label>Direction</label>
+        <select id="vp-flexdir" onchange="veApplyFlexDir(this.value)" style="width:100%">
+          ${['','row','row-reverse','column','column-reverse'].map(o=>`<option value="${o}"${(info.flexDir||'')===o?' selected':''}>${o||'— (inherit)'}</option>`).join('')}
+        </select>
+        <div class="desc" style="margin-top:6px;font-size:11px">To reverse columns on phones: switch to <strong>Mobile</strong> in the top toolbar, then pick <code>column-reverse</code>.</div>
+      </div>`:''}
       <button class="ve-apply-btn" onclick="veApplyText()">Apply Changes</button>
       ${info.isFaq?`<div class="ve-style-divider"><span>FAQ Item</span></div>
       <div class="ve-field"><label>Question</label>
@@ -6161,7 +6206,7 @@ function veShowProps(info){
 
   // Stash original styles so Apply only sends changed values
   _veOrigStyles = st;
-  body.innerHTML = templateBanner + actionsBar + veAiPanel() + fields;
+  body.innerHTML = devBanner + templateBanner + actionsBar + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
   if(_veAiChat && _veAiChat.sel && _veAiChat.sel.fid===info.fid && _veAiChat.log && _veAiChat.log.length){ veAiRenderLog(); }
 }
@@ -6261,6 +6306,13 @@ function veRemoveFaq(){
   document.getElementById('ve-unsaved')?.classList.add('on');
   veDeselect();
   toast('FAQ removed','ok');
+}
+function veApplyFlexDir(val){
+  if(!_veCurSel) return;
+  const ifrm=document.getElementById('visual-iframe'); if(!ifrm) return;
+  ifrm.contentWindow.postMessage({type:'ve-update',fid:_veCurSel.fid,field:'flexDir',value:val},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast(_veDevice==='desktop'?'Layout direction set':'Layout set for '+_veDevice+' — click Save to publish','ok');
 }
 function veApplyText(){
   if(!_veCurSel) return;
@@ -6384,6 +6436,14 @@ function veSetDevice(mode,btn){
   if(btn) btn.classList.add('on');
   _veDevice=mode;
   veApplyDeviceSize();
+  const ifrm=document.getElementById('visual-iframe');
+  if(ifrm&&ifrm.contentWindow){
+    ifrm.contentWindow.postMessage({type:'ve-device',device:mode},'*');
+    // After the iframe resizes, re-select so the panel re-reads the styles that
+    // actually apply at this device (computed styles reflect the media query).
+    setTimeout(()=>{ ifrm.contentWindow&&ifrm.contentWindow.postMessage({type:'ve-reselect'},'*'); },140);
+  }
+  if(_veCurSel) veShowProps(_veCurSel); // immediate device-banner update
 }
 // Desktop preview always renders a 16:9 viewport and grows to FILL the canvas:
 //  • the 16:9 box is the largest that fits the available width AND height;
