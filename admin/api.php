@@ -103,7 +103,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Legacy file / GA / mail / AI actions accept the shared API_TOKEN OR a
 //    session token, so existing publishing and public form posts keep working.
 $PUBLIC_ACTIONS  = ['login'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -135,7 +135,7 @@ if (!in_array($action, $PUBLIC_ACTIONS, true)) {
 // is the server-side backstop for hosts that don't honor .htaccess (e.g. nginx)
 // or have mod_rewrite disabled. Localhost/dev is exempt; set 'require_https' =>
 // false in config.secret.php only for a deliberate plain-HTTP setup.
-$HTTPS_REQUIRED_ACTIONS = ['login', 'change_password', 'set_secret', 'save_user', 'ga_save_credentials'];
+$HTTPS_REQUIRED_ACTIONS = ['login', 'change_password', 'set_secret', 'save_user', 'ga_save_credentials', 'set_page_password'];
 if (REQUIRE_HTTPS && in_array($action, $HTTPS_REQUIRED_ACTIONS, true) && !fourgeIsHttps() && !fourgeIsLocalRequest()) {
     ob_end_clean(); http_response_code(403);
     echo json_encode(['error' => 'For your security, signing in and changing credentials require a secure (HTTPS) connection. Please load this site over https:// and try again.']);
@@ -155,6 +155,7 @@ try {
         case 'change_password': ob_end_clean(); fourgeApiChangePassword($authUser, $body); break;
         case 'get_secrets':     ob_end_clean(); fourgeApiGetSecrets($authUser); break;
         case 'set_secret':      ob_end_clean(); fourgeApiSetSecret($authUser, $body); break;
+        case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
         case 'list_pages':  ob_end_clean(); cmsListPages();    break;
         case 'list_media':  ob_end_clean(); cmsListMedia();    break;
@@ -1012,6 +1013,136 @@ function fourgeApiSetSecret($me, $body) {
         fourgeSetSecret($pdo, $name, $value, $me['username']);
     }
     echo json_encode(['ok' => true]);
+}
+
+// ── PER-PAGE PASSWORD PROTECTION (PHP session gate) ─────────────────────────────
+// Stores a bcrypt hash per protected page in admin/protect.secret.php (a .php file,
+// never served as source), (re)writes the public _fourge_gate.php, and maintains a
+// managed RewriteRule block in the root .htaccess so protected pages route through
+// the gate. The gate shows a branded password form and serves the page only after
+// the visitor unlocks it (PHP session).
+function fourgeProtectStorePath() { return __DIR__ . '/protect.secret.php'; }
+function fourgeLoadProtectMap() {
+    $f = fourgeProtectStorePath();
+    if (is_file($f)) { $m = include $f; if (is_array($m)) return $m; }
+    return [];
+}
+function fourgeSaveProtectMap($map) {
+    $out = "<?php\n// Fourge per-page password hashes — NEVER served as source (PHP executes this).\n// Managed by the CMS; do not edit by hand.\nreturn " . var_export($map, true) . ";\n";
+    return file_put_contents(fourgeProtectStorePath(), $out) !== false;
+}
+function fourgeWriteGateFile() {
+    $src = <<<'GATE'
+<?php
+// Fourge page gate — protects the pages listed in admin/protect.secret.php.
+// Managed by the CMS; do not edit by hand.
+$store = __DIR__ . '/admin/protect.secret.php';
+$map = is_file($store) ? (include $store) : array();
+if (!is_array($map)) $map = array();
+$p = isset($_GET['p']) ? (string)$_GET['p'] : '';
+$p = ltrim(str_replace('\\', '/', $p), '/');
+if ($p === '' || strpos($p, '..') !== false || !array_key_exists($p, $map)) { http_response_code(404); echo 'Not found'; exit; }
+$file = realpath(__DIR__ . '/' . $p);
+$root = realpath(__DIR__);
+if (!$file || strpos($file, $root) !== 0 || !is_file($file)) { http_response_code(404); echo 'Not found'; exit; }
+$secure = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off') || ((isset($_SERVER['HTTP_X_FORWARDED_PROTO']) ? $_SERVER['HTTP_X_FORWARDED_PROTO'] : '') === 'https');
+if (PHP_VERSION_ID >= 70300) {
+    session_set_cookie_params(array('lifetime'=>0,'path'=>'/','httponly'=>true,'samesite'=>'Lax','secure'=>$secure));
+} else {
+    session_set_cookie_params(0, '/; samesite=Lax', '', $secure, true);
+}
+session_name('fourge_gate');
+session_start();
+if (!empty($_SESSION['fourge_unlocked'][$p])) {
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: private, no-store');
+    readfile($file); exit;
+}
+$err = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $pw = isset($_POST['fourge_pw']) ? (string)$_POST['fourge_pw'] : '';
+    if ($pw !== '' && password_verify($pw, $map[$p])) {
+        session_regenerate_id(true);
+        $_SESSION['fourge_unlocked'][$p] = true;
+        header('Location: /' . $p); exit;
+    }
+    usleep(400000);
+    $err = 'Incorrect password. Please try again.';
+}
+// 401 for every form render (visitor is not unlocked). No WWW-Authenticate header,
+// so browsers show this HTML form rather than the native Basic-Auth popup.
+http_response_code(401);
+$e = function($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); };
+?><!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Protected page</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1a1814;padding:20px}
+.card{background:#fff;border:1px solid #e6e1d8;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.08);padding:34px 30px;width:100%;max-width:380px;text-align:center}
+.lock{width:46px;height:46px;border-radius:12px;background:#fdf0e8;color:#c8531e;display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+h1{font-size:18px;margin:0 0 6px}p.sub{font-size:13px;color:#6b6557;margin:0 0 20px}
+input[type=password]{width:100%;padding:11px 13px;border:1px solid #d9d3c8;border-radius:10px;font-size:14px;margin-bottom:12px}
+input[type=password]:focus{outline:none;border-color:#c8531e;box-shadow:0 0 0 3px rgba(200,83,30,.12)}
+button{width:100%;padding:11px;background:#c8531e;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer}
+button:hover{background:#b0481a}.err{background:#fceae6;color:#b3261e;border:1px solid #f3c0bb;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:12px}
+</style></head>
+<body><div class="card">
+<div class="lock"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+<h1>This page is protected</h1><p class="sub">Enter the password to continue.</p>
+<?php if ($err) echo '<div class="err">' . $e($err) . '</div>'; ?>
+<form method="post" action="/<?php echo $e($p); ?>">
+<input type="password" name="fourge_pw" placeholder="Password" autofocus autocomplete="current-password">
+<button type="submit">Unlock</button>
+</form>
+</div></body></html>
+GATE;
+    return file_put_contents(PUBLIC_HTML . '/_fourge_gate.php', $src) !== false;
+}
+function fourgeWriteProtectHtaccess($paths) {
+    $htPath  = PUBLIC_HTML . '/.htaccess';
+    $existing = is_file($htPath) ? file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Protected Pages';
+    $end   = '# END Fourge Protected Pages';
+    $rules = '';
+    if ($paths) {
+        $rules = "<IfModule mod_rewrite.c>\nRewriteEngine On\n";
+        foreach ($paths as $p) {
+            $pat = str_replace('.', '\\.', $p);
+            $rules .= 'RewriteRule ^' . $pat . '$ /_fourge_gate.php?p=' . $p . ' [L,QSA]' . "\n";
+        }
+        $rules .= "</IfModule>\n";
+    }
+    $block = $begin . "\n" . $rules . $end;
+    if (strpos($existing, $begin) !== false && strpos($existing, $end) !== false) {
+        $existing = preg_replace('/' . preg_quote($begin, '/') . '.*?' . preg_quote($end, '/') . '/s', $block, $existing);
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+function fourgeApiSetPagePassword($me, $body) {
+    $path = (string)($body['path'] ?? '');
+    $password = (string)($body['password'] ?? '');
+    $path = ltrim(str_replace('\\', '/', $path), '/');
+    $lower = strtolower($path);
+    if ($path === '' || strpos($path, '..') !== false) {
+        http_response_code(400); echo json_encode(['error' => 'Invalid path']); return;
+    }
+    if (strpos($lower, 'admin/') === 0 || strpos($lower, 'data/') === 0 || !preg_match('/\.html?$/', $lower)) {
+        http_response_code(400); echo json_encode(['error' => 'Only site .html pages can be password-protected']); return;
+    }
+    $map = fourgeLoadProtectMap();
+    if ($password === '') {
+        unset($map[$path]);                          // disable protection
+    } else {
+        if (strlen($password) < 4) {
+            http_response_code(400); echo json_encode(['error' => 'Password must be at least 4 characters']); return;
+        }
+        $map[$path] = password_hash($password, PASSWORD_DEFAULT);
+    }
+    if (!fourgeSaveProtectMap($map))   { http_response_code(500); echo json_encode(['error' => 'Could not save the password store']); return; }
+    if (!fourgeWriteGateFile())        { http_response_code(500); echo json_encode(['error' => 'Could not write the page gate']); return; }
+    if (!fourgeWriteProtectHtaccess(array_keys($map))) { http_response_code(500); echo json_encode(['error' => 'Could not update .htaccess']); return; }
+    echo json_encode(['ok' => true, 'protected' => array_keys($map)]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
