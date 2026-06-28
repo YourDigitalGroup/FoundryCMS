@@ -2068,7 +2068,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.6';
+const CMS_VERSION='1.13.7';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -6418,10 +6418,10 @@ function veShowProps(info){
       </div>`:''}
       ${(isLink||info.isBtn)?`<div class="ve-style-divider"><span>Hover</span></div>
       <div class="ve-style-row">
-        <div class="ve-field" style="margin:0"><label>Hover background</label>
+        <div class="ve-field" style="margin:0"><label>Background</label>
           <input type="color" id="vp-hover-bg" value="${st.bgColor||'#000000'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
-        <div class="ve-field" style="margin:0"><label>Hover text</label>
+        <div class="ve-field" style="margin:0"><label>Text</label>
           <input type="color" id="vp-hover-color" value="${st.color||'#ffffff'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
       </div>
