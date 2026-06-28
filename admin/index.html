@@ -1502,8 +1502,12 @@ textarea.fb-input{resize:vertical}
           </div>
         </div>
         <div class="tab-panel" id="si-design">
-          <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Core palette used across the site.</div>
-            <div class="fr3"><div class="fg"><label>Primary</label><input type="color" id="si-color-primary" value="#052942"></div><div class="fg"><label>Accent</label><input type="color" id="si-color-accent" value="#C8531E"></div><div class="fg"><label>Green</label><input type="color" id="si-color-green" value="#16A34A"></div></div>
+          <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Primary and secondary brand colors — these drive the <code>--brand-color-primary</code> / <code>--brand-color-secondary</code> CSS variables. They auto-fill from your site's CSS; change them and click Apply to update every page.</div>
+            <div class="fr"><div class="fg"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942"></div><div class="fg"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E"></div></div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
+              <button type="button" class="fd-btn-primary" onclick="brandApplyAll()"><i class="fa-solid fa-check-double"></i> Apply colors to all pages</button>
+              <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
+            </div>
           </div>
           <div class="si-sec"><h2>Favicon</h2><div class="desc">The small icon shown in browser tabs, bookmarks, and history. Use a square PNG, SVG, or ICO — at least 32×32px (512×512 recommended).</div>
             <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
@@ -2050,7 +2054,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.1';
+const CMS_VERSION='1.13.2';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -4160,8 +4164,58 @@ async function loadSiteInfo(){
   if(!Object.keys(_site).length)try{const r=await fetch('../data/site.json?t='+Date.now());if(r.ok)_site=await r.json();}catch{}
   const fields=[['si-name','name'],['si-tagline','tagline'],['si-website','website'],['si-notify','notifyEmail'],['si-phone','phone'],['si-email','email'],['si-street','address.street'],['si-city','address.city'],['si-state','address.state'],['si-zip','address.zip'],['si-facebook','social.facebook'],['si-instagram','social.instagram'],['si-linkedin','social.linkedin'],['si-youtube','social.youtube']];
   fields.forEach(([id,path])=>{const el=document.getElementById(id);if(!el)return;const keys=path.split('.');let val=_site;keys.forEach(k=>val=val?.[k]);el.value=val||'';});
-  ['primary','accent','green'].forEach(k=>{const el=document.getElementById('si-color-'+k);if(el&&_site.colors?.[k])el.value=_site.colors[k];});
   faviconRender();
+  designAutofill();   // fill brand colors + any empty contact/social from the site's HTML
+}
+// Pull what we can from the live site HTML: brand-color CSS variables, and any
+// contact/social fields that aren't set yet. Only fills blanks — never overwrites.
+async function designAutofill(){
+  let brandP=(_site.brand&&_site.brand.primary)||'', brandS=(_site.brand&&_site.brand.secondary)||'';
+  let html='';
+  try{ const donor=pickDonorPath(); if(donor && canCallApi()){ const d=await apiCall('read_file',{path:donor}); html=d.content||''; } }catch{}
+  if(html){
+    const grabVar=n=>{ const m=html.match(new RegExp('--'+n+'\\s*:\\s*(#[0-9a-fA-F]{3,8})')); return m?m[1]:''; };
+    if(!brandP) brandP=grabVar('brand-color-primary');
+    if(!brandS) brandS=grabVar('brand-color-secondary');
+    const fillIf=(id,val)=>{ const el=document.getElementById(id); if(el && !el.value && val) el.value=val.trim(); };
+    const tel=html.match(/href=["']tel:([^"']+)["']/i); if(tel) fillIf('si-phone', decodeURIComponent(tel[1]));
+    const mail=html.match(/href=["']mailto:([^"'?]+)/i); if(mail) fillIf('si-email', mail[1]);
+    const grabSoc=re=>{ const m=html.match(re); return m?m[1]:''; };
+    fillIf('si-facebook',  grabSoc(/href=["'](https?:\/\/(?:www\.)?facebook\.com\/[^"']+)/i));
+    fillIf('si-instagram', grabSoc(/href=["'](https?:\/\/(?:www\.)?instagram\.com\/[^"']+)/i));
+    fillIf('si-linkedin',  grabSoc(/href=["'](https?:\/\/(?:www\.)?linkedin\.com\/[^"']+)/i));
+    fillIf('si-youtube',   grabSoc(/href=["'](https?:\/\/(?:www\.)?youtube\.com\/[^"']+)/i));
+  }
+  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP) pe.value=brandP;
+  const se=document.getElementById('si-brand-secondary'); if(se&&brandS) se.value=brandS;
+}
+// Inject a managed :root override defining the brand-color variables, appended last
+// so it wins over any earlier definition. Idempotent (replaces its prior block).
+function brandInjectIntoHtml(html, primary, secondary){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const head=doc.head||doc.documentElement;
+  doc.querySelectorAll('[data-fourge-brand]').forEach(el=>el.remove());
+  const decls=[]; if(primary)decls.push('--brand-color-primary:'+primary); if(secondary)decls.push('--brand-color-secondary:'+secondary);
+  if(decls.length){ const st=doc.createElement('style'); st.id='fourge-brand'; st.setAttribute('data-fourge-brand',''); st.textContent=':root{'+decls.join(';')+'}'; head.appendChild(st); }
+  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+}
+async function brandApplyAll(){
+  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
+  const primary=document.getElementById('si-brand-primary')?.value||'';
+  const secondary=document.getElementById('si-brand-secondary')?.value||'';
+  if(!_site.brand) _site.brand={}; _site.brand.primary=primary; _site.brand.secondary=secondary;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
+  const st=document.getElementById('si-brand-status'); if(st) st.textContent='Applying…';
+  let done=0,failed=0;
+  for(const pg of pages){ const fp=pg.path||pg.file; if(!fp) continue;
+    try{ const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){failed++;continue;}
+      await apiCall('write_file',{path:fp,content:brandInjectIntoHtml(html,primary,secondary)}); done++;
+    }catch(e){ console.warn('Brand apply failed for '+fp,e.message); failed++; }
+  }
+  if(st) st.textContent='Applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'');
+  toast(done?('Brand colors applied to '+done+' page(s)'):'Nothing updated', done&&!failed?'ok':(done?'ok':'err'));
 }
 
 // ── FAVICON ───────────────────────────────────
@@ -4282,6 +4336,7 @@ async function saveSiteInfo(){
   _site.name=get('si-name');_site.tagline=get('si-tagline');_site.website=get('si-website');_site.phone=get('si-phone');_site.email=get('si-email');
   if(!_site.address)_site.address={};_site.address.street=get('si-street');_site.address.city=get('si-city');_site.address.state=get('si-state');_site.address.zip=get('si-zip');
   if(!_site.social)_site.social={};_site.social.facebook=get('si-facebook');_site.social.instagram=get('si-instagram');_site.social.linkedin=get('si-linkedin');_site.social.youtube=get('si-youtube');
+  if(!_site.brand)_site.brand={};_site.brand.primary=get('si-brand-primary');_site.brand.secondary=get('si-brand-secondary');
 
   const json=JSON.stringify(_site,null,2);
   let savedLocal=false, savedGH=false;
@@ -5361,6 +5416,13 @@ function renderVePageList(){
       +'<button class="ve-page-gear" title="Page settings" onclick="event.stopPropagation();openPageSettings(\''+p.id+'\')"><i class="fa-solid fa-gear"></i></button>'
       +'</div>';
   }).join('');
+  updatePageCount();
+}
+// Keep the sidebar "Pages" badge (and dashboard stat) in sync with the live count.
+function updatePageCount(){
+  const n=getPageList().length;
+  const niP=document.getElementById('ni-pg-count'); if(niP) niP.textContent=n;
+  const stP=document.getElementById('st-pages'); if(stP) stP.textContent=n;
 }
 
 // ── PAGE SETTINGS (gear icon on each page row) ──────────────────────────────
@@ -5719,7 +5781,16 @@ return '(function(){\n'
 +'    e.preventDefault(); e.stopPropagation();\n'
 +'    pushHistory();\n'
 +'    var cs=window.getComputedStyle(sel);\n'
-+'    resizing={dir:dir,sx:e.clientX,sy:e.clientY,w:parseFloat(cs.width)||sel.offsetWidth||1,h:parseFloat(cs.height)||sel.offsetHeight||1,ml:parseFloat(cs.marginLeft)||0,mt:parseFloat(cs.marginTop)||0};\n'
++'    var baseML=parseFloat(cs.marginLeft)||0, baseMT=parseFloat(cs.marginTop)||0;\n'
++'    var r0=sel.getBoundingClientRect();\n'
+// Probe how a margin change maps to on-screen movement: 1 for a left-aligned block,
+// ~0.5 for a centered one (margin:auto, flex justify-center, text-align:center). This
+// lets the resize anchor the opposite edge no matter HOW the element is centered.
++'    var savedML=sel.style.marginLeft, savedMT=sel.style.marginTop;\n'
++'    sel.style.marginLeft=(baseML+20)+"px"; var rh=sel.getBoundingClientRect(); var fx=(rh.left-r0.left)/20; sel.style.marginLeft=savedML;\n'
++'    sel.style.marginTop=(baseMT+20)+"px"; var rv=sel.getBoundingClientRect(); var fy=(rv.top-r0.top)/20; sel.style.marginTop=savedMT;\n'
++'    if(!isFinite(fx)||Math.abs(fx)<0.05) fx=1; if(!isFinite(fy)||Math.abs(fy)<0.05) fy=1;\n'
++'    resizing={dir:dir,sx:e.clientX,sy:e.clientY,w:parseFloat(cs.width)||sel.offsetWidth||1,h:parseFloat(cs.height)||sel.offsetHeight||1,ml:baseML,mt:baseMT,fx:fx,fy:fy,L:r0.left,T:r0.top,R:r0.right,B:r0.bottom,CX:r0.left+r0.width/2,CY:r0.top+r0.height/2};\n'
 +'    document.addEventListener("mousemove",onResizeMove,true);\n'
 +'    document.addEventListener("mouseup",onResizeUp,true);\n'
 +'  }\n'
@@ -5727,24 +5798,19 @@ return '(function(){\n'
 +'    if(!resizing||!sel) return;\n'
 +'    e.preventDefault();\n'
 +'    var dx=e.clientX-resizing.sx, dy=e.clientY-resizing.sy, dir=resizing.dir, MIN=20;\n'
-// Hold Cmd (Mac) / Ctrl (PC) for symmetric resize (opposite edge moves equally,
-// center stays put). Default anchors the OPPOSITE edge/corner. margin-left/top are
-// always set on the active axis so auto-centering (margin:0 auto) cannot re-center
-// the element mid-drag — every drag sets an absolute value from a fresh snapshot.
+// Default drag anchors the OPPOSITE edge/corner (drag bottom-right → top-left stays).
+// Hold Cmd (Mac) / Ctrl (PC) for symmetric resize from the center (opposite edge
+// moves equally + opposite). We set the new size with the base margin, MEASURE where
+// the anchor landed, then correct the margin by the probed factor so the anchor (or
+// center) stays exactly put — works whether the element is left-aligned or centered.
 +'    var sym=e.metaKey||e.ctrlKey;\n'
 +'    var rsz=function(prop,val){if(curDevice==="desktop"){if(prop==="margin-left")sel.style.marginLeft=val;else if(prop==="margin-top")sel.style.marginTop=val;else sel.style.setProperty(prop,val,"important");}else{setResp(sel,prop,val,curDevice);}};\n'
-+'    if(dir.indexOf("e")>=0||dir.indexOf("w")>=0){\n'
-+'      var sH=dir.indexOf("e")>=0?1:-1, dEff=sH*dx;\n'
-+'      var nw=Math.max(MIN,resizing.w+(sym?2*dEff:dEff)), grew=nw-resizing.w;\n'
-+'      var nml=sym?(resizing.ml-grew/2):(sH>0?resizing.ml:(resizing.ml-grew));\n'
-+'      rsz("width",nw+"px"); rsz("max-width",nw+"px"); rsz("margin-left",nml+"px");\n'
-+'    }\n'
-+'    if(dir.indexOf("s")>=0||dir.indexOf("n")>=0){\n'
-+'      var sV=dir.indexOf("s")>=0?1:-1, dEffV=sV*dy;\n'
-+'      var nh=Math.max(MIN,resizing.h+(sym?2*dEffV:dEffV)), grewV=nh-resizing.h;\n'
-+'      var nmt=sym?(resizing.mt-grewV/2):(sV>0?resizing.mt:(resizing.mt-grewV));\n'
-+'      rsz("height",nh+"px"); rsz("margin-top",nmt+"px");\n'
-+'    }\n'
++'    var horiz=dir.indexOf("e")>=0||dir.indexOf("w")>=0, vert=dir.indexOf("s")>=0||dir.indexOf("n")>=0;\n'
++'    if(horiz){ var sH=dir.indexOf("e")>=0?1:-1, dEff=sH*dx; var nw=Math.max(MIN,resizing.w+(sym?2*dEff:dEff)); rsz("width",nw+"px"); rsz("max-width",nw+"px"); rsz("margin-left",resizing.ml+"px"); }\n'
++'    if(vert){ var sV=dir.indexOf("s")>=0?1:-1, dEffV=sV*dy; var nh=Math.max(MIN,resizing.h+(sym?2*dEffV:dEffV)); rsz("height",nh+"px"); rsz("margin-top",resizing.mt+"px"); }\n'
++'    var rc=sel.getBoundingClientRect();\n'
++'    if(horiz){ var sH2=dir.indexOf("e")>=0?1:-1; var tX=sym?resizing.CX:(sH2>0?resizing.L:resizing.R); var cX=sym?(rc.left+rc.width/2):(sH2>0?rc.left:rc.right); rsz("margin-left",(resizing.ml+(tX-cX)/resizing.fx)+"px"); }\n'
++'    if(vert){ var sV2=dir.indexOf("s")>=0?1:-1; var tY=sym?resizing.CY:(sV2>0?resizing.T:resizing.B); var cY=sym?(rc.top+rc.height/2):(sV2>0?rc.top:rc.bottom); rsz("margin-top",(resizing.mt+(tY-cY)/resizing.fy)+"px"); }\n'
 +'    var p=pos(sel); if(p){ paintOverlay(sel,true); positionHandles(p); hbox.style.display="block"; }\n'
 +'  }\n'
 +'  function onResizeUp(e){\n'
@@ -7783,7 +7849,10 @@ async function createNewPage(){
   const file=document.getElementById('np-file')?.value.trim()||(id==='home'?'index.html':capitalize(id)+'.html');
   if(!title||!id){toast('Title required','err');return;}
   if(_pages[id]){toast('Page ID already exists','err');return;}
-  const html='<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>'+title+'</title>\n</head>\n<body>\n<h1>'+title+'</h1>\n<p>Edit this page in Fourge.</p>\n</body>\n</html>';
+  // Build from the site shell (header/footer/CSS cloned from an existing page) so a
+  // new page matches the site; fall back to a bare document if there's no donor yet.
+  const starter='<h1>'+esc(title)+'</h1>\n<p>Edit this page in Fourge.</p>';
+  const html=(await pageFromSiteShell(title, starter))||('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>'+title+'</title>\n</head>\n<body>\n'+starter+'\n</body>\n</html>');
   _pages[id]={title,file,path:file,css:'',blocks:[]};
   _veHtml[id]=html;_veOrigHtml[id]='';
   try{
@@ -7935,10 +8004,8 @@ function renderManagePages(){
     +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(label)+'</div>'
     +'<div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">'+esc(sub)+'</div></div>'+btn+'</div>';
   let html = '';
-  html += '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Pages in the CMS ('+live.length+')</div>';
-  html += live.map(p=>row(p.label, p.path||p.file||'',
-    '<button class="fd-btn-secondary" style="font-size:12px;flex-shrink:0" onclick="removePageFromCMS('+JSON.stringify(p.path||p.file||'')+')">Remove from CMS</button>'
-  )).join('') || '<div style="color:var(--muted);font-size:13px;padding:8px 0">No pages.</div>';
+  html += '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Pages in the CMS ('+live.length+') — to remove one, open it in the editor and use the <strong>gear → Page Settings → Remove from CMS</strong> (or Delete page).</div>';
+  html += live.map(p=>row(p.label, p.path||p.file||'', '')).join('') || '<div style="color:var(--muted);font-size:13px;padding:8px 0">No pages.</div>';
   if(hidden.length){
     html += '<div style="font-size:12px;color:var(--muted);margin:18px 0 8px">Hidden from the CMS ('+hidden.length+') — files still exist on the server</div>';
     html += (_site.hiddenPages||[]).map(p=>row(p, 'hidden',
@@ -8046,13 +8113,60 @@ ${ec}
 </body>
 </html>`;
 }
+// ── SITE SHELL (header/footer) FOR NEW + GENERATED PAGES ────────────────────
+// New pages and the privacy generator used to emit standalone HTML with no site
+// header/footer. This clones a real page (its <head>/CSS + header + nav + footer)
+// and swaps in the new content, so every created page matches the rest of the site.
+function pickDonorPath(){
+  const list=getPageList();
+  let cand=list.find(p=>p.id==='home')||list.find(p=>/(^|\/)index\.html?$/i.test(p.path||p.file||''));
+  if(!cand) cand=list.find(p=>{const pg=_pages[p.id]||{}; return !pg.draft && !pg.protected && veIsSafePath(p.path||p.file||'');});
+  const pg=cand?_pages[cand.id]:null;
+  return pg?(pg.path||pg.file):null;
+}
+function veFindContentRegion(doc){
+  return doc.querySelector('main, [role="main"], #main, .main, #content, .content, .page-content, .main-content, #primary, .site-content')||null;
+}
+async function pageFromSiteShell(title, contentHtml){
+  try{
+    if(!canCallApi()) return null;
+    const donor=pickDonorPath(); if(!donor) return null;
+    const data=await apiCall('read_file',{path:donor}); const src=data&&data.content; if(!src) return null;
+    const doc=new DOMParser().parseFromString(src,'text/html'); if(!doc||!doc.body) return null;
+    // Drop any editor artifacts / page-specific managed blocks a donor may carry.
+    doc.querySelectorAll('[data-feid],[data-fid]').forEach(el=>{el.removeAttribute('data-feid');el.removeAttribute('data-fid');});
+    doc.querySelectorAll('#__foundry_bridge__,#__fe_done__,#__fe_ov__,#__fe_badge__,#__fe_handles__,#fourge-responsive,[data-fourge-seo],[data-fourge-page]').forEach(el=>el.remove());
+    let t=doc.querySelector('title'); if(!t){t=doc.createElement('title');(doc.head||doc.documentElement).appendChild(t);} t.textContent=title;
+    const md=doc.querySelector('meta[name="description"]'); if(md) md.remove(); // SEO regenerates this per page
+    const region=veFindContentRegion(doc);
+    if(region){ region.innerHTML=contentHtml; }
+    else {
+      const body=doc.body;
+      const hasChrome=!!body.querySelector('header,footer,[id="header"],[id="footer"],[class*="header"],[class*="footer"]');
+      if(!hasChrome) return null;   // no header/footer to gain — caller falls back to standalone
+      const isChrome=el=>el.matches&&el.matches('header,nav,footer,script,style,link,[id="header"],[id="footer"],[class*="header"],[class*="footer"],[role="navigation"]');
+      Array.from(body.children).forEach(ch=>{ if(!isChrome(ch)) ch.remove(); });
+      const wrap=doc.createElement('main'); wrap.innerHTML=contentHtml;
+      const footer=body.querySelector('footer,[id="footer"],[class*="footer"]');
+      if(footer) footer.parentNode.insertBefore(wrap,footer); else body.appendChild(wrap);
+    }
+    return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+  }catch(e){ console.warn('pageFromSiteShell failed',e.message); return null; }
+}
+
 async function generatePrivacyPolicy(){
   if(!canCallApi()){ toast('Sign in again to generate the page','err'); return; }
   const path='privacy-policy.html';
   try{
     // Warn before overwriting an existing privacy policy.
     try{ const ex=await apiCall('read_file',{path}); if(ex&&ex.content&&!confirm('privacy-policy.html already exists — overwrite it with a freshly generated version?')) return; }catch{}
-    await apiCall('write_file',{path,content:privacyPolicyHTML()});
+    // Prefer wrapping the policy in the site shell (header/footer/CSS) by cloning a
+    // real page; fall back to the standalone styled document if there's no donor.
+    const full=privacyPolicyHTML();
+    let content=''; try{ const pd=new DOMParser().parseFromString(full,'text/html'); const w=pd.querySelector('.pp-content .pp-wrap'); content=w?w.innerHTML:''; }catch{}
+    const C=decodeHtml(_site.name||'Our Company');
+    const shell=content?await pageFromSiteShell(C+' — Privacy Policy', content):null;
+    await apiCall('write_file',{path,content:shell||full});
     if(Array.isArray(_site.hiddenPages)) _site.hiddenPages=_site.hiddenPages.filter(p=>String(p).toLowerCase()!==path); // ensure visible
     await loadPages(); renderManagePages(); renderVePageList();
     toast('Privacy Policy created ✓ ('+siteContactEmail()+')','ok');
