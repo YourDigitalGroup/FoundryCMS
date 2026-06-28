@@ -2068,7 +2068,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.7';
+const CMS_VERSION='1.13.8';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5879,7 +5879,12 @@ return '(function(){\n'
 +'  function positionHandles(p){\n'
 +'    var cx=p.l+p.w/2, cy=p.t+p.h/2, rr=p.l+p.w, bb=p.t+p.h, o=5.5;\n'
 +'    var pts={nw:[p.l,p.t],n:[cx,p.t],ne:[rr,p.t],e:[rr,cy],se:[rr,bb],s:[cx,bb],sw:[p.l,bb],w:[p.l,cy]};\n'
-+'    HDIRS.forEach(function(dir){var pt=pts[dir],h=handles[dir];h.style.left=(pt[0]-o)+"px";h.style.top=(pt[1]-o)+"px";});\n'
+// Clamp handles into the visible viewport so they stay grabbable even when the
+// element runs off the edge (common on narrow mobile/tablet previews).
++'    var vw=window.innerWidth||99999, vh=window.innerHeight||99999, m=3;\n'
++'    HDIRS.forEach(function(dir){var pt=pts[dir],h=handles[dir];\n'
++'      var L=Math.max(m,Math.min(pt[0]-o, vw-11-m)), T=Math.max(m,Math.min(pt[1]-o, vh-11-m));\n'
++'      h.style.left=L+"px"; h.style.top=T+"px";});\n'
 +'  }\n'
 +'  function refreshHandles(){\n'
 +'    if(sel&&selResizable&&!resizing){var p=pos(sel);if(p&&p.w>=2&&p.h>=2){positionHandles(p);hbox.style.display="block";return;}}\n'
@@ -6728,13 +6733,20 @@ function veApplyDeviceSize(){
     frame.style.transform='scale('+scale+')';
     wrap.style.width=boxW+'px'; wrap.style.height=boxH+'px';
   } else {
-    const W={tablet:768,mobile:390}[_veDevice]||768;
-    const H=(canvas?canvas.clientHeight:0)-40;
-    frame.style.transform='none';
-    frame.style.width='100%';
-    frame.style.height=(H>200?H:800)+'px';
-    wrap.style.width=W+'px';
-    wrap.style.height=(H>200?H:800)+'px';
+    // Faithful device emulation (like Chrome's inspector): render the iframe at the
+    // device's real CSS dimensions so the page's own mobile/tablet CSS reflows
+    // exactly as on the device, then scale the whole frame DOWN to fit the canvas.
+    const dims={tablet:[768,1024],mobile:[390,844]}[_veDevice]||[768,1024];
+    const dW=dims[0], dH=dims[1];
+    const pad=canvas&&canvas.matches(':fullscreen')?40:28;
+    const availW=Math.max(280,(canvas?canvas.clientWidth:wrap.clientWidth)-pad);
+    const availH=Math.max(240,(canvas?canvas.clientHeight:600)-pad);
+    const scale=Math.min(1, availW/dW, availH/dH);
+    frame.style.width=dW+'px'; frame.style.height=dH+'px';
+    frame.style.transformOrigin='top left';
+    frame.style.transform='scale('+scale+')';
+    wrap.style.width=Math.round(dW*scale)+'px';
+    wrap.style.height=Math.round(dH*scale)+'px';
   }
 }
 // Drag the bottom-right corner of the desktop preview to resize it. A transparent
