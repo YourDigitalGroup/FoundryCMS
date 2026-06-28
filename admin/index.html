@@ -428,7 +428,9 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-device-btn{padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;transition:all .12s;display:flex;align-items:center;gap:5px}
 .ve-device-btn.on{background:var(--ember-soft);color:var(--ember);border-color:var(--ember)}
 .ve-canvas{flex:1;overflow:auto;background:#DDDAD4;padding:20px;display:flex;justify-content:center;align-items:flex-start}
-.ve-frame-wrap{background:#FFF;border-radius:8px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.14);transition:width .2s,height .2s}
+.ve-frame-wrap{position:relative;background:#FFF;border-radius:8px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.14);transition:width .2s,height .2s}
+.ve-resize-grip{position:absolute;right:0;bottom:0;width:22px;height:22px;cursor:nwse-resize;z-index:6;border-bottom-right-radius:8px;background:linear-gradient(135deg,transparent 0 45%,rgba(200,83,30,.55) 45% 100%);opacity:.7;transition:opacity .15s}
+.ve-resize-grip:hover{opacity:1}
 /* Fullscreen: the canvas fills the monitor and centers the 16:9 preview. */
 .ve-canvas:fullscreen{align-items:center;padding:24px;background:#23201d}
 /* Code editor (CodeMirror) — VS Code-style source view, toggled with the canvas. */
@@ -1277,6 +1279,7 @@ textarea.fb-input{resize:vertical}
             <div class="ve-canvas" id="ve-canvas">
               <div class="ve-frame-wrap" id="ve-frame-wrap">
                 <iframe id="visual-iframe" title="Page editor"></iframe>
+                <div class="ve-resize-grip" id="ve-resize-grip" title="Drag to resize the preview" onmousedown="veGripDown(event)"></div>
               </div>
             </div>
             <!-- Code view (CodeMirror enhances this textarea on first switch) -->
@@ -2065,7 +2068,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.5';
+const CMS_VERSION='1.13.6';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2107,6 +2110,10 @@ function goPanel(id){
     if(oc.includes("'"+id+"'")||(id==='p-dash'&&oc.includes("'dash'"))||(id==='p-pages'&&oc.includes("'pages'"))||(id==='p-posts'&&oc.includes("'posts'"))||(id==='p-media'&&oc.includes("'media'"))||(id==='p-seo'&&oc.includes("'seo'"))||(id==='p-site'&&(oc.includes("'site'")||oc.includes("'siteinfo'")))||(id==='p-inject'&&(oc.includes("'injections'")||oc.includes("'plugins'")))||(id==='p-analytics'&&oc.includes("'analytics'"))||(id==='p-settings'&&oc.includes("'settings'"))||(id==='p-factory'&&oc.includes("'factory'"))||(id==='p-users'&&oc.includes("'users'"))
     )n.classList.add('on');});
   const ptWrap=document.getElementById('sb-pages-tree-wrap');if(ptWrap)ptWrap.style.display=id==='p-pages'?'block':'none';
+  // Auto-collapse the main sidebar in the page editor for more preview room;
+  // elsewhere, honor the user's saved preference. (The toggle still works anytime.)
+  if(id==='p-pages') document.body.classList.add('sb-collapsed');
+  else document.body.classList.toggle('sb-collapsed', (()=>{try{return localStorage.getItem('fourge_sb_collapsed')==='1';}catch(e){return false;}})());
   const bc=document.getElementById('tb-breadcrumb');
   if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
@@ -6671,10 +6678,12 @@ function veDeselect(){
 
 // ── DEVICE TOGGLE ───────────────────────────────────────────────
 let _veDevice='desktop';
+let _veManualSize=null;   // {w,h} when the user has dragged the preview corner (desktop)
 function veSetDevice(mode,btn){
   document.querySelectorAll('.ve-device-btn').forEach(b=>b.classList.remove('on'));
   if(btn) btn.classList.add('on');
   _veDevice=mode;
+  _veManualSize=null;   // switching device resets any manual preview size
   veApplyDeviceSize();
   const ifrm=document.getElementById('visual-iframe');
   if(ifrm&&ifrm.contentWindow){
@@ -6697,17 +6706,24 @@ function veApplyDeviceSize(){
   const frame=document.getElementById('visual-iframe');
   const canvas=document.querySelector('.ve-canvas');
   if(!wrap||!frame) return;
+  const grip=document.getElementById('ve-resize-grip'); if(grip) grip.style.display=_veDevice==='desktop'?'block':'none';
   if(_veDevice==='desktop'){
-    const pad=canvas&&canvas.matches(':fullscreen')?48:32;
-    const availW=Math.max(320,(canvas?canvas.clientWidth:wrap.clientWidth)-pad);
-    const availH=Math.max(240,(canvas?canvas.clientHeight:600)-pad);
-    // largest 16:9 box that fits the available canvas (width- or height-bound)
-    let boxW=availW, boxH=Math.round(boxW*9/16);
-    if(boxH>availH){ boxH=availH; boxW=Math.round(boxH*16/9); }
+    let boxW, boxH;
+    if(_veManualSize && !(canvas&&canvas.matches(':fullscreen'))){
+      // user dragged the corner — use that exact size
+      boxW=Math.max(280,_veManualSize.w); boxH=Math.max(200,_veManualSize.h);
+    } else {
+      const pad=canvas&&canvas.matches(':fullscreen')?48:32;
+      const availW=Math.max(320,(canvas?canvas.clientWidth:wrap.clientWidth)-pad);
+      const availH=Math.max(240,(canvas?canvas.clientHeight:600)-pad);
+      // largest 16:9 box that fits the available canvas (width- or height-bound)
+      boxW=availW; boxH=Math.round(boxW*9/16);
+      if(boxH>availH){ boxH=availH; boxW=Math.round(boxH*16/9); }
+    }
     // render at >=1440 logical width; scale the box to it (downscale only)
-    const logicalW=Math.max(1440,boxW), logicalH=Math.round(logicalW*9/16);
+    const logicalW=Math.max(1440,boxW);
     const scale=boxW/logicalW;
-    frame.style.width=logicalW+'px'; frame.style.height=logicalH+'px';
+    frame.style.width=logicalW+'px'; frame.style.height=Math.round(boxH/scale)+'px';
     frame.style.transformOrigin='top left';
     frame.style.transform='scale('+scale+')';
     wrap.style.width=boxW+'px'; wrap.style.height=boxH+'px';
@@ -6720,6 +6736,22 @@ function veApplyDeviceSize(){
     wrap.style.width=W+'px';
     wrap.style.height=(H>200?H:800)+'px';
   }
+}
+// Drag the bottom-right corner of the desktop preview to resize it. A transparent
+// shield captures the mouse so the iframe doesn't swallow events mid-drag.
+function veGripDown(e){
+  e.preventDefault(); e.stopPropagation();
+  if(_veDevice!=='desktop') return;
+  const wrap=document.getElementById('ve-frame-wrap'); if(!wrap) return;
+  const startX=e.clientX, startY=e.clientY, startW=wrap.clientWidth, startH=wrap.clientHeight;
+  const prevTrans=wrap.style.transition; wrap.style.transition='none';
+  const shield=document.createElement('div');
+  shield.style.cssText='position:fixed;inset:0;z-index:99999;cursor:nwse-resize';
+  document.body.appendChild(shield);
+  const move=ev=>{ _veManualSize={w:Math.max(280,startW+(ev.clientX-startX)), h:Math.max(200,startH+(ev.clientY-startY))}; veApplyDeviceSize(); };
+  const up=()=>{ document.removeEventListener('mousemove',move,true); document.removeEventListener('mouseup',up,true); shield.remove(); wrap.style.transition=prevTrans; };
+  document.addEventListener('mousemove',move,true);
+  document.addEventListener('mouseup',up,true);
 }
 // Fill-screen toggle: put the canvas into native fullscreen so the 16:9 preview
 // fills the whole monitor. Esc exits (native). Refit on enter/exit.
@@ -8259,24 +8291,34 @@ async function pageFromSiteShell(title, contentHtml){
     doc.querySelectorAll('#__foundry_bridge__,#__fe_done__,#__fe_ov__,#__fe_badge__,#__fe_handles__,#fourge-responsive,#fourge-hover,[data-fourge-seo],[data-fourge-page]').forEach(el=>el.remove());
     let t=doc.querySelector('title'); if(!t){t=doc.createElement('title');(doc.head||doc.documentElement).appendChild(t);} t.textContent=title;
     const md=doc.querySelector('meta[name="description"]'); if(md) md.remove(); // SEO regenerates this per page
-    // Wrap the content in a centered, padded section: real side margins, a
-    // comfortable reading column, and top room so it clears a fixed/overlapping
-    // header. It's a normal section, so it stays fully editable afterward.
-    const wrapped='<section class="fourge-page-section" style="max-width:880px;margin:0 auto;padding:120px clamp(16px,5vw,40px) 72px;line-height:1.7">'+contentHtml+'</section>';
+    // Wrap the content in a centered, padded section with its OWN layout styles
+    // marked !important, so the site's CSS can't stretch it edge-to-edge. It's a
+    // normal section, so it stays fully editable afterward.
+    const wrapped='<section class="fourge-page-section" style="max-width:880px !important;margin-left:auto !important;margin-right:auto !important;padding:88px clamp(18px,5vw,40px) 72px !important;line-height:1.7 !important;box-sizing:border-box !important">'+contentHtml+'</section>';
     const region=veFindContentRegion(doc);
     if(region){ region.innerHTML=wrapped; }
-    else {
-      const body=doc.body;
-      const hasChrome=!!body.querySelector('header,footer,[id="header"],[id="footer"],[class*="header"],[class*="footer"]');
-      if(!hasChrome) return null;   // no header/footer to gain — caller falls back to standalone
-      const isChrome=el=>el.matches&&el.matches('header,nav,footer,script,style,link,[id="header"],[id="footer"],[class*="header"],[class*="footer"],[role="navigation"]');
-      Array.from(body.children).forEach(ch=>{ if(!isChrome(ch)) ch.remove(); });
-      const wrap=doc.createElement('main'); wrap.innerHTML=wrapped;
-      const footer=body.querySelector('footer,[id="footer"],[class*="footer"]');
-      if(footer) footer.parentNode.insertBefore(wrap,footer); else body.appendChild(wrap);
+    else if(!veReplaceBetweenHeaderFooter(doc, wrapped)){
+      return null;   // couldn't place it without mangling the layout → standalone fallback
     }
     return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
   }catch(e){ console.warn('pageFromSiteShell failed',e.message); return null; }
+}
+// Replace everything between the site header and footer with the content section,
+// keeping the header, footer, and their surrounding wrapper intact (so wrapper-
+// scoped CSS still applies). Works only when header & footer share a parent; the
+// caller falls back to a self-styled standalone page otherwise.
+function veReplaceBetweenHeaderFooter(doc, sectionHtml){
+  const pick=sels=>{ for(const s of sels){ const el=doc.body.querySelector(s); if(el) return el; } return null; };
+  const header=pick(['header','[role="banner"]','#header','.site-header','.header','.masthead','.site-head','.navbar','nav']);
+  const footer=pick(['footer','[role="contentinfo"]','#footer','.site-footer','.footer','.site-foot']);
+  if(!header||!footer||header===footer) return false;
+  if(header.parentElement!==footer.parentElement) return false;
+  if(!(header.compareDocumentPosition(footer)&Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+  let n=header.nextElementSibling;
+  while(n && n!==footer){ const nx=n.nextElementSibling; const tag=n.tagName; if(tag!=='STYLE'&&tag!=='LINK'&&tag!=='SCRIPT') n.remove(); n=nx; }
+  const tmp=doc.createElement('div'); tmp.innerHTML=sectionHtml;
+  footer.parentNode.insertBefore(tmp.firstElementChild||tmp, footer);
+  return true;
 }
 
 async function generatePrivacyPolicy(){
