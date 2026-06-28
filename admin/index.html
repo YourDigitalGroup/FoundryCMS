@@ -1975,7 +1975,7 @@ textarea.fb-input{resize:vertical}
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px"><input type="checkbox" id="ps-protect" style="width:16px;height:16px" onchange="psToggleProtect()"> Password-protect this page — visitors must enter a password to view it</label>
       <div id="ps-protect-pw-wrap" style="display:none;margin:-4px 0 18px 26px">
         <input type="password" id="ps-protect-pw" autocomplete="new-password" placeholder="Set a password (leave blank to keep current)" style="width:100%;max-width:340px">
-        <div class="desc" style="margin-top:5px;font-size:11px">Enforced server-side by a PHP gate (a branded password screen); the password is hashed, never stored in plaintext. Requires the updated <code>api.php</code> to be deployed. Minimum 4 characters.</div>
+        <div class="desc" style="margin-top:5px;font-size:11px">Visitors must enter this password to view the page. Minimum 4 characters.</div>
       </div>
       <div class="fg"><label>Heading Styles <span style="font-weight:400;color:var(--muted)">— override the site design on this page (blank = use the design)</span></label>
         <div id="ps-headings" style="display:flex;flex-direction:column;gap:9px"></div>
@@ -2055,7 +2055,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.3';
+const CMS_VERSION='1.13.4';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5446,33 +5446,43 @@ function psToggleProtect(){
   const wrap=document.getElementById('ps-protect-pw-wrap'); if(wrap) wrap.style.display=on?'block':'none';
 }
 // Per-page H1/H2/H3 overrides — build the editor rows and read them back
+// Heading style targets + a curated Google Fonts list for the per-page heading picker.
+const HEADING_TAGS=['h1','h2','h3','h4','h5','h6'];
+const GOOGLE_FONTS=['Inter','Roboto','Open Sans','Lato','Montserrat','Poppins','Raleway','Nunito','Work Sans','Source Sans 3','Manrope','Plus Jakarta Sans','DM Sans','Figtree','Outfit','Sora','Space Grotesk','Hanken Grotesk','Albert Sans','Rubik','Mulish','Karla','Barlow','Heebo','Libre Franklin','Quicksand','Josefin Sans','Cabin','Oswald','Bebas Neue','Archivo','Merriweather','Playfair Display','Lora','PT Serif','Roboto Slab','EB Garamond','Cormorant Garamond','Fraunces','DM Serif Display'];
 function psRenderHeadings(hs){
   const wrap=document.getElementById('ps-headings'); if(!wrap) return;
   const weights=['','300','400','500','600','700','800','900'];
   const aligns=['','left','center','right'];
-  wrap.innerHTML=['h1','h2','h3'].map(tag=>{
+  wrap.innerHTML=HEADING_TAGS.map(tag=>{
     const s=hs[tag]||{};
     const wopt=weights.map(w=>`<option value="${w}"${String(s.weight||'')===w?' selected':''}>${w||'weight'}</option>`).join('');
     const aopt=aligns.map(a=>`<option value="${a}"${(s.align||'')===a?' selected':''}>${a||'align'}</option>`).join('');
+    const fopt='<option value="">— font (default)</option>'+GOOGLE_FONTS.map(f=>`<option value="${esc(f)}"${(s.font||'')===f?' selected':''}>${esc(f)}</option>`).join('');
     const hasColor=!!s.color;
-    return `<div style="display:grid;grid-template-columns:34px 1fr 92px 84px 40px;gap:8px;align-items:center">
-      <span style="font-weight:700;font-size:13px;color:var(--text);text-transform:uppercase">${tag}</span>
-      <input type="text" id="ps-${tag}-size" value="${esc(s.size||'')}" placeholder="size e.g. 2.5rem" style="font-size:12px">
-      <select id="ps-${tag}-weight" style="font-size:12px">${wopt}</select>
-      <select id="ps-${tag}-align" style="font-size:12px">${aopt}</select>
-      <input type="color" id="ps-${tag}-color" value="${hasColor?esc(s.color):'#000000'}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (click to set; blank stays on the design)" style="width:40px;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:9px 11px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-weight:700;font-size:12px;width:26px;text-transform:uppercase;color:var(--text)">${tag}</span>
+        <input type="text" id="ps-${tag}-size" value="${esc(s.size||'')}" placeholder="size e.g. 2.5rem" style="flex:1;font-size:12px">
+        <input type="color" id="ps-${tag}-color" value="${hasColor?esc(s.color):'#000000'}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (blank stays on the design)" style="width:38px;height:30px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+        <select id="ps-${tag}-weight" style="font-size:12px">${wopt}</select>
+        <select id="ps-${tag}-align" style="font-size:12px">${aopt}</select>
+      </div>
+      <select id="ps-${tag}-font" style="width:100%;font-size:12px;margin-top:6px">${fopt}</select>
     </div>`;
   }).join('');
 }
 function psReadHeadings(){
   const out={};
-  ['h1','h2','h3'].forEach(tag=>{
+  HEADING_TAGS.forEach(tag=>{
     const size=(document.getElementById('ps-'+tag+'-size')?.value||'').trim();
     const weight=document.getElementById('ps-'+tag+'-weight')?.value||'';
     const align=document.getElementById('ps-'+tag+'-align')?.value||'';
+    const font=document.getElementById('ps-'+tag+'-font')?.value||'';
     const colEl=document.getElementById('ps-'+tag+'-color');
     const color=(colEl&&colEl.dataset.set==='1')?colEl.value:'';
-    const o={}; if(size)o.size=size; if(weight)o.weight=weight; if(align)o.align=align; if(color)o.color=color;
+    const o={}; if(size)o.size=size; if(weight)o.weight=weight; if(align)o.align=align; if(font)o.font=font; if(color)o.color=color;
     if(Object.keys(o).length) out[tag]=o;
   });
   return out;
@@ -5534,15 +5544,23 @@ function pageHeadingCss(pg){
   const h=pg&&pg.headingStyles; if(!h) return '';
   const norm=v=>{ v=String(v||'').trim(); return /^[0-9.]+$/.test(v)?v+'px':v; };
   const out=[];
-  ['h1','h2','h3'].forEach(tag=>{
+  HEADING_TAGS.forEach(tag=>{
     const s=h[tag]||{}; const d=[];
     if(s.size)   d.push('font-size:'+norm(s.size)+' !important');
     if(s.weight) d.push('font-weight:'+s.weight+' !important');
     if(s.align)  d.push('text-align:'+s.align+' !important');
     if(s.color)  d.push('color:'+s.color+' !important');
+    if(s.font)   d.push("font-family:'"+String(s.font).replace(/'/g,'')+"',sans-serif !important");
     if(d.length) out.push('body '+tag+'{'+d.join(';')+'}');
   });
   return out.join('\n');
+}
+// Google Fonts stylesheet URL for whatever heading fonts this page uses (or '').
+function pageFontLink(pg){
+  const h=pg&&pg.headingStyles; if(!h) return '';
+  const fonts=[]; HEADING_TAGS.forEach(t=>{ const f=h[t]&&h[t].font; if(f && fonts.indexOf(f)<0) fonts.push(f); });
+  if(!fonts.length) return '';
+  return 'https://fonts.googleapis.com/css2?'+fonts.map(f=>'family='+encodeURIComponent(f).replace(/%20/g,'+')+':wght@300;400;500;600;700;800;900').join('&')+'&display=swap';
 }
 // Inject per-page heading overrides + custom CSS/JS as managed, idempotent blocks.
 function pageInjectCustom(html, pg){
@@ -5558,6 +5576,8 @@ function pageInjectCustom(html, pg){
     const doc=new DOMParser().parseFromString(html,'text/html');
     const head=doc.head||doc.documentElement, body=doc.body||doc.documentElement;
     doc.querySelectorAll('[data-fourge-page]').forEach(el=>el.remove()); // clear prior managed blocks
+    const fontHref=pageFontLink(pg);
+    if(fontHref){ const lk=doc.createElement('link'); lk.rel='stylesheet'; lk.setAttribute('data-fourge-page',''); lk.setAttribute('href',fontHref); head.appendChild(lk); }
     if(hasCss){ const st=doc.createElement('style'); st.id='fourge-page-css'; st.setAttribute('data-fourge-page',''); st.textContent=css; head.appendChild(st); }
     if(hasJs){ const sc=doc.createElement('script'); sc.id='fourge-page-js'; sc.setAttribute('data-fourge-page',''); sc.textContent=pg.customJs; body.appendChild(sc); }
     return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
@@ -5720,7 +5740,7 @@ return '(function(){\n'
 +'  });\n'
 // Index all selectable elements
 +'  var idx=0, sel=null, hov=null, selResizable=false, resizing=null, resizeGuard=false;\n'
-+'  var curDevice="desktop", respData={tablet:{},mobile:{}}, fgeSeq=0;\n'
++'  var curDevice="desktop", respData={tablet:{},mobile:{}}, fgeSeq=0, hoverData={};\n'
 +'  var SKIP={"HTML":1,"BODY":1,"SCRIPT":1,"STYLE":1,"NOSCRIPT":1,"META":1,"LINK":1,"HEAD":1,"BR":1,"HR":1};\n'
 +'  var LEAF={"H1":1,"H2":1,"H3":1,"H4":1,"H5":1,"H6":1,"P":1,"LI":1,"TD":1,"TH":1,"A":1,"BUTTON":1,"LABEL":1,"BLOCKQUOTE":1,"IMG":1,"SPAN":1,"STRONG":1,"EM":1,"B":1,"I":1,"FIGCAPTION":1,"CAPTION":1,"DT":1,"DD":1,"TIME":1,"MARK":1,"SMALL":1,"INPUT":1,"TEXTAREA":1,"SELECT":1};\n'
 +'  function isOurs(el){return el&&el.id&&el.id.indexOf("__fe_")===0;}\n'
@@ -5842,6 +5862,11 @@ return '(function(){\n'
 +'    var s=document.getElementById("fourge-responsive");if(!s||!s.sheet)return;\n'
 +'    try{var rr=s.sheet.cssRules;for(var i=0;i<rr.length;i++){var r=rr[i];if(r.type!==4)continue;var dev=(r.media.mediaText.indexOf("600")>=0)?"mobile":(r.media.mediaText.indexOf("1024")>=0?"tablet":null);if(!dev)continue;for(var j=0;j<r.cssRules.length;j++){var sr=r.cssRules[j];var cls=(sr.selectorText||"").replace(/^\\./,"");if(!cls)continue;respData[dev][cls]=respData[dev][cls]||{};for(var k=0;k<sr.style.length;k++){var p=sr.style[k];respData[dev][cls][p]=sr.style.getPropertyValue(p);}}}}catch(e){}\n'
 +'  }\n'
+// ── HOVER STYLES (per-element :hover rules in a managed stylesheet) ──
++'  function ensureHoverStyle(){var s=document.getElementById("fourge-hover");if(!s){s=document.createElement("style");s.id="fourge-hover";s.setAttribute("data-fourge-hover","");(document.head||document.documentElement).appendChild(s);}return s;}\n'
++'  function regenHover(){var s=ensureHoverStyle(),out="";Object.keys(hoverData).forEach(function(cls){var d=hoverData[cls],body="";Object.keys(d).forEach(function(p){if(d[p]!=="")body+=p+":"+d[p]+" !important;";});if(body)out+="."+cls+":hover{"+body+"}\\n";});s.textContent=out;if(!out&&s.parentNode)s.parentNode.removeChild(s);}\n'
++'  function setHover(el,prop,val){var cls=fgeClass(el);if(!hoverData[cls])hoverData[cls]={};if(val===""||val==null)delete hoverData[cls][prop];else hoverData[cls][prop]=val;regenHover();}\n'
++'  function initHover(){var s=document.getElementById("fourge-hover");if(!s)return;var txt=s.textContent||"",rx=/\\.(fge-r\\d+):hover\\{([^}]*)\\}/g,m;while((m=rx.exec(txt))){var cls=m[1];hoverData[cls]=hoverData[cls]||{};m[2].split(";").forEach(function(decl){var c=decl.indexOf(":");if(c<0)return;var p=decl.slice(0,c).trim();var v=decl.slice(c+1).replace(/!important/i,"").trim();if(p)hoverData[cls][p]=v;});}}\n'
 // ── UNDO / REDO (full-body snapshots) ──
 +'  var undoStack=[], redoStack=[], MAXH=40;\n'
 +'  function snapshot(){\n'
@@ -5933,6 +5958,7 @@ return '(function(){\n'
 +'      bgImage:(function(){try{var b=cs.backgroundImage;if(b&&b!=="none"){var m=b.match(/url\\(([^)]+)\\)/);if(m)return m[1].replace(/["]/g,"").replace(/[\\x27]/g,"");return "";}return "";}catch(e){return "";}}()),\n'
 +'      inHeader:inH, inFooter:inF, inNav:inN,\n'
 +'      isFlex:(function(){try{var dsp=cs.display;return dsp==="flex"||dsp==="inline-flex";}catch(e){return false;}}()), flexDir:(function(){try{return cs.flexDirection||"";}catch(e){return "";}}()),\n'
++'      isBtn:(t.tagName==="BUTTON")||(typeof t.className==="string"&&/(^|\\s)(btn|button)/i.test(t.className))||(t.getAttribute&&t.getAttribute("role")==="button"),\n'
 +'      styles:{padding:cs.padding,margin:cs.margin,fontSize:cs.fontSize,fontWeight:cs.fontWeight,textAlign:cs.textAlign,borderRadius:cs.borderRadius,lineHeight:cs.lineHeight,color:rgb2hex(cs.color),bgColor:rgb2hex(cs.backgroundColor)},\n'
 +'      canUp:!!realSibling(t,-1), canDown:!!realSibling(t,1),\n'
 +'      hasParent:!!(par&&par.tagName!=="BODY"&&par.tagName!=="HTML"),\n'
@@ -6018,7 +6044,9 @@ return '(function(){\n'
 +'    if(m.field==="bg"||m.field==="bgColor") applyStyleProp(el2,"background-color",m.value);\n'
 +'    if(m.field==="size") applyStyleProp(el2,"font-size",m.value);\n'
 +'    if(m.field==="weight") applyStyleProp(el2,"font-weight",m.value);\n'
-+'    if(m.field==="align") applyStyleProp(el2,"text-align",m.value);\n'
++'    if(m.field==="align"){ if(curDevice==="desktop"){ if(m.value) el2.style.setProperty("text-align",m.value,"important"); else el2.style.removeProperty("text-align"); } else { setResp(el2,"text-align",m.value,curDevice); } }\n'
++'    if(m.field==="hoverBg") setHover(el2,"background-color",m.value);\n'
++'    if(m.field==="hoverColor") setHover(el2,"color",m.value);\n'
 +'    if(m.field==="lineHeight") applyStyleProp(el2,"line-height",m.value);\n'
 +'    if(m.field==="padding") applyStyleProp(el2,"padding",m.value);\n'
 +'    if(m.field==="margin") applyStyleProp(el2,"margin",m.value);\n'
@@ -6039,7 +6067,7 @@ return '(function(){\n'
 // Reposition on scroll/resize
 +'  document.addEventListener("scroll",function(){if(sel){paintOverlay(sel,true);refreshHandles();}},true);\n'
 +'  window.addEventListener("resize",function(){if(sel){paintOverlay(sel,true);refreshHandles();}});\n'
-+'  initResp();\n'
++'  initResp(); initHover();\n'
 +'  window.parent.postMessage({type:"ve-ready"},"*");\n'
 +'  notifyHistory();\n'
 +'})();\n';
@@ -6201,18 +6229,18 @@ function veShowProps(info){
     <div class="ve-style-divider"><span>Spacing &amp; Style</span></div>
     <div class="ve-style-row">
       <div class="ve-field" style="margin:0"><label>Padding</label>
-        <input type="text" id="vp-padding" value="${esc(st.padding||'')}" placeholder="e.g. 20px or 20px 10px">
+        <input type="text" id="vp-padding" value="${esc(st.padding||'')}" placeholder="e.g. 20px or 20px 10px" onchange="veAutoApply()">
       </div>
       <div class="ve-field" style="margin:0"><label>Margin</label>
-        <input type="text" id="vp-margin" value="${esc(st.margin||'')}" placeholder="e.g. 0 auto">
+        <input type="text" id="vp-margin" value="${esc(st.margin||'')}" placeholder="e.g. 0 auto" onchange="veAutoApply()">
       </div>
     </div>
     <div class="ve-style-row">
       <div class="ve-field" style="margin:0"><label>Border Radius</label>
-        <input type="text" id="vp-radius" value="${esc(st.borderRadius||'')}" placeholder="e.g. 8px">
+        <input type="text" id="vp-radius" value="${esc(st.borderRadius||'')}" placeholder="e.g. 8px" onchange="veAutoApply()">
       </div>
       <div class="ve-field" style="margin:0"><label>Background</label>
-        <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+        <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
     </div>`;
 
@@ -6220,7 +6248,7 @@ function veShowProps(info){
   const anchorField = `
     <div class="ve-style-divider"><span>Anchor / ID</span></div>
     <div class="ve-field"><label>Anchor ID <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(jump here with #id)</span></label>
-      <input type="text" id="vp-anchor" value="${esc(info.anchorId||'')}" placeholder="e.g. services, contact" oninput="this.value=this.value.replace(/\\s+/g,'-').replace(/[^A-Za-z0-9_\\-]/g,'')">
+      <input type="text" id="vp-anchor" value="${esc(info.anchorId||'')}" placeholder="e.g. services, contact" oninput="this.value=this.value.replace(/\\s+/g,'-').replace(/[^A-Za-z0-9_\\-]/g,'')" onchange="veAutoApply()">
       ${info.anchorId?`<div class="desc" style="margin:6px 0 0;font-size:11px">Link to this spot: <code style="background:var(--surface-3);padding:1px 5px;border-radius:4px">#${esc(info.anchorId)}</code></div>`:''}
     </div>`;
 
@@ -6229,13 +6257,13 @@ function veShowProps(info){
     fields = `
       ${imgSrc?`<div class="ve-img-url-preview" onclick="veOpenImgPicker()" title="Click to open the Media Library" style="cursor:pointer;position:relative"><img src="${esc(imgSrc)}" onerror="this.style.display='none'"><span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;pointer-events:none">Change</span></div>`:''}
       <div class="ve-field"><label>Image URL</label>
-        <input type="url" id="vp-src" value="${esc(imgSrc)}" placeholder="https://…" oninput="veImgUrlPreview(this.value)">
+        <input type="url" id="vp-src" value="${esc(imgSrc)}" placeholder="https://…" oninput="veImgUrlPreview(this.value)" onchange="veAutoApply()">
       </div>
       <div class="ve-field"><label>Alt Text</label>
-        <input type="text" id="vp-alt" value="${esc(info.alt||'')}" placeholder="Describe the image…">
+        <input type="text" id="vp-alt" value="${esc(info.alt||'')}" placeholder="Describe the image…" onchange="veAutoApply()">
       </div>
       <div class="ve-field"><label>Link URL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(where the image links)</span></label>
-        <input type="url" id="vp-img-href" value="${esc(info.imgLink||'')}" placeholder="https://… (blank = no link)">
+        <input type="url" id="vp-img-href" value="${esc(info.imgLink||'')}" placeholder="https://… (blank = no link)" onchange="veAutoApply()">
       </div>
       <div class="ve-style-divider"><span>Size</span></div>
       <div class="ve-style-row">
@@ -6250,10 +6278,7 @@ function veShowProps(info){
       <button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veResetImgSize()">Reset to natural size</button>
       ${spacingFields}
       ${anchorField}
-      <div class="ve-btn-pair" style="margin-bottom:12px;margin-top:12px">
-        <button class="ve-apply-btn" style="margin:0" onclick="veApplyImg()">Apply</button>
-        <button class="ve-apply-btn" style="margin:0;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veOpenImgPicker()">Browse Library</button>
-      </div>
+      <button class="ve-apply-btn" style="margin:8px 0 12px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veOpenImgPicker()">Browse Library</button>
       <div class="ve-img-upload-zone" onclick="document.getElementById('vp-img-file').click()" 
            style="border:1.5px dashed var(--border);border-radius:8px;padding:14px;text-align:center;cursor:pointer;color:var(--muted);font-size:12px;transition:border-color .15s"
            onmouseover="this.style.borderColor='var(--ember)'" onmouseout="this.style.borderColor='var(--border)'">
@@ -6264,25 +6289,25 @@ function veShowProps(info){
   } else {
     fields = `
       <div class="ve-field"><label>Text Content</label>
-        <textarea id="vp-text" rows="4">${esc(info.text||'')}</textarea>
+        <textarea id="vp-text" rows="4" onchange="veAutoApply()">${esc(info.text||'')}</textarea>
       </div>
       ${isLink?`<div class="ve-field"><label>Link URL</label>
-        <input type="url" id="vp-href" value="${esc(info.href||'')}" placeholder="https://… or #anchor">
+        <input type="url" id="vp-href" value="${esc(info.href||'')}" placeholder="https://… or #anchor" onchange="veAutoApply()">
       </div>
       <label class="ve-newtab" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);margin:-2px 0 12px;cursor:pointer">
-        <input type="checkbox" id="vp-newtab"${info.target==='_blank'?' checked':''} style="width:auto;margin:0;cursor:pointer"> Open in a new tab
+        <input type="checkbox" id="vp-newtab"${info.target==='_blank'?' checked':''} onchange="veAutoApply()" style="width:auto;margin:0;cursor:pointer"> Open in a new tab
       </label>`:''}
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Color</label>
-          <input type="color" id="vp-color" value="${st.color||'#000000'}" data-dirty="0" oninput="this.dataset.dirty='1'" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+          <input type="color" id="vp-color" value="${st.color||'#000000'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
         <div class="ve-field" style="margin:0"><label>Font Size</label>
-          <input type="text" id="vp-size" value="${esc(st.fontSize||'')}" placeholder="e.g. 18px">
+          <input type="text" id="vp-size" value="${esc(st.fontSize||'')}" placeholder="e.g. 18px" onchange="veAutoApply()">
         </div>
       </div>
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Weight</label>
-          <select id="vp-weight" style="width:100%">
+          <select id="vp-weight" style="width:100%" onchange="veAutoApply()">
             ${['','300','400','500','600','700','800'].map(w=>`<option value="${w}"${String(st.fontWeight||'')===w?' selected':''}>${w||'—'}</option>`).join('')}
           </select>
         </div>
@@ -6303,15 +6328,23 @@ function veShowProps(info){
         </select>
         <div class="desc" style="margin-top:6px;font-size:11px">To reverse columns on phones: switch to <strong>Mobile</strong> in the top toolbar, then pick <code>column-reverse</code>.</div>
       </div>`:''}
-      <button class="ve-apply-btn" onclick="veApplyText()">Apply Changes</button>
+      ${(isLink||info.isBtn)?`<div class="ve-style-divider"><span>Hover</span></div>
+      <div class="ve-style-row">
+        <div class="ve-field" style="margin:0"><label>Hover background</label>
+          <input type="color" id="vp-hover-bg" value="${st.bgColor||'#000000'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+        </div>
+        <div class="ve-field" style="margin:0"><label>Hover text</label>
+          <input type="color" id="vp-hover-color" value="${st.color||'#ffffff'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+        </div>
+      </div>
+      <div class="desc" style="font-size:11px;margin-top:4px">Shown when a visitor hovers the ${isLink?'link':'button'}.</div>`:''}
       ${info.isFaq?`<div class="ve-style-divider"><span>FAQ Item</span></div>
       <div class="ve-field"><label>Question</label>
-        <input type="text" id="vp-faq-q" value="${esc(info.faqQuestion||'')}" placeholder="Question…">
+        <input type="text" id="vp-faq-q" value="${esc(info.faqQuestion||'')}" placeholder="Question…" onchange="veApplyFaq()">
       </div>
       <div class="ve-field"><label>Answer</label>
-        <textarea id="vp-faq-a" rows="3" placeholder="Answer…">${esc(info.faqAnswer||'')}</textarea>
+        <textarea id="vp-faq-a" rows="3" placeholder="Answer…" onchange="veApplyFaq()">${esc(info.faqAnswer||'')}</textarea>
       </div>
-      <button class="ve-apply-btn" onclick="veApplyFaq()">Apply Q&amp;A</button>
       <div style="font-size:11px;color:var(--muted);margin:8px 0 6px">${info.faqCount} FAQ${info.faqCount===1?'':'s'} in this section</div>
       <div class="ve-btn-pair">
         <button class="ve-apply-btn" style="margin:0;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veAddFaq()">+ Add FAQ</button>
@@ -6339,6 +6372,12 @@ function veSetAlign(btn){
   document.querySelectorAll('.ve-align-btn').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
   _veAlignSel = btn.dataset.align;
+  veAutoApply();   // alignment applies immediately (no Apply button)
+}
+// Auto-apply: any field change applies live, routed to the image or text path.
+function veAutoApply(){
+  if(!_veCurSel) return;
+  if(_veCurSel.isImg||_veCurSel.bgImage) veApplyImg(); else veApplyText();
 }
 
 function veElemAction(action){
@@ -6410,7 +6449,6 @@ function veApplyFaq(){
   const a=document.getElementById('vp-faq-a')?.value??'';
   ifrm.contentWindow.postMessage({type:'ve-update',fid:_veCurSel.fid,field:'faqUpdate',q:q,a:a},'*');
   document.getElementById('ve-unsaved')?.classList.add('on');
-  toast('FAQ updated','ok');
 }
 function veAddFaq(){
   if(!_veCurSel) return;
@@ -6456,10 +6494,11 @@ function veApplyText(){
   if(size && size!==(o.fontSize||'')) send({field:'size',value:size});
   if(weight && weight!==String(o.fontWeight||'')) send({field:'weight',value:weight});
   if(_veAlignSel && _veAlignSel!==(o.textAlign||'')) send({field:'align',value:_veAlignSel});
+  const hb=document.getElementById('vp-hover-bg'); if(hb && hb.dataset.set==='1') send({field:'hoverBg',value:hb.value});
+  const hc=document.getElementById('vp-hover-color'); if(hc && hc.dataset.set==='1') send({field:'hoverColor',value:hc.value});
   veSendStyles(send);
   _veAlignSel=null;
   document.getElementById('ve-unsaved')?.classList.add('on');
-  toast('Applied — click Save to publish','ok');
 }
 
 function veLiveSizeStart(){
@@ -6526,7 +6565,6 @@ function veApplyImg(){
   if(anchorEl){ const av=anchorEl.value.trim(); if(av!==(_veCurSel.anchorId||'')) send({field:'anchorId',value:av}); }
   veSendStyles(send);
   document.getElementById('ve-unsaved')?.classList.add('on');
-  toast('Image updated — click Save to publish','ok');
 }
 
 function vePickMedia(){ veOpenImgPicker(); }
@@ -8011,7 +8049,7 @@ function renderManagePages(){
   if(hidden.length){
     html += '<div style="font-size:12px;color:var(--muted);margin:18px 0 8px">Hidden from the CMS ('+hidden.length+') — files still exist on the server</div>';
     html += (_site.hiddenPages||[]).map(p=>row(p, 'hidden',
-      '<button class="fd-btn-ghost" style="font-size:12px;flex-shrink:0" onclick="restorePageToCMS('+JSON.stringify(p)+')">Restore</button>'
+      '<button class="fd-btn-ghost" style="font-size:12px;flex-shrink:0" onclick="restorePageToCMS('+JSON.stringify(p).replace(/"/g,'&quot;')+')">Restore</button>'
     )).join('');
   }
   el.innerHTML = html;
@@ -8137,18 +8175,22 @@ async function pageFromSiteShell(title, contentHtml){
     const doc=new DOMParser().parseFromString(src,'text/html'); if(!doc||!doc.body) return null;
     // Drop any editor artifacts / page-specific managed blocks a donor may carry.
     doc.querySelectorAll('[data-feid],[data-fid]').forEach(el=>{el.removeAttribute('data-feid');el.removeAttribute('data-fid');});
-    doc.querySelectorAll('#__foundry_bridge__,#__fe_done__,#__fe_ov__,#__fe_badge__,#__fe_handles__,#fourge-responsive,[data-fourge-seo],[data-fourge-page]').forEach(el=>el.remove());
+    doc.querySelectorAll('#__foundry_bridge__,#__fe_done__,#__fe_ov__,#__fe_badge__,#__fe_handles__,#fourge-responsive,#fourge-hover,[data-fourge-seo],[data-fourge-page]').forEach(el=>el.remove());
     let t=doc.querySelector('title'); if(!t){t=doc.createElement('title');(doc.head||doc.documentElement).appendChild(t);} t.textContent=title;
     const md=doc.querySelector('meta[name="description"]'); if(md) md.remove(); // SEO regenerates this per page
+    // Wrap the content in a centered, padded section: real side margins, a
+    // comfortable reading column, and top room so it clears a fixed/overlapping
+    // header. It's a normal section, so it stays fully editable afterward.
+    const wrapped='<section class="fourge-page-section" style="max-width:880px;margin:0 auto;padding:120px clamp(16px,5vw,40px) 72px;line-height:1.7">'+contentHtml+'</section>';
     const region=veFindContentRegion(doc);
-    if(region){ region.innerHTML=contentHtml; }
+    if(region){ region.innerHTML=wrapped; }
     else {
       const body=doc.body;
       const hasChrome=!!body.querySelector('header,footer,[id="header"],[id="footer"],[class*="header"],[class*="footer"]');
       if(!hasChrome) return null;   // no header/footer to gain — caller falls back to standalone
       const isChrome=el=>el.matches&&el.matches('header,nav,footer,script,style,link,[id="header"],[id="footer"],[class*="header"],[class*="footer"],[role="navigation"]');
       Array.from(body.children).forEach(ch=>{ if(!isChrome(ch)) ch.remove(); });
-      const wrap=doc.createElement('main'); wrap.innerHTML=contentHtml;
+      const wrap=doc.createElement('main'); wrap.innerHTML=wrapped;
       const footer=body.querySelector('footer,[id="footer"],[class*="footer"]');
       if(footer) footer.parentNode.insertBefore(wrap,footer); else body.appendChild(wrap);
     }
@@ -8248,10 +8290,7 @@ async function importFromServerScan(){
   }catch(e){
     body.innerHTML = `<div class="warn-b"><strong>Scan failed:</strong> ${esc(e.message)}</div>
       <div style="margin-top:10px;font-size:12px;color:var(--muted)">
-        Make sure:<br>
-        • <code>api.php</code> is uploaded to <code>yoursite.com/admin/api.php</code><br>
-        • The token in <code>api.php</code> matches Settings → Server API<br>
-        • The API URL in Settings is correct
+        Couldn't reach the server. Make sure you're still signed in, then try again. If it keeps happening, reach out to your site administrator.
       </div>`;
     toast('Scan failed','err');
   }
