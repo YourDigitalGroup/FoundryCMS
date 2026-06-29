@@ -42,10 +42,12 @@ define('SKIP_PATHS', [
     '_archive',
 ]);
 
-// Directories to never recurse into
+// Directories to never recurse into. 'data' holds the CMS's own files —
+// pages.json, site.json, and revision snapshots written on every save
+// (data/rev_rev_<ts>.html) — which must never be scanned as editable pages.
 define('SKIP_DIRS', [
     'admin', '.git', '.github', 'node_modules', 'vendor',
-    'cgi-bin', 'wp-admin', 'wp-includes',
+    'cgi-bin', 'wp-admin', 'wp-includes', 'data',
 ]);
 
 // Pattern that uniquely identifies a Fourge CMS shell.
