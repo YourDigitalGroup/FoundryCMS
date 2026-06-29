@@ -2092,7 +2092,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.5';
+const CMS_VERSION='1.14.6';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2617,12 +2617,12 @@ function renderFormsList(){
   body.innerHTML='<table class="dt"><thead><tr><th>Form</th><th>Fields</th><th>Shortcode</th><th>Entries</th><th></th></tr></thead><tbody>'
     +_forms.map((f,i)=>{
       const entCount=_entries.filter(e=>e.formId===f.id).length;
-      return '<tr>'
-        +'<td style="font-size:13px;font-weight:600;cursor:pointer" onclick="editForm('+i+')">'+esc(decodeHtml(f.title||'Untitled'))+'</td>'
+      return '<tr style="cursor:pointer" onclick="editForm('+i+')">'
+        +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(f.title||'Untitled'))+'</td>'
         +'<td style="font-size:12px;color:var(--muted)">'+(f.fields?f.fields.length:0)+'</td>'
-        +'<td><code style="font-family:var(--font-mono);font-size:11px;background:var(--surface-3);padding:2px 6px;border-radius:4px;cursor:pointer" onclick="copyShortcode(\''+f.id+'\')">[form id='+f.id+']</code></td>'
-        +'<td style="font-size:12px"><a href="#" onclick="viewEntries(\''+f.id+'\');return false" style="color:var(--ember);font-weight:600">'+entCount+'</a></td>'
-        +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="editForm('+i+')">Edit</button></td>'
+        +'<td><code style="font-family:var(--font-mono);font-size:11px;background:var(--surface-3);padding:2px 6px;border-radius:4px;cursor:pointer" onclick="event.stopPropagation();copyShortcode(\''+f.id+'\')">[form id='+f.id+']</code></td>'
+        +'<td style="font-size:12px"><a href="#" onclick="event.stopPropagation();viewEntries(\''+f.id+'\');return false" style="color:var(--ember);font-weight:600">'+entCount+'</a></td>'
+        +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();editForm('+i+')">Edit</button></td>'
         +'</tr>';
     }).join('')
     +'</tbody></table>';
@@ -3327,11 +3327,11 @@ function renderPosts(){
     return;
   }
   body.innerHTML='<table class="dt"><thead><tr><th>Title</th><th>Date</th><th>Status</th><th></th></tr></thead><tbody>'
-    +_posts.map((p,i)=>'<tr>'
-      +'<td style="font-size:13px;font-weight:600;cursor:pointer" onclick="editPost('+i+')">'+esc(decodeHtml(p.title||'Untitled'))+'</td>'
+    +_posts.map((p,i)=>'<tr style="cursor:pointer" onclick="editPost('+i+')">'
+      +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(p.title||'Untitled'))+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(p.date||'')+'</td>'
       +'<td><span style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;'+(p.published?'background:rgba(22,163,74,.1);color:var(--green)':'background:var(--surface-3);color:var(--muted)')+'">'+(p.published?'Published':'Draft')+'</span></td>'
-      +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="editPost('+i+')">Edit</button></td>'
+      +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();editPost('+i+')">Edit</button></td>'
       +'</tr>').join('')
     +'</tbody></table>';
 }
@@ -5085,11 +5085,11 @@ function renderUsers(){
       const modStr=role==='editor'?(modList.length?modList.join(', '):'Basic access'):'All modules';
       const nm=((u.firstName||'')+' '+(u.lastName||'')).trim()||u.displayName||u.username;
       const sub=String(nm).toLowerCase()!==String(u.username||'').toLowerCase()?'<div style="font-size:11px;color:var(--muted)">'+esc(u.username)+'</div>':'';
-      return '<tr>'
+      return '<tr style="cursor:pointer" onclick="editUser('+u._i+')">'
         +'<td style="font-size:13px"><div style="font-weight:600">'+esc(nm)+'</div>'+sub+'</td>'
         +'<td><span style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;'+ROLE_COLORS[role]+'">'+ROLE_LABELS[role]+'</span></td>'
         +'<td style="font-size:12px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(modStr)+'</td>'
-        +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="editUser('+u._i+')">Edit</button></td>'
+        +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();editUser('+u._i+')">Edit</button></td>'
         +'</tr>';
     }).join('')
     +'</tbody></table>';
@@ -5484,6 +5484,15 @@ async function loadPages(){
     try{ const{content:c,sha}=await ghRead(F_PAGES); const j=JSON.parse(c); if(j&&typeof j==='object'){ Object.assign(merged,j); _pagesSHA=sha; } }catch{}
   }
 
+  // Never list non-page entries that may be lingering in pages.json from an
+  // earlier bad import (data files, revision/backup snapshots). They can't open
+  // in the editor and would vanish on the next scan anyway — drop them so the
+  // pages list is stable instead of "here after import, gone after a reload".
+  for(const id in merged){
+    const pth=merged[id]&&(merged[id].path||merged[id].file);
+    if(pth && !isImportablePath(pth)) delete merged[id];
+  }
+
   _pages=merged;
 }
 
@@ -5783,6 +5792,19 @@ function veIsSafePath(path){
   if(p.endsWith('.php')) return false;
   if(p.endsWith('.json')) return false;
   if(p.startsWith('data/')) return false;
+  return true;
+}
+
+// A scanned file is only offered for import (and only stored as a page) when
+// it's a real, editable site page — not a data file, admin/PHP/JSON file, or a
+// CMS revision/backup snapshot (e.g. data/rev_rev_1782506528689.html).
+// veIsSafePath already drops data/, admin/, .php and .json; this also drops
+// revision/backup file names wherever they live.
+function isImportablePath(path){
+  if(!veIsSafePath(path)) return false;
+  const base=String(path||'').split('/').pop().toLowerCase();
+  if(/^rev[_-]/.test(base) || /_rev[_-]/.test(base)) return false;   // revision snapshots
+  if(/\.(bak|tmp|orig|save|old)\b/.test(base)) return false;         // backups
   return true;
 }
 
@@ -8551,8 +8573,11 @@ async function importFromServerScan(){
 
   try{
     const d = await apiCall('list_pages');
-    const allPages = d.pages || [];
-    // Map all pages — check JS-side if already in CMS (don't rely on api.php is_cms)
+    const raw = d.pages || [];
+    // Only offer real, editable pages — never data files, revision snapshots, or backups.
+    const allPages = raw.filter(p => p && p.path && isImportablePath(p.path));
+    const skipped = raw.length - allPages.length;
+    // Map pages — check JS-side if already in CMS (don't rely on api.php is_cms)
     _ifsPages = allPages.map(p => {
       const rawId = p.path.replace(/\.html?$/i,'').toLowerCase().replace(/[\/]/g,'-').replace(/[^a-z0-9-]/g,'');
       const pid   = rawId === 'index' ? 'home' : rawId;
@@ -8562,22 +8587,23 @@ async function importFromServerScan(){
     const root = d.root || 'public_html';
 
     if(!allPages.length){
-      body.innerHTML = '<div class="empty"><h3>No HTML files found</h3><p>No HTML files were found in <code>' + esc(root) + '</code>.</p></div>';
+      body.innerHTML = '<div class="empty"><h3>No pages to import</h3><p>No editable pages were found in <code>' + esc(root) + '</code>' + (skipped?' (' + skipped + ' system/backup file' + (skipped===1?'':'s') + ' skipped)':'') + '.</p></div>';
       btn.disabled = false; btn.textContent = 'Scan again'; return;
     }
 
     body.innerHTML = `
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span>Found <strong style="color:var(--text)">${allPages.length} file(s)</strong> in <code>${esc(root)}</code>.</span>
+        <span>Found <strong style="color:var(--text)">${allPages.length} page(s)</strong> in <code>${esc(root)}</code>.</span>
         ${alreadyInCMS ? `<span style="padding:3px 9px;background:rgba(22,163,74,.08);color:var(--green);border-radius:99px;font-size:11px;font-weight:600">&#10003; ${alreadyInCMS} already in CMS</span>` : ''}
+        ${skipped ? `<span title="Data files, revision snapshots, and backups aren't editable pages">${skipped} system/backup file${skipped===1?'':'s'} skipped</span>` : ''}
       </div>
       <div class="pg-tbl">
         <div class="pg-tbl-head" style="grid-template-columns:36px 1fr 1fr 90px 80px">
           <div></div><div>FILE PATH</div><div>TITLE</div><div>MODIFIED</div><div>STATUS</div>
         </div>
         ${_ifsPages.map((p) => `
-          <div class="pg-tbl-row" style="grid-template-columns:36px 1fr 1fr 90px 80px">
-            <div><input type="checkbox" class="ifs-chk" data-path="${esc(p.path)}" style="accent-color:var(--ember)" onchange="ifsUpdateCount()"></div>
+          <div class="pg-tbl-row" style="grid-template-columns:36px 1fr 1fr 90px 80px;cursor:pointer" onclick="ifsRowClick(event,this)">
+            <div><input type="checkbox" class="ifs-chk" data-path="${esc(p.path)}" style="accent-color:var(--ember)" onclick="event.stopPropagation()" onchange="ifsUpdateCount()"></div>
             <div>
               <div style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--text)">${esc(p.path)}</div>
               ${p.snippet?`<div style="font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:380px">${esc(p.snippet.slice(0,90))}</div>`:''}
@@ -8593,7 +8619,7 @@ async function importFromServerScan(){
     const rfWrap = document.getElementById('ifs-refactor-wrap');
     if(rfWrap) rfWrap.style.display = (_ifsPages.length && markupAvailable()) ? 'flex' : 'none';
     ifsUpdateCount();
-    toast(`Found ${allPages.length} file(s)`,'ok');
+    toast(`Found ${allPages.length} page(s)`,'ok');
   }catch(e){
     body.innerHTML = `<div class="warn-b"><strong>Scan failed:</strong> ${esc(e.message)}</div>
       <div style="margin-top:10px;font-size:12px;color:var(--muted)">
@@ -8607,6 +8633,14 @@ async function importFromServerScan(){
 
 function ifsToggleAll(el){
   document.querySelectorAll('.ifs-chk:not(:disabled)').forEach(c => c.checked = el.checked);
+  ifsUpdateCount();
+}
+// Click anywhere on a scan row to toggle its checkbox (the box itself stops
+// propagation so a direct click isn't double-toggled).
+function ifsRowClick(e, row){
+  const cb = row.querySelector('.ifs-chk');
+  if(!cb || cb.disabled) return;
+  cb.checked = !cb.checked;
   ifsUpdateCount();
 }
 function ifsUpdateCount(){
@@ -8895,6 +8929,8 @@ async function importFromServerRun(forceOverride){
     const pid   = rawId === 'index' ? 'home' : rawId || 'page-' + uid();
     const pageRef = _ifsPages.find(p => p.path === relPath) || {};
     const title = decodeHtml(pageRef.title || fname.replace(/\.html?$/i,'').replace(/[-_]/g,' '));
+
+    if(!isImportablePath(relPath)){ ll(`<span class="l-warn">⚠</span> Skipped ${esc(fname)} — not an editable page`); failed++; continue; }
 
     pageNum++; setProg(pageNum, 'Reading ' + fname + '…');
     ll(`<span class="l-info">── ${esc(relPath)}</span>`);
