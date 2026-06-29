@@ -1727,6 +1727,9 @@ textarea.fb-input{resize:vertical}
               <label id="ifs-select-all-wrap" style="display:none;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer">
                 <input type="checkbox" id="ifs-chk-all" onchange="ifsToggleAll(this)" style="accent-color:var(--ember)"> Select all
               </label>
+              <label id="ifs-refactor-wrap" style="display:none;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer" title="Restructures each page so the editor can work with it — semantic header/nav/main/footer, named sections, FAQ blocks, proper headings, real images, brand colors. Your design is preserved exactly; the optimized page is saved back to your server.">
+                <input type="checkbox" id="ifs-refactor" checked style="accent-color:var(--ember)"> Optimize markup for editing
+              </label>
               <div id="ifs-sel-count" style="font-size:12px;color:var(--muted);margin-left:auto"></div>
             </div>
             <div id="ifs-body">
@@ -1744,6 +1747,9 @@ textarea.fb-input{resize:vertical}
             <h2 style="font-size:20px;font-weight:800;color:var(--text);letter-spacing:-.025em;margin-bottom:4px">Import ZIP</h2>
             <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Drop a Fourge export ZIP to import HTML, data files, and assets.</p>
             <div id="import-warn-no-key" class="warn-b" style="display:none">No Claude API key — blocks won't be extracted. Add it in Settings.</div>
+            <label id="zip-refactor-wrap" style="display:none;align-items:center;gap:8px;font-size:13px;color:var(--text-2);margin-bottom:14px;cursor:pointer" title="Restructures each page so the editor can work with it — semantic header/nav/main/footer, named sections, FAQ blocks, proper headings, real images, brand colors. Your design is preserved exactly.">
+              <input type="checkbox" id="zip-refactor" checked style="accent-color:var(--ember)"> Optimize markup for editing <span style="color:var(--muted)">(recommended)</span>
+            </label>
             <div class="dz" id="import-dz" ondragover="dzOver(event)" ondragleave="dzLeave()" ondrop="importDrop(event)">
               <input type="file" accept=".zip" onchange="startImport(this.files[0])">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -2068,7 +2074,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.13.6';
+const CMS_VERSION='1.14.0';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5256,8 +5262,22 @@ async function startImport(file){
     const dataF=entries.filter(f=>f.name.startsWith('data/')&&f.name.endsWith('.json'));
     ll('<span class="l-info">Found: '+htmlF.length+' HTML, '+dataF.length+' data files</span>');
     for(const f of dataF){try{const c=await f.async('string');const sha=await ghSHA(f.name);await ghWrite(f.name,c,sha,'Import: '+f.name);ll('<span class="l-ok">\u2713</span> '+f.name);}catch(e){ll('<span class="l-warn">\u26a0</span> '+f.name+': '+esc(e.message));}}
+    const doRefactor=!!(document.getElementById('zip-refactor')||{}).checked && markupAvailable();
+    if(doRefactor) ll('<span class="l-info">Optimizing each page for the editor \u2014 your design is preserved exactly.</span>');
     if(htmlF.length){const pagesData={};try{const{content:pc}=await ghRead(F_PAGES);Object.assign(pagesData,JSON.parse(pc));}catch{}
-      for(const f of htmlF){const hc=await f.async('string');const fname=f.name.split('/').pop();const pid=fname.replace(/\.html?$/i,'').toLowerCase()==='index'?'home':fname.replace(/\.html?$/i,'').toLowerCase();pagesData[pid]={title:fname.replace(/\.html?$/i,'').replace(/[-_]/g,' '),file:fname,css:'',blocks:[]};try{const sha=await ghSHA(fname);await ghWrite(fname,hc,sha,'Import: '+fname);}catch{}ll('<span class="l-ok">\u2713</span> '+fname);}
+      for(const f of htmlF){
+        let hc=await f.async('string');
+        const fname=normalizeImportName(f.name);            // index.html for home, single .html otherwise
+        const base=fname.replace(/\.html?$/i,'').toLowerCase();
+        const pid=base==='index'?'home':base;
+        if(doRefactor){
+          ll('<span class="l-info">\u27f3</span> Optimizing '+esc(fname)+' for the editor\u2026');
+          try{const rf=await refactorHtmlForCms(hc,fname,ll);if(rf.changed){hc=rf.html;ll('<span class="l-ok">\u2713</span> '+esc(fname)+' \u2014 markup optimized (design preserved)');}}catch(e){ll('<span class="l-warn">\u26a0</span> Optimize skipped: '+esc(e.message));}
+        }
+        pagesData[pid]={title:fname.replace(/\.html?$/i,'').replace(/[-_]/g,' '),file:fname,css:'',blocks:[]};
+        try{const sha=await ghSHA(fname);await ghWrite(fname,hc,sha,'Import: '+fname);}catch{}
+        ll('<span class="l-ok">\u2713</span> '+esc(fname));
+      }
       try{const sha=await ghSHA(F_PAGES);await ghWrite(F_PAGES,JSON.stringify(pagesData,null,2),sha,'Import: pages.json');ll('<span class="l-ok">\u2713</span> pages.json');}catch(e){ll('<span class="l-err">\u2717</span> pages.json: '+esc(e.message));}}
     ll('<span class="l-ok" style="font-weight:700">\u2713 Import complete!</span>');toast('Import complete!','ok');
   }catch(e){ll('<span class="l-err">\u2717 '+esc(e.message)+'</span>');toast('Import failed: '+e.message,'err');}
@@ -5879,7 +5899,12 @@ return '(function(){\n'
 +'  function positionHandles(p){\n'
 +'    var cx=p.l+p.w/2, cy=p.t+p.h/2, rr=p.l+p.w, bb=p.t+p.h, o=5.5;\n'
 +'    var pts={nw:[p.l,p.t],n:[cx,p.t],ne:[rr,p.t],e:[rr,cy],se:[rr,bb],s:[cx,bb],sw:[p.l,bb],w:[p.l,cy]};\n'
-+'    HDIRS.forEach(function(dir){var pt=pts[dir],h=handles[dir];h.style.left=(pt[0]-o)+"px";h.style.top=(pt[1]-o)+"px";});\n'
+// Clamp handles into the visible viewport so they stay grabbable even when the
+// element runs off the edge (common on narrow mobile/tablet previews).
++'    var vw=window.innerWidth||99999, vh=window.innerHeight||99999, m=3;\n'
++'    HDIRS.forEach(function(dir){var pt=pts[dir],h=handles[dir];\n'
++'      var L=Math.max(m,Math.min(pt[0]-o, vw-11-m)), T=Math.max(m,Math.min(pt[1]-o, vh-11-m));\n'
++'      h.style.left=L+"px"; h.style.top=T+"px";});\n'
 +'  }\n'
 +'  function refreshHandles(){\n'
 +'    if(sel&&selResizable&&!resizing){var p=pos(sel);if(p&&p.w>=2&&p.h>=2){positionHandles(p);hbox.style.display="block";return;}}\n'
@@ -6418,10 +6443,10 @@ function veShowProps(info){
       </div>`:''}
       ${(isLink||info.isBtn)?`<div class="ve-style-divider"><span>Hover</span></div>
       <div class="ve-style-row">
-        <div class="ve-field" style="margin:0"><label>Hover background</label>
+        <div class="ve-field" style="margin:0"><label>Background</label>
           <input type="color" id="vp-hover-bg" value="${st.bgColor||'#000000'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
-        <div class="ve-field" style="margin:0"><label>Hover text</label>
+        <div class="ve-field" style="margin:0"><label>Text</label>
           <input type="color" id="vp-hover-color" value="${st.color||'#ffffff'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
       </div>
@@ -6728,13 +6753,20 @@ function veApplyDeviceSize(){
     frame.style.transform='scale('+scale+')';
     wrap.style.width=boxW+'px'; wrap.style.height=boxH+'px';
   } else {
-    const W={tablet:768,mobile:390}[_veDevice]||768;
-    const H=(canvas?canvas.clientHeight:0)-40;
-    frame.style.transform='none';
-    frame.style.width='100%';
-    frame.style.height=(H>200?H:800)+'px';
-    wrap.style.width=W+'px';
-    wrap.style.height=(H>200?H:800)+'px';
+    // Faithful device emulation (like Chrome's inspector): render the iframe at the
+    // device's real CSS dimensions so the page's own mobile/tablet CSS reflows
+    // exactly as on the device, then scale the whole frame DOWN to fit the canvas.
+    const dims={tablet:[768,1024],mobile:[390,844]}[_veDevice]||[768,1024];
+    const dW=dims[0], dH=dims[1];
+    const pad=canvas&&canvas.matches(':fullscreen')?40:28;
+    const availW=Math.max(280,(canvas?canvas.clientWidth:wrap.clientWidth)-pad);
+    const availH=Math.max(240,(canvas?canvas.clientHeight:600)-pad);
+    const scale=Math.min(1, availW/dW, availH/dH);
+    frame.style.width=dW+'px'; frame.style.height=dH+'px';
+    frame.style.transformOrigin='top left';
+    frame.style.transform='scale('+scale+')';
+    wrap.style.width=Math.round(dW*scale)+'px';
+    wrap.style.height=Math.round(dH*scale)+'px';
   }
 }
 // Drag the bottom-right corner of the desktop preview to resize it. A transparent
@@ -8136,9 +8168,14 @@ function sfTab(name) {
   });
   if(name === 'server') initImportFromServer();
   if(name === 'manage') renderManagePages();
-  if(name === 'zip' && !(_secretStatus && _secretStatus.claude_key)) {
-    const w = document.getElementById('import-warn-no-key');
-    if(w) w.style.display = 'block';
+  if(name === 'zip'){
+    if(!(_secretStatus && _secretStatus.claude_key)){
+      const w = document.getElementById('import-warn-no-key');
+      if(w) w.style.display = 'block';
+    }
+    // Show the "Optimize markup for editing" toggle only when Markup is available.
+    const rw = document.getElementById('zip-refactor-wrap');
+    if(rw) rw.style.display = markupAvailable() ? 'flex' : 'none';
   }
 }
 
@@ -8408,6 +8445,8 @@ async function importFromServerScan(){
 
     document.getElementById('ifs-import-btn').style.display = _ifsPages.length ? 'inline-flex' : 'none';
     document.getElementById('ifs-select-all-wrap').style.display = _ifsPages.length ? 'flex' : 'none';
+    const rfWrap = document.getElementById('ifs-refactor-wrap');
+    if(rfWrap) rfWrap.style.display = (_ifsPages.length && markupAvailable()) ? 'flex' : 'none';
     ifsUpdateCount();
     toast(`Found ${allPages.length} file(s)`,'ok');
   }catch(e){
@@ -8517,6 +8556,131 @@ async function extractBlocksFromHTML(html, pid, apiKey){
   return [{id: uid(), type:'html', data:{html: body}}];
 }
 
+// ── CMS-COMPATIBILITY REFACTOR ───────────────────────────────────
+// When a site is brought into the CMS (scanned from the server or dropped as a
+// ZIP), each page's markup can be optimized so the editor can work with it:
+// semantic landmarks (<header>/<nav>/<main>/<footer>), named <section>s, proper
+// headings, real <img> tags, the standard FAQ/accordion structure, one place
+// for CSS, and brand-color variables. The optimization NEVER changes how a page
+// looks — every result is run through a fidelity gate first, and if the page's
+// visible text or styling didn't survive intact, the original is kept untouched.
+
+// True when this account can use the Markup engine (server-side key + permission).
+function markupAvailable(){
+  try{ if(getEffectivePerms(getSessionUser()).aiEdit) return true; }catch(e){}
+  try{ return !!(_secretStatus && _secretStatus.claude_key); }catch(e){ return false; }
+}
+
+// Enforce the CMS file-naming rule: the homepage is index.html and every other
+// page uses a single .html extension (collapses .dc.html / .html.html / any
+// double or stray extension down to one .html).
+function normalizeImportName(name){
+  let n = String(name||'').split('/').pop().trim();
+  if(!n) return 'page.html';
+  n = n.replace(/(\.[a-z0-9]+)+$/i, '.html');   // collapse a trailing chain of extensions to one .html
+  if(!/\.html$/i.test(n)) n += '.html';
+  if(/^index\.html$/i.test(n)) return 'index.html';
+  return n;
+}
+
+// The verbatim refactor brief sent to the Markup engine for each page.
+const CMS_REFACTOR_SPEC = `Refactor this site's HTML to be compatible with our CMS, WITHOUT changing how the pages looks. Keep the exact same design, layout, copy, colors, fonts, and images — only adjust the markup structure and naming. Apply ALL of the following:
+1. STATIC HTML ONLY. Output a plain .html file whose full content is present in the HTML source (view-source shows the real content, not an empty shell). No React/Vue/JSX, no client-side framework, no <div id="root"> that fills in via JavaScript, no build step, no web components or shadow DOM.
+2. SEMANTIC LANDMARKS — exactly one of each per page, using the real tags (NOT <div class="header">): the site header -> <header>…</header>; the primary nav -> <nav>…</nav> (inside the header is fine); the main content -> <main>…</main>; the footer -> <footer>…</footer>. The <header>, <nav>, and <footer> must be IDENTICAL across every page so they can be managed as one shared template.
+3. ALL CSS IN ONE PLACE: a single <style> block in <head> (or one linked stylesheet). Do not scatter <style> blocks through the <body>, and don't rely on external CDN frameworks for layout. Prefer classes over inline style="".
+4. NAME EVERY SECTION: break the main content into <section> elements, each with a clear id and class describing its purpose, e.g. <section id="hero" class="hero">, id="services", id="testimonials", id="contact-cta". One logical block per <section>.
+5. IMAGES: real <img src="…" alt="…"> tags with descriptive alt text. No text baked into images.
+6. HEADINGS/TEXT: proper <h1>–<h6> and <p> tags, exactly one <h1> per page.
+7. Each page is a complete standalone document (<!DOCTYPE html> … </html>) with its own <title> and <meta name="description"> in <head>.
+8. FAQ / ACCORDION sections MUST use this exact structure so the CMS can edit each question and answer and add/remove items:
+  <section id="faqs" class="faqs"><div class="faqs-inner"><div class="faqs-head"><p class="eyebrow-light">FAQs</p><h2 class="h2-light">Frequently Asked Questions</h2></div><div class="faq-item"><button type="button" class="faq-q" aria-expanded="false"><span>Your question?</span><span class="faq-sign">+</span></button><div class="faq-answer"><p>Your answer.</p></div></div></div></section>
+  Rules: each FAQ is ONE .faq-item. The question is the FIRST <span> inside .faq-q (the .faq-sign span is just the +/− indicator). The answer is a <p> inside .faq-answer. Open/close by flipping aria-expanded on the .faq-q button.
+9. FILE NAMING: the homepage MUST be named index.html. Every other page MUST use a single .html extension (about.html, services.html, contact.html, etc.) — never .dc.html, .html.html, or any double/other extension.
+10. Take the two brand colors and pass them into a variable css variable called brand-color-primary and brand-color-secondary.
+Return the complete updated HTML. Do not change the visual result — only the structure, tags, ids, and class names.`;
+
+// Returns a short reason string if a refactor looks unsafe (lost visible text or
+// dropped a large share of the stylesheet), or '' if the page was preserved.
+// Allows reordering, consolidation, and brand-variable swaps but catches the
+// failure mode that matters: truncated or missing content/CSS.
+function refactorFidelityProblem(orig, next){
+  const n = String(next||'');
+  if(!/<\/html\s*>/i.test(n) || !/<body[\s>]/i.test(n)) return 'incomplete document';
+  const visText = h => String(h||'')
+    .replace(new RegExp('<script[\\s\\S]*?<'+'/script>','gi'),' ')
+    .replace(/<style[\s\S]*?<\/style>/gi,' ')
+    .replace(/<[^>]+>/g,' ')
+    .replace(/&[a-z#0-9]+;/gi,' ')
+    .replace(/\s+/g,' ').trim().toLowerCase();
+  const a = visText(orig), b = visText(n);
+  if(a.length > 40){
+    const ratio = b.length / a.length;
+    if(ratio < 0.85) return 'visible text shrank';
+    if(ratio > 1.5)  return 'visible text grew unexpectedly';
+  }
+  // CSS declarations — allow consolidation/var swaps, catch wholesale loss.
+  const decls = h => {
+    let css=''; const re=/<style[^>]*>([\s\S]*?)<\/style>/gi; let m;
+    while((m=re.exec(h))) css += m[1]+'\n';
+    const set=new Set(); let d; const dre=/([a-z-]{2,})\s*:\s*([^;{}]+)/gi;
+    while((d=dre.exec(css))){ const v=d[2].replace(/!important/i,'').replace(/\s+/g,'').toLowerCase(); if(v) set.add(d[1].toLowerCase()+':'+v); }
+    return set;
+  };
+  const da = decls(orig);
+  if(da.size >= 14){
+    const db = decls(n); let kept=0; da.forEach(x=>{ if(db.has(x)) kept++; });
+    if(kept / da.size < 0.7) return 'stylesheet lost rules';
+  }
+  return '';
+}
+
+// Run one page's HTML through the Markup engine with the CMS refactor brief.
+// <script> blocks are stashed and restored verbatim (never rewritten); the
+// result is only returned when it passes the fidelity gate. Returns
+// {html, changed, note}. On any doubt, returns the original unchanged.
+async function refactorHtmlForCms(html, relPath, logFn){
+  const log = typeof logFn==='function' ? logFn : function(){};
+  const original = String(html||'');
+  if(original.length < 80) return { html: original, changed:false, note:'empty' };
+  if(original.length > 160000) return { html: original, changed:false, note:'too large to optimize safely' };
+
+  // Protect <script> blocks across the round trip — restored verbatim so no
+  // behavior changes and the engine can't rewrite or drop them.
+  const vault=[];
+  const work = original.replace(new RegExp('<script[\\s\\S]*?<'+'/script>','gi'), m=>{ vault.push(m); return '<!--FXJS'+(vault.length-1)+'-->'; });
+
+  let data;
+  try{
+    data = await callClaudeAPI({
+      model:'claude-opus-4-8',
+      max_tokens:16000,
+      system:'You refactor existing website HTML so a block-based CMS can edit it, WITHOUT changing how the page looks. Comments like <!--FXJS0--> stand in for the page’s script blocks — keep every one EXACTLY where it appears; never modify, reorder, or delete them. Preserve every visible word, image, link, color, font, and the layout precisely. Return ONLY the complete HTML document — raw HTML, no markdown, no code fences, no commentary.',
+      messages:[{ role:'user', content: CMS_REFACTOR_SPEC + '\n\n--- HTML to refactor (script blocks replaced by FXJS placeholders) ---\n\n' + work }]
+    }, '', 2);
+  }catch(e){
+    log('<span class="l-warn">⚠</span> Couldn’t optimize — keeping the original page ('+esc(e.message)+')');
+    return { html: original, changed:false, note:e.message };
+  }
+
+  let out = ((Array.isArray(data.content)?(data.content.find(b=>b.type==='text')?.text||''):'')).replace(/^```html?\s*/i,'').replace(/```\s*$/,'').trim();
+  if(!out) return { html: original, changed:false, note:'no response' };
+  // Restore the protected scripts verbatim.
+  out = out.replace(/<!--FXJS(\d+)-->/g, (m,i)=> (vault[+i] !== undefined ? vault[+i] : ''));
+  // Re-inject any script placeholder the engine dropped (before </body>).
+  const missing = vault.filter(v => out.indexOf(v) === -1);
+  if(missing.length){
+    if(/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, missing.join('\n')+'\n</body>');
+    else out += '\n' + missing.join('\n');
+  }
+
+  const reason = refactorFidelityProblem(original, out);
+  if(reason){
+    log('<span class="l-warn">⚠</span> Optimized markup didn’t pass the safety check ('+reason+') — keeping the original page');
+    return { html: original, changed:false, note:reason };
+  }
+  return { html: out, changed:true, note:'optimized' };
+}
+
 async function importFromServerRun(forceOverride){
   const selected = Array.from(document.querySelectorAll('.ifs-chk:checked'))
     .map(c => c.dataset.path).filter(Boolean);
@@ -8538,6 +8702,12 @@ async function importFromServerRun(forceOverride){
   // Server-derived flag (not browser): attempt block extraction only when a
   // Markup key is configured server-side. extractBlocksFromHTML uses the DB key.
   const apiKey  = (_secretStatus && _secretStatus.claude_key) ? '1' : '';
+  // Optimize each page's markup for the editor (only when the toggle is on and
+  // Markup is available). When on, the optimized HTML is written back to the
+  // server file so the editor opens the improved version.
+  const rfEl = document.getElementById('ifs-refactor');
+  const doRefactor = !!(rfEl && rfEl.checked) && markupAvailable();
+  const { repo:ghRepo0, pat:ghPat0 } = ghCfg();
   const log     = document.getElementById('ifs-log');
   const importBtn = document.getElementById('ifs-import-btn');
   log.className = 'log-box on'; log.innerHTML = '';
@@ -8545,6 +8715,7 @@ async function importFromServerRun(forceOverride){
 
   const ll = (msg) => { log.innerHTML += `<div>${msg}</div>`; log.scrollTop = log.scrollHeight; };
   ll(`<span class="l-info">Importing ${selected.length} page(s) — markup + CSS preserved…</span>`);
+  if(doRefactor) ll('<span class="l-info">Optimizing each page for the editor — your design is preserved exactly.</span>');
 
   // Load existing pages.json + site.json from GitHub
   let pagesData = {}, siteData = {nav:[]}, pagesSHA = null, siteSHA = null;
@@ -8574,6 +8745,29 @@ async function importFromServerRun(forceOverride){
     }catch(e){
       ll(`<span class="l-err">✗</span> Could not read: ${esc(e.message)}`);
       failed++; continue;
+    }
+
+    // Step 1b: Optimize the markup for the editor (semantic landmarks, named
+    // sections, FAQ structure, headings, images, brand vars) — fidelity-gated,
+    // so the page's look is never changed. Write the result back to the server
+    // (and GitHub) so the editor opens the optimized version.
+    if(doRefactor){
+      ll('<span class="l-info">⟳</span> Optimizing markup for the editor…');
+      try{
+        const rf = await refactorHtmlForCms(html, relPath, ll);
+        if(rf.changed){
+          html = rf.html;
+          ll('<span class="l-ok">✓</span> Markup optimized (design preserved)');
+          try{
+            await apiCall('write_file', {path: relPath, content: html});
+            ll('<span class="l-ok">✓</span> Saved optimized page to server');
+          }catch(e){ ll(`<span class="l-warn">⚠</span> Couldn’t save optimized page: ${esc(e.message)}`); }
+          if(ghRepo0 && ghPat0){
+            try{ const sha = await ghSHA(relPath); await ghWrite(relPath, html, sha, 'Fourge: optimize ' + relPath + ' for the editor'); ll('<span class="l-ok">✓</span> Optimized page pushed to GitHub'); }
+            catch(e){ ll(`<span class="l-warn">⚠</span> GitHub (optimized page): ${esc(e.message)}`); }
+          }
+        }
+      }catch(e){ ll(`<span class="l-warn">⚠</span> Optimize skipped: ${esc(e.message)}`); }
     }
 
     // Step 2: Capture the page's CSS (so the header/layout keep their styling),
