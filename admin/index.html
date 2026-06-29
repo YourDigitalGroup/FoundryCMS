@@ -1735,7 +1735,7 @@ textarea.fb-input{resize:vertical}
                 <input type="checkbox" id="ifs-chk-all" onchange="ifsToggleAll(this)" style="accent-color:var(--ember)"> Select all
               </label>
               <label id="ifs-refactor-wrap" style="display:none;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer" title="Restructures each page so the editor can work with it — semantic header/nav/main/footer, named sections, FAQ blocks, proper headings, real images, brand colors. Your design is preserved exactly; the optimized page is saved back to your server.">
-                <input type="checkbox" id="ifs-refactor" checked style="accent-color:var(--ember)"> Optimize markup for editing
+                <input type="checkbox" id="ifs-refactor" style="accent-color:var(--ember)"> Optimize markup for editing <span style="color:var(--muted)">(slower — processes each page)</span>
               </label>
               <div id="ifs-sel-count" style="font-size:12px;color:var(--muted);margin-left:auto"></div>
             </div>
@@ -1755,7 +1755,7 @@ textarea.fb-input{resize:vertical}
             <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Drop a Fourge export ZIP to import HTML, data files, and assets.</p>
             <div id="import-warn-no-key" class="warn-b" style="display:none">Markup isn't enabled yet — pages will import as one editable block (sections aren't split out automatically).</div>
             <label id="zip-refactor-wrap" style="display:none;align-items:center;gap:8px;font-size:13px;color:var(--text-2);margin-bottom:14px;cursor:pointer" title="Restructures each page so the editor can work with it — semantic header/nav/main/footer, named sections, FAQ blocks, proper headings, real images, brand colors. Your design is preserved exactly.">
-              <input type="checkbox" id="zip-refactor" checked style="accent-color:var(--ember)"> Optimize markup for editing <span style="color:var(--muted)">(recommended)</span>
+              <input type="checkbox" id="zip-refactor" style="accent-color:var(--ember)"> Optimize markup for editing <span style="color:var(--muted)">(slower — processes each page)</span>
             </label>
             <div class="dz" id="import-dz" ondragover="dzOver(event)" ondragleave="dzLeave()" ondrop="importDrop(event)">
               <input type="file" accept=".zip" onchange="startImport(this.files[0])">
@@ -2081,7 +2081,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.3';
+const CMS_VERSION='1.14.4';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -7015,23 +7015,28 @@ function veAiPanel(){
 
 // Shared Claude API caller with auto-retry on transient overload (HTTP 529 /
 // overloaded_error) and 429. Backs off, then surfaces the error if all retries fail.
-async function callClaudeAPI(body, apiKey, tries){
+async function callClaudeAPI(body, apiKey, tries, timeoutMs){
   // The Anthropic key lives on the SERVER (admin/config.secret.php); the browser
   // never sees it. We POST to api.php (action=claude_proxy), which verifies the
   // user's aiEdit permission + rate limit, then calls Anthropic server-side.
   // We do our own fetch (not apiCall) so we can read Anthropic's structured
   // error object for retry decisions. The legacy apiKey arg is ignored.
+  // timeoutMs (optional): abort a stuck call so it can't hang the UI — used by
+  // the importer so a slow Markup call on one page never freezes the whole import.
   tries = tries || 3;
   let lastErr = 'API error';
   const { url, token } = getApiCfg();
   if(!url || !token) throw new Error('Server API not configured.');
   const user = (getSessionUser && getSessionUser().username) || '';
   for(let attempt=0; attempt<tries; attempt++){
+    const ctrl = (timeoutMs && typeof AbortController!=='undefined') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(()=>{ try{ ctrl.abort(); }catch(e){} }, timeoutMs) : null;
     try{
       const res = await fetch(url,{
         method:'POST',
         headers: authHeaders({ 'Content-Type':'application/json' }),
-        body: JSON.stringify({ action:'claude_proxy', token, user, ...body })
+        body: JSON.stringify({ action:'claude_proxy', token, user, ...body }),
+        signal: ctrl ? ctrl.signal : undefined
       });
       const status = res.status;
       const data = await res.json();
@@ -7052,10 +7057,12 @@ async function callClaudeAPI(body, apiKey, tries){
       if(errObj) throw new Error(String(msg) || 'API error');
       return data;
     }catch(e){
-      lastErr = e.message || String(e);
+      lastErr = (e && e.name==='AbortError') ? 'Request timed out' : (e.message || String(e));
       if(/not have AI|not configured|limit reached/i.test(lastErr)) throw new Error(lastErr);
       if(attempt < tries-1){ await new Promise(r=>setTimeout(r, 900*(attempt+1))); continue; }
       throw new Error(lastErr);
+    }finally{
+      if(timer) clearTimeout(timer);
     }
   }
   throw new Error(lastErr);
@@ -8670,7 +8677,7 @@ async function extractBlocksFromHTML(html, pid, apiKey){
   if(canMarkup){
     try{
       const sys = 'You split an HTML page body into ordered sections for a block-based CMS. Return ONLY a JSON array; each item is {"label":string,"html":string}. Preserve the original markup, class names, ids, and inline styles EXACTLY — never rewrite, restyle, or summarize. Split into logical sections (header/nav, hero, each content section, footer). No prose, no code fences.';
-      const resp = await callClaudeAPI({ system: sys, max_tokens: 8000, messages:[{role:'user', content: body.slice(0, 60000)}] }, apiKey, 2);
+      const resp = await callClaudeAPI({ system: sys, max_tokens: 8000, messages:[{role:'user', content: body.slice(0, 60000)}] }, apiKey, 1, 30000);
       const txt = (resp && resp.content && resp.content[0] && resp.content[0].text) || '';
       const json = txt.slice(txt.indexOf('['), txt.lastIndexOf(']') + 1);
       const sections = JSON.parse(json);
@@ -8783,7 +8790,7 @@ async function refactorHtmlForCms(html, relPath, logFn){
       max_tokens:16000,
       system:'You refactor existing website HTML so a block-based CMS can edit it, WITHOUT changing how the page looks. Comments like <!--FXJS0--> stand in for the page’s script blocks — keep every one EXACTLY where it appears; never modify, reorder, or delete them. Preserve every visible word, image, link, color, font, and the layout precisely. Return ONLY the complete HTML document — raw HTML, no markdown, no code fences, no commentary.',
       messages:[{ role:'user', content: CMS_REFACTOR_SPEC + '\n\n--- HTML to refactor (script blocks replaced by FXJS placeholders) ---\n\n' + work }]
-    }, '', 2);
+    }, '', 1, 45000);   // one attempt, 45s cap — never hang the import on one page
   }catch(e){
     log('<span class="l-warn">⚠</span> Couldn’t optimize — keeping the original page ('+esc(e.message)+')');
     return { html: original, changed:false, note:e.message };
