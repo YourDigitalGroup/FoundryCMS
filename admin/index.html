@@ -1734,9 +1734,6 @@ textarea.fb-input{resize:vertical}
               <label id="ifs-select-all-wrap" style="display:none;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer">
                 <input type="checkbox" id="ifs-chk-all" onchange="ifsToggleAll(this)" style="accent-color:var(--ember)"> Select all
               </label>
-              <label id="ifs-refactor-wrap" style="display:none;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer" title="Restructures each page so the editor can work with it — semantic header/nav/main/footer, named sections, FAQ blocks, proper headings, real images, brand colors. Your design is preserved exactly; the optimized page is saved back to your server.">
-                <input type="checkbox" id="ifs-refactor" style="accent-color:var(--ember)"> Optimize markup for editing <span style="color:var(--muted)">(slower — processes each page)</span>
-              </label>
               <div id="ifs-sel-count" style="font-size:12px;color:var(--muted);margin-left:auto"></div>
             </div>
             <div id="ifs-body">
@@ -1764,10 +1761,6 @@ textarea.fb-input{resize:vertical}
           <div id="sf-zip" style="display:none;flex-direction:column;max-width:640px">
             <h2 style="font-size:20px;font-weight:800;color:var(--text);letter-spacing:-.025em;margin-bottom:4px">Import ZIP</h2>
             <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Drop a Fourge export ZIP to import HTML, data files, and assets.</p>
-            <div id="import-warn-no-key" class="warn-b" style="display:none">Markup isn't enabled yet — pages will import as one editable block (sections aren't split out automatically).</div>
-            <label id="zip-refactor-wrap" style="display:none;align-items:center;gap:8px;font-size:13px;color:var(--text-2);margin-bottom:14px;cursor:pointer" title="Restructures each page so the editor can work with it — semantic header/nav/main/footer, named sections, FAQ blocks, proper headings, real images, brand colors. Your design is preserved exactly.">
-              <input type="checkbox" id="zip-refactor" style="accent-color:var(--ember)"> Optimize markup for editing <span style="color:var(--muted)">(slower — processes each page)</span>
-            </label>
             <div class="dz" id="import-dz" ondragover="dzOver(event)" ondragleave="dzLeave()" ondrop="importDrop(event)">
               <input type="file" accept=".zip" onchange="startImport(this.files[0])">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -2092,7 +2085,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.7';
+const CMS_VERSION='1.14.8';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5333,18 +5326,12 @@ async function startImport(file){
     const dataF=entries.filter(f=>f.name.startsWith('data/')&&f.name.endsWith('.json'));
     ll('<span class="l-info">Found: '+htmlF.length+' HTML, '+dataF.length+' data files</span>');
     for(const f of dataF){try{const c=await f.async('string');const sha=await ghSHA(f.name);await ghWrite(f.name,c,sha,'Import: '+f.name);ll('<span class="l-ok">\u2713</span> '+f.name);}catch(e){ll('<span class="l-warn">\u26a0</span> '+f.name+': '+esc(e.message));}}
-    const doRefactor=!!(document.getElementById('zip-refactor')||{}).checked && markupAvailable();
-    if(doRefactor) ll('<span class="l-info">Optimizing each page for the editor \u2014 your design is preserved exactly.</span>');
     if(htmlF.length){const pagesData={};try{const{content:pc}=await ghRead(F_PAGES);Object.assign(pagesData,JSON.parse(pc));}catch{}
       for(const f of htmlF){
-        let hc=await f.async('string');
+        const hc=await f.async('string');
         const fname=normalizeImportName(f.name);            // index.html for home, single .html otherwise
         const base=fname.replace(/\.html?$/i,'').toLowerCase();
         const pid=base==='index'?'home':base;
-        if(doRefactor){
-          ll('<span class="l-info">\u27f3</span> Optimizing '+esc(fname)+' for the editor\u2026');
-          try{const rf=await refactorHtmlForCms(hc,fname,ll);if(rf.changed){hc=rf.html;ll('<span class="l-ok">\u2713</span> '+esc(fname)+' \u2014 markup optimized (design preserved)');}}catch(e){ll('<span class="l-warn">\u26a0</span> Optimize skipped: '+esc(e.message));}
-        }
         pagesData[pid]={title:fname.replace(/\.html?$/i,'').replace(/[-_]/g,' '),file:fname,css:'',blocks:[]};
         try{const sha=await ghSHA(fname);await ghWrite(fname,hc,sha,'Import: '+fname);}catch{}
         ll('<span class="l-ok">\u2713</span> '+esc(fname));
@@ -8344,15 +8331,6 @@ function sfTab(name) {
   });
   if(name === 'server') initImportFromServer();
   if(name === 'manage') renderManagePages();
-  if(name === 'zip'){
-    if(!(_secretStatus && _secretStatus.claude_key)){
-      const w = document.getElementById('import-warn-no-key');
-      if(w) w.style.display = 'block';
-    }
-    // Show the "Optimize markup for editing" toggle only when Markup is available.
-    const rw = document.getElementById('zip-refactor-wrap');
-    if(rw) rw.style.display = markupAvailable() ? 'flex' : 'none';
-  }
 }
 
 // ── MANAGE PAGES (remove from CMS without deleting the file) ───────────────
@@ -8625,8 +8603,6 @@ async function importFromServerScan(){
 
     document.getElementById('ifs-import-btn').style.display = _ifsPages.length ? 'inline-flex' : 'none';
     document.getElementById('ifs-select-all-wrap').style.display = _ifsPages.length ? 'flex' : 'none';
-    const rfWrap = document.getElementById('ifs-refactor-wrap');
-    if(rfWrap) rfWrap.style.display = (_ifsPages.length && markupAvailable()) ? 'flex' : 'none';
     ifsUpdateCount();
     toast(`Found ${allPages.length} page(s)`,'ok');
   }catch(e){
@@ -8721,42 +8697,11 @@ async function extractPageCSS(html, relPath){
 // it asks the engine to split the body into ordered, editable sections with the
 // original markup kept intact; otherwise, or on any failure, it stores the whole
 // body as one faithful HTML block. The page CSS is captured separately.
-async function extractBlocksFromHTML(html, pid, apiKey){
-  const body = htmlBodyInner(html);
-  // The Markup key now lives server-side, so trigger the smart split whenever
-  // the account has Markup access (callClaudeAPI uses the server key, and
-  // falls back to a faithful single block if it isn't configured).
-  let canMarkup = !!apiKey;
-  try{ if(getEffectivePerms(getSessionUser()).aiEdit) canMarkup = true; }catch(e){}
-  if(canMarkup){
-    try{
-      const sys = 'You split an HTML page body into ordered sections for a block-based CMS. Return ONLY a JSON array; each item is {"label":string,"html":string}. Preserve the original markup, class names, ids, and inline styles EXACTLY — never rewrite, restyle, or summarize. Split into logical sections (header/nav, hero, each content section, footer). No prose, no code fences.';
-      const resp = await callClaudeAPI({ system: sys, max_tokens: 8000, messages:[{role:'user', content: body.slice(0, 60000)}] }, apiKey, 1, 30000);
-      const txt = (resp && resp.content && resp.content[0] && resp.content[0].text) || '';
-      const json = txt.slice(txt.indexOf('['), txt.lastIndexOf(']') + 1);
-      const sections = JSON.parse(json);
-      if(Array.isArray(sections)){
-        const blocks = sections.filter(s => s && s.html).map(s => ({id: uid(), type:'html', data:{html: String(s.html)}}));
-        if(blocks.length) return blocks;
-      }
-    }catch(e){ /* fall through to a single faithful block */ }
-  }
-  return [{id: uid(), type:'html', data:{html: body}}];
-}
-
-// ── CMS-COMPATIBILITY REFACTOR ───────────────────────────────────
-// When a site is brought into the CMS (scanned from the server or dropped as a
-// ZIP), each page's markup can be optimized so the editor can work with it:
-// semantic landmarks (<header>/<nav>/<main>/<footer>), named <section>s, proper
-// headings, real <img> tags, the standard FAQ/accordion structure, one place
-// for CSS, and brand-color variables. The optimization NEVER changes how a page
-// looks — every result is run through a fidelity gate first, and if the page's
-// visible text or styling didn't survive intact, the original is kept untouched.
-
-// True when this account can use the Markup engine (server-side key + permission).
-function markupAvailable(){
-  try{ if(getEffectivePerms(getSessionUser()).aiEdit) return true; }catch(e){}
-  try{ return !!(_secretStatus && _secretStatus.claude_key); }catch(e){ return false; }
+function extractBlocksFromHTML(html){
+  // Imports store the page as one faithful HTML block — no AI/Markup
+  // preprocessing (section-splitting/refactoring happens outside the CMS). The
+  // visual editor reads the page's real HTML directly, so one block is enough.
+  return [{id: uid(), type:'html', data:{html: htmlBodyInner(html)}}];
 }
 
 // Enforce the CMS file-naming rule: the homepage is index.html and every other
@@ -8769,104 +8714,6 @@ function normalizeImportName(name){
   if(!/\.html$/i.test(n)) n += '.html';
   if(/^index\.html$/i.test(n)) return 'index.html';
   return n;
-}
-
-// The verbatim refactor brief sent to the Markup engine for each page.
-const CMS_REFACTOR_SPEC = `Refactor this site's HTML to be compatible with our CMS, WITHOUT changing how the pages looks. Keep the exact same design, layout, copy, colors, fonts, and images — only adjust the markup structure and naming. Apply ALL of the following:
-1. STATIC HTML ONLY. Output a plain .html file whose full content is present in the HTML source (view-source shows the real content, not an empty shell). No React/Vue/JSX, no client-side framework, no <div id="root"> that fills in via JavaScript, no build step, no web components or shadow DOM.
-2. SEMANTIC LANDMARKS — exactly one of each per page, using the real tags (NOT <div class="header">): the site header -> <header>…</header>; the primary nav -> <nav>…</nav> (inside the header is fine); the main content -> <main>…</main>; the footer -> <footer>…</footer>. The <header>, <nav>, and <footer> must be IDENTICAL across every page so they can be managed as one shared template.
-3. ALL CSS IN ONE PLACE: a single <style> block in <head> (or one linked stylesheet). Do not scatter <style> blocks through the <body>, and don't rely on external CDN frameworks for layout. Prefer classes over inline style="".
-4. NAME EVERY SECTION: break the main content into <section> elements, each with a clear id and class describing its purpose, e.g. <section id="hero" class="hero">, id="services", id="testimonials", id="contact-cta". One logical block per <section>.
-5. IMAGES: real <img src="…" alt="…"> tags with descriptive alt text. No text baked into images.
-6. HEADINGS/TEXT: proper <h1>–<h6> and <p> tags, exactly one <h1> per page.
-7. Each page is a complete standalone document (<!DOCTYPE html> … </html>) with its own <title> and <meta name="description"> in <head>.
-8. FAQ / ACCORDION sections MUST use this exact structure so the CMS can edit each question and answer and add/remove items:
-  <section id="faqs" class="faqs"><div class="faqs-inner"><div class="faqs-head"><p class="eyebrow-light">FAQs</p><h2 class="h2-light">Frequently Asked Questions</h2></div><div class="faq-item"><button type="button" class="faq-q" aria-expanded="false"><span>Your question?</span><span class="faq-sign">+</span></button><div class="faq-answer"><p>Your answer.</p></div></div></div></section>
-  Rules: each FAQ is ONE .faq-item. The question is the FIRST <span> inside .faq-q (the .faq-sign span is just the +/− indicator). The answer is a <p> inside .faq-answer. Open/close by flipping aria-expanded on the .faq-q button.
-9. FILE NAMING: the homepage MUST be named index.html. Every other page MUST use a single .html extension (about.html, services.html, contact.html, etc.) — never .dc.html, .html.html, or any double/other extension.
-10. Take the two brand colors and pass them into a variable css variable called brand-color-primary and brand-color-secondary.
-Return the complete updated HTML. Do not change the visual result — only the structure, tags, ids, and class names.`;
-
-// Returns a short reason string if a refactor looks unsafe (lost visible text or
-// dropped a large share of the stylesheet), or '' if the page was preserved.
-// Allows reordering, consolidation, and brand-variable swaps but catches the
-// failure mode that matters: truncated or missing content/CSS.
-function refactorFidelityProblem(orig, next){
-  const n = String(next||'');
-  if(!/<\/html\s*>/i.test(n) || !/<body[\s>]/i.test(n)) return 'incomplete document';
-  const visText = h => String(h||'')
-    .replace(new RegExp('<script[\\s\\S]*?<'+'/script>','gi'),' ')
-    .replace(/<style[\s\S]*?<\/style>/gi,' ')
-    .replace(/<[^>]+>/g,' ')
-    .replace(/&[a-z#0-9]+;/gi,' ')
-    .replace(/\s+/g,' ').trim().toLowerCase();
-  const a = visText(orig), b = visText(n);
-  if(a.length > 40){
-    const ratio = b.length / a.length;
-    if(ratio < 0.85) return 'visible text shrank';
-    if(ratio > 1.5)  return 'visible text grew unexpectedly';
-  }
-  // CSS declarations — allow consolidation/var swaps, catch wholesale loss.
-  const decls = h => {
-    let css=''; const re=/<style[^>]*>([\s\S]*?)<\/style>/gi; let m;
-    while((m=re.exec(h))) css += m[1]+'\n';
-    const set=new Set(); let d; const dre=/([a-z-]{2,})\s*:\s*([^;{}]+)/gi;
-    while((d=dre.exec(css))){ const v=d[2].replace(/!important/i,'').replace(/\s+/g,'').toLowerCase(); if(v) set.add(d[1].toLowerCase()+':'+v); }
-    return set;
-  };
-  const da = decls(orig);
-  if(da.size >= 14){
-    const db = decls(n); let kept=0; da.forEach(x=>{ if(db.has(x)) kept++; });
-    if(kept / da.size < 0.7) return 'stylesheet lost rules';
-  }
-  return '';
-}
-
-// Run one page's HTML through the Markup engine with the CMS refactor brief.
-// <script> blocks are stashed and restored verbatim (never rewritten); the
-// result is only returned when it passes the fidelity gate. Returns
-// {html, changed, note}. On any doubt, returns the original unchanged.
-async function refactorHtmlForCms(html, relPath, logFn){
-  const log = typeof logFn==='function' ? logFn : function(){};
-  const original = String(html||'');
-  if(original.length < 80) return { html: original, changed:false, note:'empty' };
-  if(original.length > 160000) return { html: original, changed:false, note:'too large to optimize safely' };
-
-  // Protect <script> blocks across the round trip — restored verbatim so no
-  // behavior changes and the engine can't rewrite or drop them.
-  const vault=[];
-  const work = original.replace(new RegExp('<script[\\s\\S]*?<'+'/script>','gi'), m=>{ vault.push(m); return '<!--FXJS'+(vault.length-1)+'-->'; });
-
-  let data;
-  try{
-    data = await callClaudeAPI({
-      model:'claude-opus-4-8',
-      max_tokens:16000,
-      system:'You refactor existing website HTML so a block-based CMS can edit it, WITHOUT changing how the page looks. Comments like <!--FXJS0--> stand in for the page’s script blocks — keep every one EXACTLY where it appears; never modify, reorder, or delete them. Preserve every visible word, image, link, color, font, and the layout precisely. Return ONLY the complete HTML document — raw HTML, no markdown, no code fences, no commentary.',
-      messages:[{ role:'user', content: CMS_REFACTOR_SPEC + '\n\n--- HTML to refactor (script blocks replaced by FXJS placeholders) ---\n\n' + work }]
-    }, '', 1, 45000);   // one attempt, 45s cap — never hang the import on one page
-  }catch(e){
-    log('<span class="l-warn">⚠</span> Couldn’t optimize — keeping the original page ('+esc(e.message)+')');
-    return { html: original, changed:false, note:e.message };
-  }
-
-  let out = ((Array.isArray(data.content)?(data.content.find(b=>b.type==='text')?.text||''):'')).replace(/^```html?\s*/i,'').replace(/```\s*$/,'').trim();
-  if(!out) return { html: original, changed:false, note:'no response' };
-  // Restore the protected scripts verbatim.
-  out = out.replace(/<!--FXJS(\d+)-->/g, (m,i)=> (vault[+i] !== undefined ? vault[+i] : ''));
-  // Re-inject any script placeholder the engine dropped (before </body>).
-  const missing = vault.filter(v => out.indexOf(v) === -1);
-  if(missing.length){
-    if(/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, missing.join('\n')+'\n</body>');
-    else out += '\n' + missing.join('\n');
-  }
-
-  const reason = refactorFidelityProblem(original, out);
-  if(reason){
-    log('<span class="l-warn">⚠</span> Optimized markup didn’t pass the safety check ('+reason+') — keeping the original page');
-    return { html: original, changed:false, note:reason };
-  }
-  return { html: out, changed:true, note:'optimized' };
 }
 
 async function importFromServerRun(forceOverride){
@@ -8887,15 +8734,6 @@ async function importFromServerRun(forceOverride){
     }
   }
 
-  // Server-derived flag (not browser): attempt block extraction only when a
-  // Markup key is configured server-side. extractBlocksFromHTML uses the DB key.
-  const apiKey  = (_secretStatus && _secretStatus.claude_key) ? '1' : '';
-  // Optimize each page's markup for the editor (only when the toggle is on and
-  // Markup is available). When on, the optimized HTML is written back to the
-  // server file so the editor opens the improved version.
-  const rfEl = document.getElementById('ifs-refactor');
-  const doRefactor = !!(rfEl && rfEl.checked) && markupAvailable();
-  const { repo:ghRepo0, pat:ghPat0 } = ghCfg();
   const log     = document.getElementById('ifs-log');
   const importBtn = document.getElementById('ifs-import-btn');
   log.className = 'log-box on'; log.innerHTML = '';
@@ -8916,11 +8754,9 @@ async function importFromServerRun(forceOverride){
     if(progCount) progCount.textContent = n + '/' + total;
     if(progBar)   progBar.style.width    = Math.min(100, Math.round((done ? n : (n - 1)) / total * 100)) + '%';
   };
-  const setStep = (s) => { if(progStep) progStep.textContent = s; };
 
   const ll = (msg) => { log.innerHTML += `<div>${msg}</div>`; log.scrollTop = log.scrollHeight; };
   ll(`<span class="l-info">Importing ${selected.length} page(s) — markup + CSS preserved…</span>`);
-  if(doRefactor) ll('<span class="l-info">Optimizing each page for the editor — your design is preserved exactly.</span>');
 
   // Load existing pages.json + site.json from GitHub
   let pagesData = {}, siteData = {nav:[]}, pagesSHA = null, siteSHA = null;
@@ -8955,45 +8791,15 @@ async function importFromServerRun(forceOverride){
       failed++; continue;
     }
 
-    // Step 1b: Optimize the markup for the editor (semantic landmarks, named
-    // sections, FAQ structure, headings, images, brand vars) — fidelity-gated,
-    // so the page's look is never changed. Write the result back to the server
-    // (and GitHub) so the editor opens the optimized version.
-    if(doRefactor){
-      setStep('Optimizing ' + fname + '…');
-      ll('<span class="l-info">⟳</span> Optimizing markup for the editor…');
-      try{
-        const rf = await refactorHtmlForCms(html, relPath, ll);
-        if(rf.changed){
-          html = rf.html;
-          ll('<span class="l-ok">✓</span> Markup optimized (design preserved)');
-          try{
-            await apiCall('write_file', {path: relPath, content: html});
-            ll('<span class="l-ok">✓</span> Saved optimized page to server');
-          }catch(e){ ll(`<span class="l-warn">⚠</span> Couldn’t save optimized page: ${esc(e.message)}`); }
-          if(ghRepo0 && ghPat0){
-            try{ const sha = await ghSHA(relPath); await ghWrite(relPath, html, sha, 'Fourge: optimize ' + relPath + ' for the editor'); ll('<span class="l-ok">✓</span> Optimized page pushed to GitHub'); }
-            catch(e){ ll(`<span class="l-warn">⚠</span> GitHub (optimized page): ${esc(e.message)}`); }
-          }
-        }
-      }catch(e){ ll(`<span class="l-warn">⚠</span> Optimize skipped: ${esc(e.message)}`); }
-    }
-
-    // Step 2: Capture the page's CSS (so the header/layout keep their styling),
-    // then split into blocks. No more 8 KB truncation.
+    // Step 2: Capture the page's CSS so styling survives a re-render, and store
+    // the page as one faithful HTML block — no AI preprocessing (the editor
+    // reads the page's real HTML directly; refactoring is done outside the CMS).
     let pageCss = '';
     try{ pageCss = await extractPageCSS(html, relPath); if(pageCss) ll(`<span class="l-ok">✓</span> Captured ${(pageCss.length/1024).toFixed(1)} KB of CSS`); }
     catch(e){ console.warn('CSS capture failed:', e.message); }
-    let blocks = [];
-    try{
-      setStep('Extracting sections from ' + fname + '…');
-      ll('<span class="l-info">⟳</span> Extracting blocks…');
-      blocks = await extractBlocksFromHTML(html, pid, apiKey);
-      ll(`<span class="l-ok">✓</span> ${blocks.length} block(s)${apiKey?'':' (add a Markup key for editable sections)'}`);
-    }catch(e){
-      ll(`<span class="l-warn">⚠</span> ${esc(e.message)} — stored as one HTML block`);
-      blocks = [{id:uid(), type:'html', data:{html: htmlBodyInner(html)}}];
-    }
+    let blocks;
+    try{ blocks = extractBlocksFromHTML(html); }
+    catch(e){ blocks = [{id:uid(), type:'html', data:{html: htmlBodyInner(html)}}]; }
 
     // Step 3: Save page data — CSS preserved so styling survives a re-render
     pagesData[pid] = {title, file: fname, path: relPath, css: pageCss, blocks};
