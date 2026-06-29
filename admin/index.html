@@ -253,6 +253,7 @@ body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 .fg label{display:block;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
 .fg input,.fg select,.fg textarea{width:100%;padding:8px 10px;border:1px solid var(--border);font-family:var(--font-sans);font-size:13px;color:var(--text);outline:none;background:#FFF;transition:border-color .15s;border-radius:var(--r-sm)}
 .fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--ember)}.fg textarea{resize:vertical;min-height:60px}
+.brand-swatch{width:56px!important;height:56px;padding:3px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:#fff;display:block}
 .fg small{display:block;font-size:11px;color:var(--muted);margin-top:3px;line-height:1.5}
 .fr{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 /* CARDS */
@@ -475,6 +476,11 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-style-divider{display:flex;align-items:center;gap:8px;margin:14px 0 10px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .ve-style-divider::before,.ve-style-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 .ve-align-group{display:flex;gap:3px}
+.ve-swatches-wrap{margin-top:8px}
+.ve-swatches-label{display:block;font-size:10px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px}
+.ve-swatches{display:flex;flex-wrap:wrap;gap:5px}
+.ve-swatch{width:18px;height:18px;border-radius:4px;border:1px solid rgba(0,0,0,.18);cursor:pointer;padding:0;transition:transform .1s}
+.ve-swatch:hover{transform:scale(1.18)}
 .ve-align-btn{flex:1;display:flex;align-items:center;justify-content:center;padding:7px 4px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;transition:all .12s}
 .ve-align-btn:hover{border-color:var(--ember);color:var(--ember)}
 .ve-align-btn.on{background:var(--ember-soft);color:var(--ember);border-color:var(--ember)}
@@ -1507,7 +1513,7 @@ textarea.fb-input{resize:vertical}
         </div>
         <div class="tab-panel" id="si-design">
           <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Primary and secondary brand colors — these drive the <code>--brand-color-primary</code> / <code>--brand-color-secondary</code> CSS variables. They auto-fill from your site's CSS; change them and click Apply to update every page.</div>
-            <div class="fr"><div class="fg"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942"></div><div class="fg"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E"></div></div>
+            <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch"></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch"></div></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="fd-btn-primary" onclick="brandApplyAll()"><i class="fa-solid fa-check-double"></i> Apply colors to all pages</button>
               <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
@@ -1746,7 +1752,7 @@ textarea.fb-input{resize:vertical}
           <div id="sf-zip" style="display:none;flex-direction:column;max-width:640px">
             <h2 style="font-size:20px;font-weight:800;color:var(--text);letter-spacing:-.025em;margin-bottom:4px">Import ZIP</h2>
             <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Drop a Fourge export ZIP to import HTML, data files, and assets.</p>
-            <div id="import-warn-no-key" class="warn-b" style="display:none">No Claude API key — blocks won't be extracted. Add it in Settings.</div>
+            <div id="import-warn-no-key" class="warn-b" style="display:none">Markup isn't enabled yet — pages will import as one editable block (sections aren't split out automatically).</div>
             <label id="zip-refactor-wrap" style="display:none;align-items:center;gap:8px;font-size:13px;color:var(--text-2);margin-bottom:14px;cursor:pointer" title="Restructures each page so the editor can work with it — semantic header/nav/main/footer, named sections, FAQ blocks, proper headings, real images, brand colors. Your design is preserved exactly.">
               <input type="checkbox" id="zip-refactor" checked style="accent-color:var(--ember)"> Optimize markup for editing <span style="color:var(--muted)">(recommended)</span>
             </label>
@@ -2074,7 +2080,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.0';
+const CMS_VERSION='1.14.2';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -3972,20 +3978,70 @@ function updateSEO(pid,key,val){ if(!_seo[pid])_seo[pid]={}; _seo[pid][key]=val;
 }
 
 // Rank Math-style on-page checklist, computed from the fields + slug.
+// Normalize text for keyword matching: lowercase, punctuation → spaces. This is
+// what fixes "Doors, Vermillion, SD" not matching the keyword "doors vermillion
+// sd" — the commas used to break the literal substring match and tank the grade.
+function seoNorm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim(); }
+// Lenient keyword match: passes on a normalized phrase hit OR when most of the
+// keyword's words appear in the text — so we're not overly literal about exact
+// punctuation, word order, or phrasing.
+function seoKwMatch(hay,kw){
+  const H=seoNorm(hay), K=seoNorm(kw); if(!H||!K) return false;
+  if(H.includes(K)) return true;
+  const words=K.split(' ').filter(Boolean);
+  if(!words.length) return false;
+  const hit=words.filter(w=>H.includes(w)).length;
+  return hit/words.length >= 0.75;
+}
+
+// Per-page structural facts (H1 count, image alt coverage, word count, headings)
+// read from the live page so the analysis can include Lighthouse-style technical
+// checks. Loaded lazily when a page's SEO panel opens.
+let _seoFacts={};
+async function seoLoadFacts(pid){
+  const pg=_pages[pid]; if(!pg) return;
+  let html='';
+  try{ const d=await apiCall('read_file',{path:pg.path||pg.file}); html=d.content||''; }catch{}
+  if(!html){ try{ const base=normSiteBase(); const r=await fetch((base?base+'/':'../')+String(pg.path||pg.file).replace(/^\/+/,'')+'?_fge='+Date.now()); if(r.ok) html=await r.text(); }catch{} }
+  if(!html) return;
+  try{
+    const doc=new DOMParser().parseFromString(html,'text/html');
+    doc.querySelectorAll('script,style,noscript,svg').forEach(el=>el.remove());
+    const imgs=[...doc.querySelectorAll('img')];
+    const main=doc.querySelector('main')||doc.body;
+    const words=((main?.textContent)||'').replace(/\s+/g,' ').trim().split(' ').filter(Boolean).length;
+    const headings=[...doc.querySelectorAll('h1,h2,h3,h4')].map(h=>h.textContent.trim()).filter(Boolean).join(' | ');
+    _seoFacts[pid]={ loaded:true, h1:doc.querySelectorAll('h1').length, imgs:imgs.length,
+      imgsNoAlt:imgs.filter(i=>!(i.getAttribute('alt')||'').trim()).length, words, headings };
+    seoRenderAnalysis(pid);
+  }catch(e){}
+}
+
 function seoChecks(pid){
-  const s=_seo[pid]||{}; const kw=(s.focusKeyword||'').toLowerCase().trim();
-  const title=s.title||'', desc=s.description||'', slug=String(_pages[pid]?.path||_pages[pid]?.file||pid).toLowerCase();
-  const inc=(hay,n)=> !!n && hay.toLowerCase().includes(n);
-  return [
+  const s=_seo[pid]||{}; const kw=(s.focusKeyword||'').trim();
+  const title=decodeHtml(s.title||''), desc=s.description||'';
+  const slug=String(_pages[pid]?.path||_pages[pid]?.file||pid);
+  const f=_seoFacts[pid];
+  const checks=[
     {ok:!!kw, label:'Focus keyword set'},
-    {ok:inc(title,kw), label:'Keyword in SEO title'},
-    {ok:inc(desc,kw), label:'Keyword in meta description'},
-    {ok:!!kw&&inc(slug,kw.replace(/\s+/g,'-')), label:'Keyword in URL'},
-    {ok:title.length>=50&&title.length<=60, label:'Title length 50–60'},
-    {ok:desc.length>=120&&desc.length<=160, label:'Description length 120–160'},
-    {ok:!!(s.ogImage||seoGlobal().defaultOg), label:'Social image set'},
-    {ok:!!title&&!!desc, label:'Title & description present'}
+    {ok:seoKwMatch(title,kw), label:'Keyword in SEO title'},
+    {ok:seoKwMatch(desc,kw), label:'Keyword in meta description'},
+    {ok:!!kw&&seoKwMatch(slug,kw), label:'Keyword in URL'},
+    {ok:!!title.trim()&&!/^(page not found|untitled|new page|document)$/i.test(title.trim()), label:'Descriptive title (not a placeholder)'},
+    {ok:title.length>=40&&title.length<=65, label:'Title length 40–65'},
+    {ok:!!desc.trim(), label:'Meta description present'},
+    {ok:desc.length>=110&&desc.length<=170, label:'Description length 110–170'},
+    {ok:!s.noindex, label:'Indexable (not noindex)'},
+    {ok:!!(s.canonical||normSiteBase()), label:'Canonical URL available'},
+    {ok:!!(s.ogImage||seoGlobal().defaultOg), label:'Social image set'}
   ];
+  if(f&&f.loaded){
+    checks.push({ok:f.h1===1, label:'Exactly one H1 heading'});
+    checks.push({ok:f.imgs===0||f.imgsNoAlt===0, label:'All images have alt text'});
+    checks.push({ok:f.words>=250, label:'Enough content (250+ words)'});
+    checks.push({ok:!kw||seoKwMatch(f.headings,kw), label:'Keyword in a heading'});
+  }
+  return checks;
 }
 function seoScore(pid){ const c=seoChecks(pid); return Math.round(c.filter(x=>x.ok).length/c.length*100); }
 function seoRenderAnalysis(pid){
@@ -4026,6 +4082,8 @@ function renderSEO(pid){
     +'<div class="si-sec"><h2 style="font-size:13px">Google preview</h2><div id="seo-preview"></div></div>'
     +'</div></div>';
   seoRenderAnalysis(pid); seoRenderPreview(pid);
+  // Pull live page structure (H1, image alt, word count) for the technical checks.
+  if(!_seoFacts[pid]||!_seoFacts[pid].loaded) seoLoadFacts(pid);
 }
 function renderSEOGlobal(){
   const el=document.getElementById('seo-global'); if(!el) return;
@@ -4079,8 +4137,9 @@ async function genSEO(pid){
     +'\n\nReturn ONLY valid JSON with these keys: '
     +'"title" (a compelling 50-60 char title tag with the primary keyword and, where natural, the brand or location), '
     +'"description" (a benefit-driven 120-160 char meta description ending with a soft call to action), '
-    +'"focusKeyword" (the single best primary keyword phrase for this page), '
+    +'"focusKeyword" (the primary keyword phrase for this page in lowercase with no punctuation — usually a core service plus the location, 2–5 words, e.g. "garage door repair sioux falls"), '
     +'"ogTitle" (a shareable social title), "ogDescription" (a social description). '
+    +'The words in focusKeyword MUST appear naturally in both the title and the meta description. '
     +'Base everything on the actual page content above — do NOT invent services. NEVER output "Page Not Found" or placeholder text.';
   toast('Generating SEO…');
   try{
@@ -4869,7 +4928,7 @@ async function saveClaudeKey(){
     localStorage.removeItem('cd_claude');
     document.getElementById('s-claude').value='';
     document.getElementById('s-claude').placeholder='Saved ✓';
-    toast('Claude API key saved (encrypted, server-side) ✓','ok');
+    toast('Markup key saved (encrypted, server-side) ✓','ok');
   }catch(e){toast('Save failed: '+e.message,'err');}
 }
 // Change the signed-in user's own password via the server (verifies the
@@ -5740,6 +5799,7 @@ async function veLoadPage(id){
   // Clear stale cache so we always load fresh from server
   delete _veHtml[id];
   delete _veOrigHtml[id];
+  delete _vePalCache[id];   // recompute the site palette from the freshly loaded page
 
   // ── Strategy 1: load via direct URL (best — CSS/images work natively) ──
   let siteBase=(_site.website||'').replace(/\/$/,'');
@@ -5753,7 +5813,9 @@ async function veLoadPage(id){
     iframe.removeAttribute('srcdoc');
     // Show spinner in blank frame while page loads
     iframe.src='about:blank';
-    const pageUrl=siteBase+'/'+filePath;
+    // Cache-bust so the editor always loads the freshest published file — without
+    // this the browser can serve a stale cached copy after you publish + refresh.
+    const pageUrl=siteBase+'/'+filePath+(filePath.includes('?')?'&':'?')+'_fge='+Date.now();
     setTimeout(()=>{
       iframe.src=pageUrl;
       iframe.onload=function(){
@@ -6355,7 +6417,8 @@ function veShowProps(info){
       <div class="ve-field" style="margin:0"><label>Background</label>
         <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
-    </div>`;
+    </div>
+    ${vePaletteRow('vp-bgcolor','Background — site colors')}`;
 
   // Anchor / ID — any element (esp. sections & columns) can become a #jump target
   const anchorField = `
@@ -6418,6 +6481,7 @@ function veShowProps(info){
           <input type="text" id="vp-size" value="${esc(st.fontSize||'')}" placeholder="e.g. 18px" onchange="veAutoApply()">
         </div>
       </div>
+      ${vePaletteRow('vp-color','Text color — site colors')}
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Weight</label>
           <select id="vp-weight" style="width:100%" onchange="veAutoApply()">
@@ -6450,6 +6514,8 @@ function veShowProps(info){
           <input type="color" id="vp-hover-color" value="${st.color||'#ffffff'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
       </div>
+      ${vePaletteRow('vp-hover-bg','Hover background — site colors')}
+      ${vePaletteRow('vp-hover-color','Hover text — site colors')}
       <div class="desc" style="font-size:11px;margin-top:4px">Shown when a visitor hovers the ${isLink?'link':'button'}.</div>`:''}
       ${info.isFaq?`<div class="ve-style-divider"><span>FAQ Item</span></div>
       <div class="ve-field"><label>Question</label>
@@ -6487,6 +6553,66 @@ function veSetAlign(btn){
   _veAlignSel = btn.dataset.align;
   veAutoApply();   // alignment applies immediately (no Apply button)
 }
+// ── SITE COLOR PALETTE ───────────────────────────────────────────
+// Collect the colors actually used on the page being edited (rendered text,
+// background, and visible border colors), tallied by how many elements use each
+// so we can list them most-used → least-used next to every color picker. Cached
+// per page. The brand colors are always appended so they're available even on a
+// page that barely uses them.
+let _vePalCache={};
+function cssColorToHex(c){
+  if(!c) return '';
+  c=String(c).trim().toLowerCase();
+  if(!c||c==='transparent'||c==='inherit'||c==='currentcolor'||c==='none'||c==='initial') return '';
+  if(c[0]==='#'){ if(c.length===4) c='#'+c[1]+c[1]+c[2]+c[2]+c[3]+c[3]; return c.slice(0,7); }
+  const m=c.match(/rgba?\(([^)]+)\)/);
+  if(m){ const p=m[1].split(/[,\/\s]+/).map(parseFloat).filter(x=>!isNaN(x)); if(p.length>=3){ if(p.length>=4&&p[3]===0) return ''; return '#'+p.slice(0,3).map(x=>('0'+Math.max(0,Math.min(255,Math.round(x))).toString(16)).slice(-2)).join(''); } }
+  return '';
+}
+function veSitePalette(){
+  const key=_curPage||'_';
+  if(_vePalCache[key]) return _vePalCache[key];
+  let pal=[];
+  try{
+    const ifr=document.getElementById('visual-iframe');
+    const doc=ifr&&ifr.contentDocument, win=ifr&&ifr.contentWindow;
+    if(doc&&win&&win.getComputedStyle){
+      const counts={};
+      const add=h=>{ if(h) counts[h]=(counts[h]||0)+1; };
+      const els=doc.querySelectorAll('body *'); let n=0;
+      for(const el of els){
+        if(n++>4000) break;                       // cap walk on very large pages
+        const cs=win.getComputedStyle(el); if(!cs) continue;
+        add(cssColorToHex(cs.color));
+        add(cssColorToHex(cs.backgroundColor));
+        if(parseFloat(cs.borderTopWidth)>0) add(cssColorToHex(cs.borderTopColor));
+      }
+      pal=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);   // most used → least used
+    }
+  }catch(e){}
+  try{
+    [document.getElementById('si-brand-primary'),document.getElementById('si-brand-secondary')]
+      .map(el=>el&&cssColorToHex(el.value)).filter(Boolean)
+      .forEach(h=>{ if(pal.indexOf(h)===-1) pal.push(h); });
+  }catch(e){}
+  _vePalCache[key]=pal;
+  return pal;
+}
+// Render a labeled row of the site's colors that, on click, set + apply to the
+// given color input. Returns '' when no palette is available.
+function vePaletteRow(inputId,label){
+  const pal=veSitePalette().slice(0,16);
+  if(!pal.length) return '';
+  return '<div class="ve-swatches-wrap"><span class="ve-swatches-label">'+(label||'Site colors')+'</span><div class="ve-swatches">'
+    + pal.map(h=>'<button type="button" class="ve-swatch" title="'+h+'" style="background:'+h+'" onclick="vePickSwatch(\''+inputId+'\',\''+h+'\')"></button>').join('')
+    + '</div></div>';
+}
+function vePickSwatch(inputId,hex){
+  const el=document.getElementById(inputId); if(!el) return;
+  el.value=hex; el.dataset.dirty='1'; el.dataset.set='1';
+  veAutoApply();
+}
+
 // Auto-apply: any field change applies live, routed to the image or text path.
 function veAutoApply(){
   if(!_veCurSel) return;
@@ -7019,7 +7145,7 @@ async function veAiEdit(){
         tools:[{type:'web_search_20250305', name:'web_search', max_uses:4}],
         messages:_veAiChat.messages
       }, apiKey);
-    }catch(e){ _veAiChat.messages.pop(); toast('Claude API: '+e.message,'err'); veAiRenderLog(); return; }
+    }catch(e){ _veAiChat.messages.pop(); toast('Markup error: '+e.message,'err'); veAiRenderLog(); return; }
 
     // Keep the assistant's full content (incl. tool blocks) in history for follow-ups
     if(Array.isArray(data.content)) _veAiChat.messages.push({role:'assistant', content:data.content});
@@ -7243,7 +7369,7 @@ async function veAiPageRun(){
   stash(/<link\b[^>]*>/gi);
   const stripped = pageHtml.replace(/\s{3,}/g,'  ');
 
-  if(status) status.textContent = 'Sending to Claude (\u2248 '+Math.round(stripped.length/800)+' tokens)\u2026';
+  if(status) status.textContent = 'Generating changes\u2026';
 
   try{
     let data;
@@ -7255,9 +7381,9 @@ async function veAiPageRun(){
         system:'You are editing a website\'s HTML. Comments like <!--FXV0--> are placeholders standing in for the site\'s CSS and scripts \u2014 keep every one EXACTLY where it appears; never modify, reorder, or delete them. Change only what the user asks; preserve all classes, IDs, and structure. Return the COMPLETE modified HTML document with all placeholders intact \u2014 raw HTML only, no markdown, no explanation, no code fences.',
         messages:[{role:'user',content:'Current page HTML (CSS/JS replaced by FXV placeholders):\n\n'+stripped+'\n\n---\n\nChange request: '+prompt+'\n\nReturn the complete modified HTML with every placeholder kept exactly as-is.'}]
       }, apiKey);
-    }catch(e){ toast('Claude API: '+e.message,'err'); return; }
+    }catch(e){ toast('Markup error: '+e.message,'err'); return; }
     let newHtml = ((Array.isArray(data.content)?(data.content.find(b=>b.type==='text')?.text||''):'')).replace(/^```html?\n?/,'').replace(/\n?```$/,'').trim();
-    if(!newHtml){ toast('No response from Claude','err'); return; }
+    if(!newHtml){ toast('No response from the Markup engine','err'); return; }
     // Restore the protected CSS/scripts verbatim.
     newHtml = newHtml.replace(/<!--FXV(\d+)-->/g, (m,i)=> (_vault[+i] !== undefined ? _vault[+i] : ''));
     // Safety net: if the model dropped any <style>/<link> placeholder, re-inject
