@@ -477,7 +477,6 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-style-divider::before,.ve-style-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 .ve-align-group{display:flex;gap:3px}
 .ve-swatches-wrap{margin-top:8px}
-.ve-swatches-label{display:block;font-size:10px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px}
 .ve-swatches{display:flex;flex-wrap:wrap;gap:5px}
 .ve-swatch{width:18px;height:18px;border-radius:4px;border:1px solid rgba(0,0,0,.18);cursor:pointer;padding:0;transition:transform .1s}
 .ve-swatch:hover{transform:scale(1.18)}
@@ -614,11 +613,13 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
    tile background. Tile size scales with the column width (more columns = bigger
    window), never below 2 columns thanks to the picker's min-width. */
 .ve-img-picker-item img{width:100%;aspect-ratio:1/1;object-fit:contain;display:block;background:var(--bg-2)}
+.ve-img-picker-item .vip-thumb{aspect-ratio:1/1;width:100%;display:flex;align-items:center;justify-content:center;background:var(--bg-2);overflow:hidden}
+.ve-img-picker-item .vip-thumb img{max-width:100%;max-height:100%;width:auto;height:auto;aspect-ratio:auto;object-fit:contain;display:block;background:transparent}
 .ve-img-picker-item-name{font-size:10px;color:var(--muted);padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface)}
 .ve-img-picker-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--muted);text-align:center;gap:10px;font-size:13px}
 .ve-img-picker-foot{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;flex-shrink:0}
-.ve-img-url-preview{width:100%;margin-bottom:10px;border-radius:8px;overflow:hidden;background:var(--bg);border:1px solid var(--border);max-height:100px;display:flex;align-items:center;justify-content:center}
-.ve-img-url-preview img{max-width:100%;max-height:100px;object-fit:contain;display:block}
+.ve-img-url-preview{width:100%;aspect-ratio:1/1;max-height:240px;margin-bottom:10px;border-radius:8px;overflow:hidden;background:var(--bg-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center}
+.ve-img-url-preview img{max-width:100%;max-height:100%;object-fit:contain;display:block}
 
 /* Ensure inputs never touch panel edge regardless of scrollbar */
 #ve-props-body > *{margin-left:2px;margin-right:2px}
@@ -2080,7 +2081,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.2';
+const CMS_VERSION='1.14.3';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -6418,7 +6419,7 @@ function veShowProps(info){
         <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
     </div>
-    ${vePaletteRow('vp-bgcolor','Background — site colors')}`;
+    ${vePaletteRow('vp-bgcolor')}`;
 
   // Anchor / ID — any element (esp. sections & columns) can become a #jump target
   const anchorField = `
@@ -6481,7 +6482,7 @@ function veShowProps(info){
           <input type="text" id="vp-size" value="${esc(st.fontSize||'')}" placeholder="e.g. 18px" onchange="veAutoApply()">
         </div>
       </div>
-      ${vePaletteRow('vp-color','Text color — site colors')}
+      ${vePaletteRow('vp-color')}
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Weight</label>
           <select id="vp-weight" style="width:100%" onchange="veAutoApply()">
@@ -6514,8 +6515,8 @@ function veShowProps(info){
           <input type="color" id="vp-hover-color" value="${st.color||'#ffffff'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
       </div>
-      ${vePaletteRow('vp-hover-bg','Hover background — site colors')}
-      ${vePaletteRow('vp-hover-color','Hover text — site colors')}
+      ${vePaletteRow('vp-hover-bg')}
+      ${vePaletteRow('vp-hover-color')}
       <div class="desc" style="font-size:11px;margin-top:4px">Shown when a visitor hovers the ${isLink?'link':'button'}.</div>`:''}
       ${info.isFaq?`<div class="ve-style-divider"><span>FAQ Item</span></div>
       <div class="ve-field"><label>Question</label>
@@ -6600,10 +6601,10 @@ function veSitePalette(){
 }
 // Render a labeled row of the site's colors that, on click, set + apply to the
 // given color input. Returns '' when no palette is available.
-function vePaletteRow(inputId,label){
+function vePaletteRow(inputId){
   const pal=veSitePalette().slice(0,16);
   if(!pal.length) return '';
-  return '<div class="ve-swatches-wrap"><span class="ve-swatches-label">'+(label||'Site colors')+'</span><div class="ve-swatches">'
+  return '<div class="ve-swatches-wrap"><div class="ve-swatches">'
     + pal.map(h=>'<button type="button" class="ve-swatch" title="'+h+'" style="background:'+h+'" onclick="vePickSwatch(\''+inputId+'\',\''+h+'\')"></button>').join('')
     + '</div></div>';
 }
@@ -7624,7 +7625,7 @@ function veRenderImgPicker(filter=''){
   }
   grid.innerHTML = items.map((m,i)=>`
     <div class="ve-img-picker-item${_imgPickerSel===m.url?' sel':''}" onclick="vePickerSelect('${esc(m.url)}',this)" title="${esc(m.name)}">
-      <img src="${esc(m.url)}" loading="lazy" onerror="this.parentElement.style.display='none'" style="width:100%;aspect-ratio:1/1;object-fit:contain;display:block;background:var(--bg-2)">
+      <div class="vip-thumb"><img src="${esc(m.url)}" loading="lazy" onerror="this.closest('.ve-img-picker-item').style.display='none'"></div>
       <div class="ve-img-picker-item-name">${esc(m.name)}</div>
     </div>`).join('');
 }
