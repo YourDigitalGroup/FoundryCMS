@@ -2092,7 +2092,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.6';
+const CMS_VERSION='1.14.7';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5416,20 +5416,22 @@ async function loadPages(){
   // Merged with saved data winning. Because the list is derived from the files
   // that physically exist, it survives an empty or freshly-redeployed pages.json.
 
-  // 1. Saved per-page data (may legitimately be {} on a fresh/redeployed site)
-  let saved={};
+  // 1. Saved per-page data (may legitimately be {} on a fresh/redeployed site).
+  //    savedOk = we actually reached the data store (so an empty result is real,
+  //    not a network failure) — used by the safety net below.
+  let saved={}, savedOk=false;
   try{
     const res=await fetch('../data/pages.json?t='+Date.now());
-    if(res.ok){ const d=await res.json(); if(d&&typeof d==='object'&&!Array.isArray(d)) saved=d; }
+    if(res.ok){ savedOk=true; const d=await res.json(); if(d&&typeof d==='object'&&!Array.isArray(d)) saved=d; }
   }catch{}
   if(!Object.keys(saved).length && canCallApi()){
-    try{ const d=await apiCall('read_file',{path:'data/pages.json'}); if(d.content){ const j=JSON.parse(d.content); if(j&&typeof j==='object'&&!Array.isArray(j)) saved=j; } }catch{}
+    try{ const d=await apiCall('read_file',{path:'data/pages.json'}); savedOk=true; if(d.content){ const j=JSON.parse(d.content); if(j&&typeof j==='object'&&!Array.isArray(j)) saved=j; } }catch{}
   }
 
   // 2. Authoritative server-side scan of the pages that actually exist
-  let scanned=[];
+  let scanned=[], scanOk=false;
   if(canCallApi()){
-    try{ const d=await apiCall('list_pages'); if(d&&Array.isArray(d.pages)) scanned=d.pages; }
+    try{ const d=await apiCall('list_pages'); if(d&&Array.isArray(d.pages)){ scanned=d.pages; scanOk=true; } }
     catch(e){ console.warn('list_pages failed:',e.message); }
   }
 
@@ -5492,6 +5494,13 @@ async function loadPages(){
     const pth=merged[id]&&(merged[id].path||merged[id].file);
     if(pth && !isImportablePath(pth)) delete merged[id];
   }
+
+  // Safety net: if BOTH the saved file and the server scan failed to load (a
+  // momentary network/session hiccup) and the rebuild came back empty, keep the
+  // pages already in memory rather than blanking the whole list. (When a read
+  // genuinely succeeds and returns nothing, we still clear — that's a real
+  // empty state, not a failure.)
+  if(!Object.keys(merged).length && !savedOk && !scanOk && Object.keys(_pages).length) return;
 
   _pages=merged;
 }
