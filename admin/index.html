@@ -476,6 +476,11 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-style-divider{display:flex;align-items:center;gap:8px;margin:14px 0 10px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .ve-style-divider::before,.ve-style-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 .ve-align-group{display:flex;gap:3px}
+.ve-swatches-wrap{margin-top:8px}
+.ve-swatches-label{display:block;font-size:10px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px}
+.ve-swatches{display:flex;flex-wrap:wrap;gap:5px}
+.ve-swatch{width:18px;height:18px;border-radius:4px;border:1px solid rgba(0,0,0,.18);cursor:pointer;padding:0;transition:transform .1s}
+.ve-swatch:hover{transform:scale(1.18)}
 .ve-align-btn{flex:1;display:flex;align-items:center;justify-content:center;padding:7px 4px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;transition:all .12s}
 .ve-align-btn:hover{border-color:var(--ember);color:var(--ember)}
 .ve-align-btn.on{background:var(--ember-soft);color:var(--ember);border-color:var(--ember)}
@@ -2075,7 +2080,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.1';
+const CMS_VERSION='1.14.2';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5794,6 +5799,7 @@ async function veLoadPage(id){
   // Clear stale cache so we always load fresh from server
   delete _veHtml[id];
   delete _veOrigHtml[id];
+  delete _vePalCache[id];   // recompute the site palette from the freshly loaded page
 
   // ── Strategy 1: load via direct URL (best — CSS/images work natively) ──
   let siteBase=(_site.website||'').replace(/\/$/,'');
@@ -6411,7 +6417,8 @@ function veShowProps(info){
       <div class="ve-field" style="margin:0"><label>Background</label>
         <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
-    </div>`;
+    </div>
+    ${vePaletteRow('vp-bgcolor','Background — site colors')}`;
 
   // Anchor / ID — any element (esp. sections & columns) can become a #jump target
   const anchorField = `
@@ -6474,6 +6481,7 @@ function veShowProps(info){
           <input type="text" id="vp-size" value="${esc(st.fontSize||'')}" placeholder="e.g. 18px" onchange="veAutoApply()">
         </div>
       </div>
+      ${vePaletteRow('vp-color','Text color — site colors')}
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Weight</label>
           <select id="vp-weight" style="width:100%" onchange="veAutoApply()">
@@ -6506,6 +6514,8 @@ function veShowProps(info){
           <input type="color" id="vp-hover-color" value="${st.color||'#ffffff'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
       </div>
+      ${vePaletteRow('vp-hover-bg','Hover background — site colors')}
+      ${vePaletteRow('vp-hover-color','Hover text — site colors')}
       <div class="desc" style="font-size:11px;margin-top:4px">Shown when a visitor hovers the ${isLink?'link':'button'}.</div>`:''}
       ${info.isFaq?`<div class="ve-style-divider"><span>FAQ Item</span></div>
       <div class="ve-field"><label>Question</label>
@@ -6543,6 +6553,66 @@ function veSetAlign(btn){
   _veAlignSel = btn.dataset.align;
   veAutoApply();   // alignment applies immediately (no Apply button)
 }
+// ── SITE COLOR PALETTE ───────────────────────────────────────────
+// Collect the colors actually used on the page being edited (rendered text,
+// background, and visible border colors), tallied by how many elements use each
+// so we can list them most-used → least-used next to every color picker. Cached
+// per page. The brand colors are always appended so they're available even on a
+// page that barely uses them.
+let _vePalCache={};
+function cssColorToHex(c){
+  if(!c) return '';
+  c=String(c).trim().toLowerCase();
+  if(!c||c==='transparent'||c==='inherit'||c==='currentcolor'||c==='none'||c==='initial') return '';
+  if(c[0]==='#'){ if(c.length===4) c='#'+c[1]+c[1]+c[2]+c[2]+c[3]+c[3]; return c.slice(0,7); }
+  const m=c.match(/rgba?\(([^)]+)\)/);
+  if(m){ const p=m[1].split(/[,\/\s]+/).map(parseFloat).filter(x=>!isNaN(x)); if(p.length>=3){ if(p.length>=4&&p[3]===0) return ''; return '#'+p.slice(0,3).map(x=>('0'+Math.max(0,Math.min(255,Math.round(x))).toString(16)).slice(-2)).join(''); } }
+  return '';
+}
+function veSitePalette(){
+  const key=_curPage||'_';
+  if(_vePalCache[key]) return _vePalCache[key];
+  let pal=[];
+  try{
+    const ifr=document.getElementById('visual-iframe');
+    const doc=ifr&&ifr.contentDocument, win=ifr&&ifr.contentWindow;
+    if(doc&&win&&win.getComputedStyle){
+      const counts={};
+      const add=h=>{ if(h) counts[h]=(counts[h]||0)+1; };
+      const els=doc.querySelectorAll('body *'); let n=0;
+      for(const el of els){
+        if(n++>4000) break;                       // cap walk on very large pages
+        const cs=win.getComputedStyle(el); if(!cs) continue;
+        add(cssColorToHex(cs.color));
+        add(cssColorToHex(cs.backgroundColor));
+        if(parseFloat(cs.borderTopWidth)>0) add(cssColorToHex(cs.borderTopColor));
+      }
+      pal=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);   // most used → least used
+    }
+  }catch(e){}
+  try{
+    [document.getElementById('si-brand-primary'),document.getElementById('si-brand-secondary')]
+      .map(el=>el&&cssColorToHex(el.value)).filter(Boolean)
+      .forEach(h=>{ if(pal.indexOf(h)===-1) pal.push(h); });
+  }catch(e){}
+  _vePalCache[key]=pal;
+  return pal;
+}
+// Render a labeled row of the site's colors that, on click, set + apply to the
+// given color input. Returns '' when no palette is available.
+function vePaletteRow(inputId,label){
+  const pal=veSitePalette().slice(0,16);
+  if(!pal.length) return '';
+  return '<div class="ve-swatches-wrap"><span class="ve-swatches-label">'+(label||'Site colors')+'</span><div class="ve-swatches">'
+    + pal.map(h=>'<button type="button" class="ve-swatch" title="'+h+'" style="background:'+h+'" onclick="vePickSwatch(\''+inputId+'\',\''+h+'\')"></button>').join('')
+    + '</div></div>';
+}
+function vePickSwatch(inputId,hex){
+  const el=document.getElementById(inputId); if(!el) return;
+  el.value=hex; el.dataset.dirty='1'; el.dataset.set='1';
+  veAutoApply();
+}
+
 // Auto-apply: any field change applies live, routed to the image or text path.
 function veAutoApply(){
   if(!_veCurSel) return;
