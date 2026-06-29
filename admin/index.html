@@ -438,6 +438,10 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 #ve-code-wrap{flex:1;display:none;min-height:0;min-width:0;background:#212121;position:relative}
 #ve-code-wrap.on{display:flex;flex-direction:column}
 #ve-code-wrap .CodeMirror{height:100%;font-size:13px;line-height:1.5;font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
+/* Flash the selected element's markup when switching Visual → Code. */
+.ve-code-hl{background:rgba(217,106,48,.34);border-radius:2px;box-shadow:0 0 0 1px rgba(217,106,48,.55)}
+.ve-code-hl-line{background:rgba(217,106,48,.16)!important;animation:veCodeHlFade 1.8s ease-out}
+@keyframes veCodeHlFade{0%{background:rgba(217,106,48,.42)}100%{background:rgba(217,106,48,.10)}}
 .ve-mode-seg{display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:7px;border:1px solid var(--border)}
 .ve-mode-btn{display:flex;align-items:center;gap:5px;padding:5px 12px;border:none;border-radius:5px;background:transparent;color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;transition:all .12s}
 .ve-mode-btn.on{background:var(--ember-soft);color:var(--ember)}
@@ -2085,7 +2089,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.9';
+const CMS_VERSION='1.14.10';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5973,7 +5977,7 @@ return '(function(){\n'
 +'  });\n'
 // Index all selectable elements
 +'  var idx=0, sel=null, hov=null, selResizable=false, resizing=null, resizeGuard=false;\n'
-+'  var curDevice="desktop", respData={tablet:{},mobile:{}}, fgeSeq=0, hoverData={};\n'
++'  var curDevice="desktop", respData={desktop:{},tablet:{},mobile:{}}, fgeSeq=0, hoverData={};\n'
 +'  var SKIP={"HTML":1,"BODY":1,"SCRIPT":1,"STYLE":1,"NOSCRIPT":1,"META":1,"LINK":1,"HEAD":1,"BR":1,"HR":1};\n'
 +'  var LEAF={"H1":1,"H2":1,"H3":1,"H4":1,"H5":1,"H6":1,"P":1,"LI":1,"TD":1,"TH":1,"A":1,"BUTTON":1,"LABEL":1,"BLOCKQUOTE":1,"IMG":1,"SPAN":1,"STRONG":1,"EM":1,"B":1,"I":1,"FIGCAPTION":1,"CAPTION":1,"DT":1,"DD":1,"TIME":1,"MARK":1,"SMALL":1,"INPUT":1,"TEXTAREA":1,"SELECT":1};\n'
 +'  function isOurs(el){return el&&el.id&&el.id.indexOf("__fe_")===0;}\n'
@@ -6064,7 +6068,7 @@ return '(function(){\n'
 // the anchor landed, then correct the margin by the probed factor so the anchor (or
 // center) stays exactly put — works whether the element is left-aligned or centered.
 +'    var sym=e.metaKey||e.ctrlKey;\n'
-+'    var rsz=function(prop,val){if(curDevice==="desktop"){if(prop==="margin-left")sel.style.marginLeft=val;else if(prop==="margin-top")sel.style.marginTop=val;else sel.style.setProperty(prop,val,"important");}else{setResp(sel,prop,val,curDevice);}};\n'
++'    var rsz=function(prop,val){applyStyleProp(sel,prop,val);};\n'
 +'    var horiz=dir.indexOf("e")>=0||dir.indexOf("w")>=0, vert=dir.indexOf("s")>=0||dir.indexOf("n")>=0;\n'
 +'    if(horiz){ var sH=dir.indexOf("e")>=0?1:-1, dEff=sH*dx; var nw=Math.max(MIN,resizing.w+(sym?2*dEff:dEff)); rsz("width",nw+"px"); rsz("max-width",nw+"px"); rsz("margin-left",resizing.ml+"px"); }\n'
 +'    if(vert){ var sV=dir.indexOf("s")>=0?1:-1, dEffV=sV*dy; var nh=Math.max(MIN,resizing.h+(sym?2*dEffV:dEffV)); rsz("height",nh+"px"); rsz("margin-top",resizing.mt+"px"); }\n'
@@ -6085,6 +6089,9 @@ return '(function(){\n'
 +'  function fgeClass(el){var cn=el.getAttribute("class")||"";var m=cn.match(/\\bfge-r(\\d+)\\b/);if(m)return "fge-r"+m[1];fgeSeq++;var c="fge-r"+fgeSeq;el.classList.add(c);return c;}\n'
 +'  function regenResp(){\n'
 +'    var s=ensureRespStyle(), out="";\n'
++'    var dmap=respData.desktop||{}, drules="";\n'
++'    Object.keys(dmap).forEach(function(cls){var d=dmap[cls],body="";Object.keys(d).forEach(function(p){if(d[p]!=="")body+=p+":"+d[p]+" !important;";});if(body)drules+="."+cls+"{"+body+"}";});\n'
++'    if(drules)out+=drules+"\\n";\n'
 +'    [["tablet","1024"],["mobile","600"]].forEach(function(pair){\n'
 +'      var map=respData[pair[0]]||{}, rules="";\n'
 +'      Object.keys(map).forEach(function(cls){var d=map[cls],body="";Object.keys(d).forEach(function(p){if(d[p]!=="")body+=p+":"+d[p]+" !important;";});if(body)rules+="."+cls+"{"+body+"}";});\n'
@@ -6093,12 +6100,14 @@ return '(function(){\n'
 +'    s.textContent=out;\n'
 +'    if(!out&&s.parentNode)s.parentNode.removeChild(s);\n'
 +'  }\n'
-+'  function setResp(el,prop,val,dev){if(dev!=="tablet"&&dev!=="mobile")return;var cls=fgeClass(el);if(!respData[dev][cls])respData[dev][cls]={};if(val===""||val==null)delete respData[dev][cls][prop];else respData[dev][cls][prop]=val;regenResp();}\n'
-+'  function applyStyleProp(el,prop,val){if(curDevice==="desktop"){if(val===""||val==null)el.style.removeProperty(prop);else el.style.setProperty(prop,val);}else{setResp(el,prop,val,curDevice);}}\n'
++'  function setResp(el,prop,val,dev){if(dev!=="desktop"&&dev!=="tablet"&&dev!=="mobile")return;var cls=fgeClass(el);if(!respData[dev][cls])respData[dev][cls]={};if(val===""||val==null)delete respData[dev][cls][prop];else respData[dev][cls][prop]=val;regenResp();}\n'
++'  function applyStyleProp(el,prop,val){var cls=fgeClass(el);var inl=el.style.getPropertyValue(prop);if(inl!==""){if(!respData.desktop[cls])respData.desktop[cls]={};if(respData.desktop[cls][prop]===undefined)respData.desktop[cls][prop]=inl;el.style.removeProperty(prop);}setResp(el,prop,val,curDevice);}\n'
 +'  function initResp(){\n'
 +'    try{document.querySelectorAll("[class*=fge-r]").forEach(function(el){var cn=el.getAttribute("class")||"";var mm=cn.match(/\\bfge-r(\\d+)\\b/g);if(mm)mm.forEach(function(x){var n=parseInt(x.replace("fge-r",""),10);if(n>fgeSeq)fgeSeq=n;});});}catch(e){}\n'
 +'    var s=document.getElementById("fourge-responsive");if(!s||!s.sheet)return;\n'
-+'    try{var rr=s.sheet.cssRules;for(var i=0;i<rr.length;i++){var r=rr[i];if(r.type!==4)continue;var dev=(r.media.mediaText.indexOf("600")>=0)?"mobile":(r.media.mediaText.indexOf("1024")>=0?"tablet":null);if(!dev)continue;for(var j=0;j<r.cssRules.length;j++){var sr=r.cssRules[j];var cls=(sr.selectorText||"").replace(/^\\./,"");if(!cls)continue;respData[dev][cls]=respData[dev][cls]||{};for(var k=0;k<sr.style.length;k++){var p=sr.style[k];respData[dev][cls][p]=sr.style.getPropertyValue(p);}}}}catch(e){}\n'
++'    try{var rr=s.sheet.cssRules;for(var i=0;i<rr.length;i++){var r=rr[i];\n'
++'      if(r.type===1){var dcls=(r.selectorText||"").replace(/^\\./,"");if(!/^fge-r\\d+$/.test(dcls))continue;respData.desktop[dcls]=respData.desktop[dcls]||{};for(var dk=0;dk<r.style.length;dk++){var dp=r.style[dk];respData.desktop[dcls][dp]=r.style.getPropertyValue(dp);}continue;}\n'
++'      if(r.type!==4)continue;var dev=(r.media.mediaText.indexOf("600")>=0)?"mobile":(r.media.mediaText.indexOf("1024")>=0?"tablet":null);if(!dev)continue;for(var j=0;j<r.cssRules.length;j++){var sr=r.cssRules[j];var cls=(sr.selectorText||"").replace(/^\\./,"");if(!cls)continue;respData[dev][cls]=respData[dev][cls]||{};for(var k=0;k<sr.style.length;k++){var p=sr.style[k];respData[dev][cls][p]=sr.style.getPropertyValue(p);}}}}catch(e){}\n'
 +'  }\n'
 // ── HOVER STYLES (per-element :hover rules in a managed stylesheet) ──
 +'  function ensureHoverStyle(){var s=document.getElementById("fourge-hover");if(!s){s=document.createElement("style");s.id="fourge-hover";s.setAttribute("data-fourge-hover","");(document.head||document.documentElement).appendChild(s);}return s;}\n'
@@ -6198,6 +6207,7 @@ return '(function(){\n'
 +'      isFlex:(function(){try{var dsp=cs.display;return dsp==="flex"||dsp==="inline-flex";}catch(e){return false;}}()), flexDir:(function(){try{return cs.flexDirection||"";}catch(e){return "";}}()),\n'
 +'      isBtn:(t.tagName==="BUTTON")||(typeof t.className==="string"&&/(^|\\s)(btn|button)/i.test(t.className))||(t.getAttribute&&t.getAttribute("role")==="button"),\n'
 +'      styles:{padding:cs.padding,margin:cs.margin,fontSize:cs.fontSize,fontWeight:cs.fontWeight,textAlign:cs.textAlign,borderRadius:cs.borderRadius,lineHeight:cs.lineHeight,color:rgb2hex(cs.color),bgColor:rgb2hex(cs.backgroundColor)},\n'
++'      sizeVals:(function(){var cm=(t.getAttribute("class")||"").match(/\\bfge-r\\d+\\b/);var cls=cm?cm[0]:null;var dv=(cls&&respData[curDevice]&&respData[curDevice][cls])||{};function pk(prop){if(dv[prop]!==undefined)return dv[prop];if(curDevice==="desktop")return t.style.getPropertyValue(prop)||"";return "";}return {width:pk("width"),maxWidth:pk("max-width"),height:pk("height"),maxHeight:pk("max-height")};}()),\n'
 +'      canUp:!!realSibling(t,-1), canDown:!!realSibling(t,1),\n'
 +'      hasParent:!!(par&&par.tagName!=="BODY"&&par.tagName!=="HTML"),\n'
 +'      path:t.tagName.toLowerCase()+(t.id?"#"+t.id:"")+(typeof t.className==="string"&&t.className?" ."+t.className.trim().split(/\\s+/)[0]:"")\n'
@@ -6282,7 +6292,7 @@ return '(function(){\n'
 +'    if(m.field==="bg"||m.field==="bgColor") applyStyleProp(el2,"background-color",m.value);\n'
 +'    if(m.field==="size") applyStyleProp(el2,"font-size",m.value);\n'
 +'    if(m.field==="weight") applyStyleProp(el2,"font-weight",m.value);\n'
-+'    if(m.field==="align"){ if(curDevice==="desktop"){ if(m.value) el2.style.setProperty("text-align",m.value,"important"); else el2.style.removeProperty("text-align"); } else { setResp(el2,"text-align",m.value,curDevice); } }\n'
++'    if(m.field==="align") applyStyleProp(el2,"text-align",m.value);\n'
 +'    if(m.field==="hoverBg") setHover(el2,"background-color",m.value);\n'
 +'    if(m.field==="hoverColor") setHover(el2,"color",m.value);\n'
 +'    if(m.field==="lineHeight") applyStyleProp(el2,"line-height",m.value);\n'
@@ -6290,9 +6300,11 @@ return '(function(){\n'
 +'    if(m.field==="margin") applyStyleProp(el2,"margin",m.value);\n'
 +'    if(m.field==="radius") applyStyleProp(el2,"border-radius",m.value);\n'
 +'    if(m.field==="flexDir") applyStyleProp(el2,"flex-direction",m.value);\n'
-+'    if(m.field==="width"){if(curDevice==="desktop"){if(m.value){el2.style.setProperty("width",m.value,"important");el2.style.setProperty("max-width",m.value,"important");el2.removeAttribute("width");}else{el2.style.removeProperty("width");el2.style.removeProperty("max-width");}}else{setResp(el2,"width",m.value,curDevice);setResp(el2,"max-width",m.value,curDevice);}}\n'
-+'    if(m.field==="height"){if(curDevice==="desktop"){if(m.value){el2.style.setProperty("height",m.value,"important");el2.removeAttribute("height");}else{el2.style.removeProperty("height");}}else{setResp(el2,"height",m.value,curDevice);}}\n'
-+'    if(m.field==="resetSize"){el2.style.removeProperty("width");el2.style.removeProperty("max-width");el2.style.removeProperty("height");el2.removeAttribute("width");el2.removeAttribute("height");}\n'
++'    if(m.field==="width"){if(m.value)el2.removeAttribute("width");applyStyleProp(el2,"width",m.value);}\n'
++'    if(m.field==="maxWidth") applyStyleProp(el2,"max-width",m.value);\n'
++'    if(m.field==="height"){if(m.value)el2.removeAttribute("height");applyStyleProp(el2,"height",m.value);}\n'
++'    if(m.field==="maxHeight") applyStyleProp(el2,"max-height",m.value);\n'
++'    if(m.field==="resetSize"){el2.removeAttribute("width");el2.removeAttribute("height");var _rm=(el2.getAttribute("class")||"").match(/\\bfge-r\\d+\\b/);var _rc=_rm?_rm[0]:null;["width","max-width","height","max-height"].forEach(function(p){el2.style.removeProperty(p);if(_rc)["desktop","tablet","mobile"].forEach(function(dv){if(respData[dv][_rc])delete respData[dv][_rc][p];});});regenResp();}\n'
 +'    if(m.field==="imgHref"){var ap2=el2.closest("a");if(m.value){if(ap2){ap2.setAttribute("href",m.value);}else{var na=document.createElement("a");na.setAttribute("href",m.value);el2.parentNode.insertBefore(na,el2);na.appendChild(el2);}}else if(ap2){ap2.parentNode.insertBefore(el2,ap2);ap2.parentNode.removeChild(ap2);}}\n'
 +'    if(m.field==="addListItem"){var lst=el2.tagName==="LI"?el2.parentElement:((el2.tagName==="UL"||el2.tagName==="OL")?el2:null);if(lst){var ni=document.createElement("li");ni.textContent=m.value||"New item";if(el2.tagName==="LI"&&el2.parentElement===lst){lst.insertBefore(ni,el2.nextSibling);}else{lst.appendChild(ni);}selectEl(ni);}}\n'
 +'    if(m.field==="removeListItem"){if(el2.tagName==="LI"){el2.remove();sel=null;ov.style.display="none";badge.style.display="none";hbox.style.display="none";veSetPaused(false);window.parent.postMessage({type:"ve-deselect"},"*");}}\n'
@@ -6441,6 +6453,7 @@ function veShowProps(info){
 
   let fields = '';
   const st = info.styles||{};
+  const sv = info.sizeVals||{};
 
   // Element actions bar — Elementor-style structural controls
   const actionsBar = `
@@ -6481,7 +6494,24 @@ function veShowProps(info){
         <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
     </div>
-    ${vePaletteRow('vp-bgcolor')}`;
+    ${vePaletteRow('vp-bgcolor')}
+    <div class="ve-style-divider"><span>Size${_veDevice!=='desktop'?' ('+(_veDevice==='tablet'?'Tablet':'Mobile')+')':''}</span></div>
+    <div class="ve-style-row">
+      <div class="ve-field" style="margin:0"><label>Width</label>
+        <input type="text" id="vp-width" value="${esc(sv.width||'')}" placeholder="e.g. 300px, 50%, auto" onchange="veSizeField('width',this)">
+      </div>
+      <div class="ve-field" style="margin:0"><label>Max width</label>
+        <input type="text" id="vp-maxw" value="${esc(sv.maxWidth||'')}" placeholder="e.g. 100%, 600px" onchange="veSizeField('maxWidth',this)">
+      </div>
+    </div>
+    <div class="ve-style-row">
+      <div class="ve-field" style="margin:0"><label>Height</label>
+        <input type="text" id="vp-height" value="${esc(sv.height||'')}" placeholder="e.g. 200px, auto" onchange="veSizeField('height',this)">
+      </div>
+      <div class="ve-field" style="margin:0"><label>Max height</label>
+        <input type="text" id="vp-maxh" value="${esc(sv.maxHeight||'')}" placeholder="e.g. 400px" onchange="veSizeField('maxHeight',this)">
+      </div>
+    </div>`;
 
   // Anchor / ID — any element (esp. sections & columns) can become a #jump target
   const anchorField = `
@@ -6504,16 +6534,7 @@ function veShowProps(info){
       <div class="ve-field"><label>Link URL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(where the image links)</span></label>
         <input type="url" id="vp-img-href" value="${esc(info.imgLink||'')}" placeholder="https://… (blank = no link)" onchange="veAutoApply()">
       </div>
-      <div class="ve-style-divider"><span>Size</span></div>
-      <div class="ve-style-row">
-        <div class="ve-field" style="margin:0"><label>Width</label>
-          <input type="text" id="vp-img-w" value="${esc(info.imgW||'')}" placeholder="e.g. 200px, 50%, auto" oninput="veLiveSize('width',this.value)" onfocus="veLiveSizeStart()">
-        </div>
-        <div class="ve-field" style="margin:0"><label>Height</label>
-          <input type="text" id="vp-img-h" value="${esc(info.imgH||'')}" placeholder="auto (keep ratio)" oninput="veLiveSize('height',this.value)" onfocus="veLiveSizeStart()">
-        </div>
-      </div>
-      ${(info.imgNatW&&info.imgNatH)?`<div class="desc" style="margin:-4px 0 8px">Natural size: ${info.imgNatW}×${info.imgNatH}px. Set width only and leave height blank to keep aspect ratio.</div>`:`<div class="desc" style="margin:-4px 0 8px">Tip: set width only (e.g. 200px) and leave height blank to keep the aspect ratio.</div>`}
+      ${(info.imgNatW&&info.imgNatH)?`<div class="desc" style="margin:6px 0 8px">Natural size: ${info.imgNatW}×${info.imgNatH}px. Set Width only (below) and leave Height blank to keep the aspect ratio.</div>`:`<div class="desc" style="margin:6px 0 8px">Tip: set Width only (below) and leave Height blank to keep the aspect ratio.</div>`}
       <button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veResetImgSize()">Reset to natural size</button>
       ${spacingFields}
       ${anchorField}
@@ -6831,10 +6852,19 @@ function veResetImgSize(){
   const ifrm=document.getElementById('visual-iframe');
   if(!ifrm) return;
   ifrm.contentWindow.postMessage({type:'ve-update',fid:_veCurSel.fid,field:'resetSize',value:''},'*');
-  const w=document.getElementById('vp-img-w'); if(w) w.value='';
-  const h=document.getElementById('vp-img-h'); if(h) h.value='';
+  ['vp-width','vp-maxw','vp-height','vp-maxh'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   document.getElementById('ve-unsaved')?.classList.add('on');
-  toast('Image size reset to natural','ok');
+  toast('Size reset','ok');
+}
+// Width / max-width / height / max-height inputs (any element). Routes through the
+// per-device responsive cascade so a value set on tablet/desktop can be overridden
+// on mobile (no inline !important that would trap the value at one breakpoint).
+function veSizeField(field, el){
+  if(!_veCurSel) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-update', fid:_veCurSel.fid, field, value:veNormalizeSize(el&&el.value)},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
 }
 function veApplyImg(){
   if(!_veCurSel) return;
@@ -6850,12 +6880,8 @@ function veApplyImg(){
     const newHref=imgHrefEl.value.trim();
     if(newHref!==(_veCurSel.imgLink||'')) send({field:'imgHref',value:newHref});
   }
-  const imgWEl=document.getElementById('vp-img-w');
-  const imgHEl=document.getElementById('vp-img-h');
-  // Only touch sizing when the user actually changed it — otherwise a non-size
-  // edit (alt, link, etc.) would re-stamp the size and could disturb the layout.
-  if(imgWEl && imgWEl.value.trim()!==(_veCurSel.imgW||'')) send({field:'width',value:imgWEl.value.trim()});
-  if(imgHEl && imgHEl.value.trim()!==(_veCurSel.imgH||'')) send({field:'height',value:imgHEl.value.trim()});
+  // Size (width / max-width / height / max-height) is handled by the dedicated
+  // Size inputs via veSizeField so it honors the per-device cascade.
   if(_veCurSel.bgImage && !_veCurSel.src && src){
     // CSS background-image element
     send({field:'bgImage',value:src});
@@ -7041,6 +7067,7 @@ function veSetMode(mode){
     if(devGroup) devGroup.style.display='none';
     if(fsBtn) fsBtn.style.display='none';
     setTimeout(()=>cm.refresh(),30); // CodeMirror must refresh once visible
+    setTimeout(()=>veCodeLocateSelected(cm),80); // then jump to the selected element's markup
   } else {
     const code=_cmEditor?_cmEditor.getValue():null;
     _veMode='visual';
@@ -7058,6 +7085,45 @@ function veSetMode(mode){
   }
   document.getElementById('vm-visual')?.classList.toggle('on',_veMode==='visual');
   document.getElementById('vm-code')?.classList.toggle('on',_veMode==='code');
+}
+
+// When entering Code with an element selected, scroll the editor to that element's
+// markup and briefly flash it so the user lands exactly where they were working.
+// Locates the element by reconstructing its opening tag exactly as veSerializeClean
+// emits it (bridge attrs/classes stripped), then matching the right occurrence.
+function veCodeLocateSelected(cm){
+  try{
+    if(!cm || !_veCurSel || !_veCurSel.fid) return;
+    const doc=document.getElementById('visual-iframe')?.contentDocument;
+    if(!doc) return;
+    const el=doc.querySelector('[data-feid="'+_veCurSel.fid+'"]');
+    if(!el) return;
+    // Opening tag of a shallow clone, with the same cleanup veSerializeClean applies.
+    const sigOf=(node)=>{
+      const c=node.cloneNode(false);
+      c.removeAttribute('data-feid'); c.removeAttribute('data-fid');
+      if(c.classList){ c.classList.remove('fe-sel','fe-hover'); }
+      if((c.getAttribute&&c.getAttribute('style')||'').indexOf('2147483')>=0){ c.style.removeProperty('outline'); c.style.removeProperty('z-index'); }
+      const oc=c.outerHTML, close='</'+node.tagName.toLowerCase()+'>';
+      return oc.endsWith(close)?oc.slice(0,-close.length):oc;
+    };
+    const sig=sigOf(el);
+    if(!sig) return;
+    // Our element is the Nth identical opening tag among same-tag elements in order.
+    let occ=0; const same=doc.getElementsByTagName(el.tagName);
+    for(let i=0;i<same.length;i++){ if(same[i]===el) break; if(sigOf(same[i])===sig) occ++; }
+    // Find that same Nth literal occurrence in the source (escaping means a real
+    // opening tag is the only thing that can produce this substring).
+    const code=cm.getValue(); let idx=-1, from=0;
+    for(let n=0;n<=occ;n++){ idx=code.indexOf(sig,from); if(idx<0) break; from=idx+1; }
+    if(idx<0) return;
+    const fromPos=cm.posFromIndex(idx), toPos=cm.posFromIndex(idx+sig.length);
+    cm.setCursor(fromPos);
+    cm.scrollIntoView({from:fromPos,to:toPos},120);
+    const mk=cm.markText(fromPos,toPos,{className:'ve-code-hl'});
+    const lines=[]; for(let ln=fromPos.line; ln<=toPos.line; ln++){ cm.addLineClass(ln,'background','ve-code-hl-line'); lines.push(ln); }
+    setTimeout(()=>{ try{ mk.clear(); lines.forEach(ln=>cm.removeLineClass(ln,'background','ve-code-hl-line')); }catch(e){} }, 1800);
+  }catch(e){}
 }
 
 // ── SAVE PAGE ───────────────────────────────────────────────────
