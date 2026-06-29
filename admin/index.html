@@ -2085,7 +2085,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.8';
+const CMS_VERSION='1.14.9';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -3039,6 +3039,7 @@ async function savePageBlocks(){
     // register in pages.json
     if(url&&token) await apiCall('write_file',{path:F_PAGES,content:JSON.stringify(_pages,null,2)});
     else { const sha=await ghSHA(F_PAGES); await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),sha,'Fourge: add page'); }
+    savePagesBackup();
     toast('Page created ✓','ok');
     goPanel('p-pages');
     initPages();
@@ -5482,14 +5483,45 @@ async function loadPages(){
     if(pth && !isImportablePath(pth)) delete merged[id];
   }
 
-  // Safety net: if BOTH the saved file and the server scan failed to load (a
-  // momentary network/session hiccup) and the rebuild came back empty, keep the
-  // pages already in memory rather than blanking the whole list. (When a read
-  // genuinely succeeds and returns nothing, we still clear — that's a real
-  // empty state, not a failure.)
-  if(!Object.keys(merged).length && !savedOk && !scanOk && Object.keys(_pages).length) return;
+  // Resilience: the list is built from pages.json + the server scan. If a source
+  // we depend on fails to load — e.g. list_pages times out on a data/ folder full
+  // of revision snapshots, or pages.json reads as empty while the scan errors —
+  // the rebuild can come back empty/short even though the site has pages, which
+  // looks like "my pages vanished after leaving the editor". So whenever a read
+  // we depend on failed, restore any page it dropped from the last known-good
+  // snapshot (skipping pages the user hid). The snapshot is only refreshed after
+  // a fully healthy read, so it still reflects real deletions.
+  if(!savedOk || !scanOk){
+    let bk={};
+    try{ bk=JSON.parse(localStorage.getItem('fourge_pages_backup')||'{}'); }catch{}
+    if(bk && typeof bk==='object'){
+      const hiddenIds=new Set((_site.hiddenPages||[]).map(p=>pageIdFromPath(p)));
+      const hiddenPaths=new Set((_site.hiddenPages||[]).map(normHiddenKey));
+      for(const id in bk){
+        if(merged[id] || hiddenIds.has(id)) continue;
+        const b=bk[id], pth=b&&(b.path||b.file);
+        if(!pth || hiddenPaths.has(normHiddenKey(pth)) || !isImportablePath(pth)) continue;
+        merged[id]=b;
+      }
+    }
+    // If a read failed and we'd STILL end up empty (e.g. no snapshot yet), keep
+    // whatever is already in memory rather than blanking the list.
+    if(!Object.keys(merged).length && Object.keys(_pages).length) return;
+  }
 
   _pages=merged;
+  if(savedOk && scanOk && Object.keys(merged).length) savePagesBackup();
+}
+
+// Persist a clean "last known good" page list (real pages only) so a later read
+// failure can't silently empty the list. Called after a healthy load and after
+// any explicit change (import, save, delete) so it stays in sync with reality.
+function savePagesBackup(){
+  try{
+    const clean={};
+    for(const id in (_pages||{})){ const p=_pages[id], pth=p&&(p.path||p.file); if(pth && isImportablePath(pth)) clean[id]=p; }
+    if(Object.keys(clean).length) localStorage.setItem('fourge_pages_backup', JSON.stringify(clean));
+  }catch(e){}
 }
 
 // ── INIT ────────────────────────────────────────────────────────
@@ -5675,6 +5707,7 @@ async function savePagesJson(){
   const json=JSON.stringify(_pages,null,2); let ok=false;
   if(canCallApi()){ try{ await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
   const{repo,pat}=ghCfg(); if(repo&&pat){ try{ const sha=await ghSHA(F_PAGES); await ghWrite(F_PAGES,json,sha,'Fourge: page settings'); ok=true; }catch(e){} }
+  if(ok) savePagesBackup();   // keep the known-good snapshot in sync with this change
   return ok;
 }
 async function savePageSettings(){
@@ -8819,6 +8852,7 @@ async function importFromServerRun(forceOverride){
   // Step 6: Set _pages in memory and save pages.json to server + GitHub
   setProg(total, 'Saving pages…', true);
   _pages = pagesData;
+  savePagesBackup();   // capture imported pages now, so a later failed scan can't drop them
   const pagesJson = JSON.stringify(pagesData, null, 2);
 
   // Save to server first (always works, no GitHub needed)
