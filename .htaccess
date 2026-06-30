@@ -23,3 +23,26 @@
 # <IfModule mod_headers.c>
 #   Header always set Strict-Transport-Security "max-age=31536000"
 # </IfModule>
+
+# Fourge — clean URLs.
+# Serve /page from /page.html and drop the .html from the public URL so each
+# page has one canonical, extensionless address (better for SEO). Files stay
+# plain .html on disk; only the URL changes. The CMS, its data folder, and any
+# real files/directories are left untouched, and this block is independent of
+# the password-gate block api.php manages, so the two don't interfere.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # /index.html → the site root (one canonical home URL).
+  RewriteCond %{REQUEST_URI} !^/(admin|data)/ [NC]
+  RewriteCond %{THE_REQUEST} \s/+index\.html?[\s?] [NC]
+  RewriteRule ^ / [R=301,L]
+  # Any explicit .html request → its extensionless URL (301).
+  RewriteCond %{REQUEST_URI} !^/(admin|data)/ [NC]
+  RewriteCond %{THE_REQUEST} \s/+(.+?)\.html[\s?] [NC]
+  RewriteRule ^ /%1 [R=301,L]
+  # Extensionless request → serve the matching .html file when it exists.
+  RewriteCond %{REQUEST_URI} !^/(admin|data)/ [NC]
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_FILENAME}\.html -f
+  RewriteRule ^(.+?)/?$ $1.html [L]
+</IfModule>
