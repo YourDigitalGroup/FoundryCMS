@@ -2139,7 +2139,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.13';
+const CMS_VERSION='1.14.14';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -3262,7 +3262,7 @@ function tlpBuildHtml(srcHtml, ai, city, state, page){
   })+'<\/script>';
   html=html.replace(/<\/head>/i, schema+'\n</head>');
   // 7. Self-canonical + ensure indexable
-  const canonical='<link rel="canonical" href="'+(_site&&_site.website||'')+'/'+slugify(page.id)+'-'+slugify(city)+(seoCleanUrls()?'':'.html')+'">';
+  const canonical='<link rel="canonical" href="'+(_site&&_site.website||'')+'/'+slugify(page.id)+'-'+slugify(city)+'">';
   html=html.replace(/<\/head>/i, canonical+'\n</head>');
   return html;
 }
@@ -4012,23 +4012,19 @@ function chooseMedia(blockId,fieldKey,url){const el=document.getElementById('f-'
 function seoGlobal(){ if(!_seo.__site) _seo.__site={separator:'|',defaultOg:'',orgType:'LocalBusiness',includeOrg:true,robotsTxt:''}; return _seo.__site; }
 
 // ── CLEAN URLS (drop .html) ───────────────────────────────────────
-// On by default. The server-side rewrite lives in the site's .htaccess; this
-// just makes the CMS emit matching extensionless canonicals, sitemap entries,
-// and internal links. Turn it off for hosts that can't do the rewrite.
-function seoCleanUrls(){ return seoGlobal().cleanUrls !== false; }
+// Always on. The server-side rewrite lives in the site's root config; this just
+// makes the CMS emit matching extensionless canonicals, sitemap entries, and
+// internal links so every page has one clean, canonical address.
 // A page file/path → its public URL path. "index.html" → "" (site root),
-// "about.html" → "about" (clean) or "about.html" (when clean URLs are off),
-// "services/x.html" → "services/x". Leading slashes trimmed.
+// "about.html" → "about", "services/x.html" → "services/x". Leading slashes trimmed.
 function cleanUrlPath(p){
-  let s = String(p||'').replace(/^\/+/,'').replace(/index\.html?$/i,'');
-  if(seoCleanUrls()) s = s.replace(/\.html?$/i,'');
-  return s;
+  return String(p||'').replace(/^\/+/,'').replace(/index\.html?$/i,'').replace(/\.html?$/i,'');
 }
 // Rewrite a single internal link href to its clean form. Leaves anchors,
 // mailto/tel/js, protocol-relative + absolute (scheme) URLs, the CMS/data
 // folders, and non-.html targets untouched. Preserves any ?query/#hash.
 function cleanHref(href){
-  if(!seoCleanUrls() || !href) return href;
+  if(!href) return href;
   if(/^(#|mailto:|tel:|javascript:|data:|\/\/)/i.test(href)) return href;
   if(/^[a-z][a-z0-9+.\-]*:/i.test(href)) return href;          // has a scheme
   const m = href.match(/^([^?#]*)([?#].*)?$/); let path=m[1]||'', rest=m[2]||'';
@@ -4182,8 +4178,6 @@ function renderSEOGlobal(){
     +'<div class="fr"><div class="fg"><label>Organization type</label><select onchange="seoGlobal().orgType=this.value">'+opt(['LocalBusiness','Organization','ProfessionalService','HomeAndConstructionBusiness','GeneralContractor','Store','Restaurant'],g.orgType||'LocalBusiness')+'</select></div>'
     +'<div class="fg"><label>Default social image URL</label><input type="text" value="'+esc(g.defaultOg||'')+'" oninput="seoGlobal().defaultOg=this.value" placeholder="https://… used when a page has no image"></div></div>'
     +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(g.includeOrg!==false?'checked':'')+' onchange="seoGlobal().includeOrg=this.checked"> Include Organization/LocalBusiness schema on every page</label></div>'
-    +'<div class="si-sec"><h2>Clean URLs</h2><div class="desc">Drop the <code>.html</code> from page URLs (e.g. <code>/about</code> instead of <code>/about.html</code>) for cleaner, more SEO-friendly links. Canonicals, the sitemap, and internal links all use the extensionless form, and old <code>.html</code> links redirect to it. Requires the URL rewrite on your server (shipped in the site’s root config) — turn this off for hosts that can’t do the rewrite.</div>'
-    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600"><input type="checkbox" '+(seoCleanUrls()?'checked':'')+' onchange="seoGlobal().cleanUrls=this.checked;saveSEO();toast(this.checked?\'Clean URLs on — run Apply to all pages to rewrite existing pages\':\'Clean URLs off\',\'ok\')"> Remove <code>.html</code> from page URLs</label></div>'
     +'<div class="si-sec"><h2>Sitemap</h2><div class="desc">Generates <code>/sitemap.xml</code> from your pages + posts (noindex excluded) and links it from robots.txt.</div>'
     +'<button class="fd-btn-secondary" onclick="seoGenerateSitemap()">Generate sitemap.xml now</button><div id="seo-sitemap-status" style="font-size:12px;color:var(--muted);margin-top:8px"></div></div>'
     +'<div class="si-sec"><h2>robots.txt</h2><div class="desc">Leave blank for a sensible default (allow all + sitemap link). Saved to <code>/robots.txt</code>.</div>'
@@ -4288,9 +4282,7 @@ function seoInjectIntoHtml(html,pg,base){
   if(schema){ const sc=add('script',{type:'application/ld+json'}); sc.textContent=JSON.stringify(schema); }
   // Rewrite the page's own internal links to the clean (extensionless) form so
   // navigation doesn't bounce through a .html → clean 301 on every click.
-  if(seoCleanUrls()){
-    doc.querySelectorAll('a[href]').forEach(a=>{ const h=a.getAttribute('href'), c=cleanHref(h); if(c!==h) a.setAttribute('href',c); });
-  }
+  doc.querySelectorAll('a[href]').forEach(a=>{ const h=a.getAttribute('href'), c=cleanHref(h); if(c!==h) a.setAttribute('href',c); });
   return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
 }
 async function seoApplyAll(){
