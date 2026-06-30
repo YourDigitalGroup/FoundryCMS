@@ -507,6 +507,19 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-el-actions button.ve-el-del:hover:not(:disabled){border-color:#c0392b;color:#c0392b;background:rgba(192,57,43,.08)}
 .ve-style-divider{display:flex;align-items:center;gap:8px;margin:14px 0 10px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .ve-style-divider::before,.ve-style-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+/* Collapsible accordion sections in the properties panel. */
+.ve-acc{border-top:1px solid var(--border)}
+.ve-acc:first-of-type{border-top:none}
+.ve-acc-head{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;padding:11px 1px 9px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-family:var(--font-sans)}
+.ve-acc-head:hover{color:var(--text)}
+.ve-acc-chev{flex-shrink:0;opacity:.7;transition:transform .18s}
+.ve-acc.collapsed .ve-acc-chev{transform:rotate(-90deg)}
+.ve-acc-body{padding-bottom:8px}
+.ve-acc.collapsed .ve-acc-body{display:none}
+/* Small secondary action buttons (e.g. Background No-fill / Image). */
+.ve-mini-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;background:var(--surface-3);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:border-color .12s,color .12s}
+.ve-mini-btn:hover{border-color:var(--ember);color:var(--ember)}
+.ve-mini-btn-danger:hover{border-color:var(--red);color:var(--red)}
 .ve-align-group{display:flex;gap:3px}
 .ve-swatches-wrap{margin-top:8px}
 .ve-swatches{display:flex;flex-wrap:wrap;gap:5px}
@@ -2126,7 +2139,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.11';
+const CMS_VERSION='1.14.12';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -6265,6 +6278,8 @@ return '(function(){\n'
 +'      isBtn:(t.tagName==="BUTTON")||(typeof t.className==="string"&&/(^|\\s)(btn|button)/i.test(t.className))||(t.getAttribute&&t.getAttribute("role")==="button"),\n'
 +'      styles:{padding:cs.padding,margin:cs.margin,fontSize:cs.fontSize,fontWeight:cs.fontWeight,textAlign:cs.textAlign,borderRadius:cs.borderRadius,lineHeight:cs.lineHeight,color:rgb2hex(cs.color),bgColor:rgb2hex(cs.backgroundColor)},\n'
 +'      sizeVals:(function(){var cm=(t.getAttribute("class")||"").match(/\\bfge-r\\d+\\b/);var cls=cm?cm[0]:null;var dv=(cls&&respData[curDevice]&&respData[curDevice][cls])||{};function pk(prop){if(dv[prop]!==undefined)return dv[prop];if(curDevice==="desktop")return t.style.getPropertyValue(prop)||"";return "";}return {width:pk("width"),maxWidth:pk("max-width"),height:pk("height"),maxHeight:pk("max-height")};}()),\n'
++'      border:(function(){try{var bs=cs.borderTopStyle,bw=cs.borderTopWidth;if(!bs||bs==="none"||bw==="0px")return {};return {width:bw,style:bs,color:rgb2hex(cs.borderTopColor)};}catch(e){return {};}}()),\n'
++'      headerSticky:(function(){try{if(!inH)return false;var hd=(t.closest&&t.closest("header,[role=banner],.header,#header"))||t;var p=window.getComputedStyle(hd).position;return p==="sticky"||p==="fixed";}catch(e){return false;}}()),\n'
 +'      canUp:!!realSibling(t,-1), canDown:!!realSibling(t,1),\n'
 +'      hasParent:!!(par&&par.tagName!=="BODY"&&par.tagName!=="HTML"),\n'
 +'      path:t.tagName.toLowerCase()+(t.id?"#"+t.id:"")+(typeof t.className==="string"&&t.className?" ."+t.className.trim().split(/\\s+/)[0]:"")\n'
@@ -6339,7 +6354,7 @@ return '(function(){\n'
 +'    if(m.field==="src") setImage(el2,m.value);\n'
 +'    if(m.field==="bgImage"){\n'
 +'      ["data-bg","data-background","data-bg-url"].forEach(function(a){el2.removeAttribute(a);});\n'
-+'      el2.style.setProperty("background-image","url("+m.value+")","important");\n'
++'      if(m.value){el2.style.setProperty("background-image","url("+m.value+")","important");}else{el2.style.removeProperty("background-image");}\n'
 +'    }\n'
 +'    if(m.field==="href") el2.setAttribute("href",m.value);\n'
 +'    if(m.field==="target"){if(m.value){el2.setAttribute("target",m.value);el2.setAttribute("rel","noopener noreferrer");}else{el2.removeAttribute("target");el2.removeAttribute("rel");}}\n'
@@ -6362,6 +6377,10 @@ return '(function(){\n'
 +'    if(m.field==="height"){if(m.value)el2.removeAttribute("height");applyStyleProp(el2,"height",m.value);}\n'
 +'    if(m.field==="maxHeight") applyStyleProp(el2,"max-height",m.value);\n'
 +'    if(m.field==="resetSize"){el2.removeAttribute("width");el2.removeAttribute("height");var _rm=(el2.getAttribute("class")||"").match(/\\bfge-r\\d+\\b/);var _rc=_rm?_rm[0]:null;["width","max-width","height","max-height"].forEach(function(p){el2.style.removeProperty(p);if(_rc)["desktop","tablet","mobile"].forEach(function(dv){if(respData[dv][_rc])delete respData[dv][_rc][p];});});regenResp();}\n'
++'    if(m.field==="borderWidth"){if(m.value){applyStyleProp(el2,"border-width",m.value);var _cbs=window.getComputedStyle(el2).borderTopStyle;if(!_cbs||_cbs==="none")applyStyleProp(el2,"border-style","solid");}else{applyStyleProp(el2,"border-width","");}}\n'
++'    if(m.field==="borderStyle") applyStyleProp(el2,"border-style",m.value);\n'
++'    if(m.field==="borderColor") applyStyleProp(el2,"border-color",m.value);\n'
++'    if(m.field==="stickyHeader"){var _hd=(el2.closest&&el2.closest("header,[role=banner],.header,#header"))||el2;if(m.value){_hd.style.setProperty("position","sticky","important");_hd.style.setProperty("top","0","important");if(!_hd.style.zIndex)_hd.style.setProperty("z-index","1000","important");}else{_hd.style.removeProperty("position");_hd.style.removeProperty("top");_hd.style.removeProperty("z-index");}}\n'
 +'    if(m.field==="imgHref"){var ap2=el2.closest("a");if(m.value){if(ap2){ap2.setAttribute("href",m.value);}else{var na=document.createElement("a");na.setAttribute("href",m.value);el2.parentNode.insertBefore(na,el2);na.appendChild(el2);}}else if(ap2){ap2.parentNode.insertBefore(el2,ap2);ap2.parentNode.removeChild(ap2);}}\n'
 +'    if(m.field==="addListItem"){var lst=el2.tagName==="LI"?el2.parentElement:((el2.tagName==="UL"||el2.tagName==="OL")?el2:null);if(lst){var ni=document.createElement("li");ni.textContent=m.value||"New item";if(el2.tagName==="LI"&&el2.parentElement===lst){lst.insertBefore(ni,el2.nextSibling);}else{lst.appendChild(ni);}selectEl(ni);}}\n'
 +'    if(m.field==="removeListItem"){if(el2.tagName==="LI"){el2.remove();sel=null;ov.style.display="none";badge.style.display="none";hbox.style.display="none";veSetPaused(false);window.parent.postMessage({type:"ve-deselect"},"*");}}\n'
@@ -6533,50 +6552,84 @@ function veShowProps(info){
     </div>`;
 
   // Shared spacing/layout controls (any element)
-  const spacingFields = `
-    <div class="ve-style-divider"><span>Spacing &amp; Style</span></div>
-    <div class="ve-style-row">
-      <div class="ve-field" style="margin:0"><label>Padding</label>
-        <input type="text" id="vp-padding" value="${esc(st.padding||'')}" placeholder="e.g. 20px or 20px 10px" onchange="veAutoApply()">
+  const bd = info.border || {};
+  const devSuffix = _veDevice!=='desktop' ? ' ('+(_veDevice==='tablet'?'Tablet':'Mobile')+')' : '';
+
+  // Shared spacing / border / size controls (any element) — collapsible sections.
+  const spacingFields =
+    veAccWrap('Spacing &amp; Style', `
+      <div class="ve-style-row">
+        <div class="ve-field" style="margin:0"><label>Padding</label>
+          <input type="text" id="vp-padding" value="${esc(st.padding||'')}" placeholder="e.g. 20px or 20px 10px" onchange="veAutoApply()">
+        </div>
+        <div class="ve-field" style="margin:0"><label>Margin</label>
+          <input type="text" id="vp-margin" value="${esc(st.margin||'')}" placeholder="e.g. 0 auto" onchange="veAutoApply()">
+        </div>
       </div>
-      <div class="ve-field" style="margin:0"><label>Margin</label>
-        <input type="text" id="vp-margin" value="${esc(st.margin||'')}" placeholder="e.g. 0 auto" onchange="veAutoApply()">
+      <div class="ve-style-row">
+        <div class="ve-field" style="margin:0"><label>Border Radius</label>
+          <input type="text" id="vp-radius" value="${esc(st.borderRadius||'')}" placeholder="e.g. 8px" onchange="veAutoApply()">
+        </div>
+        <div class="ve-field" style="margin:0"><label>Background</label>
+          <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+        </div>
       </div>
-    </div>
-    <div class="ve-style-row">
-      <div class="ve-field" style="margin:0"><label>Border Radius</label>
-        <input type="text" id="vp-radius" value="${esc(st.borderRadius||'')}" placeholder="e.g. 8px" onchange="veAutoApply()">
+      <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">
+        <button type="button" class="ve-mini-btn" onclick="veBgNoFill()" title="Transparent background">No fill</button>
+        <button type="button" class="ve-mini-btn" onclick="veBgImageChoose()"><i class="fa-solid fa-image"></i> Image</button>
+        ${info.bgImage?`<button type="button" class="ve-mini-btn ve-mini-btn-danger" onclick="veBgImageRemove()">Remove image</button>`:''}
       </div>
-      <div class="ve-field" style="margin:0"><label>Background</label>
-        <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+      ${vePaletteRow('vp-bgcolor')}
+    `, 'spacing') +
+    veAccWrap('Border', `
+      <div class="ve-style-row">
+        <div class="ve-field" style="margin:0"><label>Width</label>
+          <input type="text" id="vp-bw" value="${esc(bd.width||'')}" placeholder="e.g. 1px" onchange="veBorderField('borderWidth',this)">
+        </div>
+        <div class="ve-field" style="margin:0"><label>Style</label>
+          <select id="vp-bs" style="width:100%" onchange="veBorderField('borderStyle',this)">
+            ${['','none','solid','dashed','dotted','double'].map(o=>`<option value="${o}"${(bd.style||'')===o?' selected':''}>${o||'—'}</option>`).join('')}
+          </select>
+        </div>
       </div>
-    </div>
-    ${vePaletteRow('vp-bgcolor')}
-    <div class="ve-style-divider"><span>Size${_veDevice!=='desktop'?' ('+(_veDevice==='tablet'?'Tablet':'Mobile')+')':''}</span></div>
-    <div class="ve-style-row">
-      <div class="ve-field" style="margin:0"><label>Width</label>
-        <input type="text" id="vp-width" value="${esc(sv.width||'')}" placeholder="e.g. 300px, 50%, auto" onchange="veSizeField('width',this)">
+      <div class="ve-field" style="margin:8px 0 0"><label>Color</label>
+        <input type="color" id="vp-bc" value="${bd.color||'#000000'}" data-set="0" oninput="this.dataset.set='1'" onchange="veBorderField('borderColor',this)" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
-      <div class="ve-field" style="margin:0"><label>Max width</label>
-        <input type="text" id="vp-maxw" value="${esc(sv.maxWidth||'')}" placeholder="e.g. 100%, 600px" onchange="veSizeField('maxWidth',this)">
+      ${vePaletteRow('vp-bc')}
+    `, 'border') +
+    veAccWrap('Size'+devSuffix, `
+      <div class="ve-style-row">
+        <div class="ve-field" style="margin:0"><label>Width</label>
+          <input type="text" id="vp-width" value="${esc(sv.width||'')}" placeholder="e.g. 300px, 50%, auto" onchange="veSizeField('width',this)">
+        </div>
+        <div class="ve-field" style="margin:0"><label>Max width</label>
+          <input type="text" id="vp-maxw" value="${esc(sv.maxWidth||'')}" placeholder="e.g. 100%, 600px" onchange="veSizeField('maxWidth',this)">
+        </div>
       </div>
-    </div>
-    <div class="ve-style-row">
-      <div class="ve-field" style="margin:0"><label>Height</label>
-        <input type="text" id="vp-height" value="${esc(sv.height||'')}" placeholder="e.g. 200px, auto" onchange="veSizeField('height',this)">
+      <div class="ve-style-row">
+        <div class="ve-field" style="margin:0"><label>Height</label>
+          <input type="text" id="vp-height" value="${esc(sv.height||'')}" placeholder="e.g. 200px, auto" onchange="veSizeField('height',this)">
+        </div>
+        <div class="ve-field" style="margin:0"><label>Max height</label>
+          <input type="text" id="vp-maxh" value="${esc(sv.maxHeight||'')}" placeholder="e.g. 400px" onchange="veSizeField('maxHeight',this)">
+        </div>
       </div>
-      <div class="ve-field" style="margin:0"><label>Max height</label>
-        <input type="text" id="vp-maxh" value="${esc(sv.maxHeight||'')}" placeholder="e.g. 400px" onchange="veSizeField('maxHeight',this)">
-      </div>
-    </div>`;
+    `, 'size');
+
+  // Sticky header — only meaningful for elements inside the header zone.
+  const headerField = info.inHeader ? veAccWrap('Header', `
+      <label style="display:flex;align-items:center;gap:9px;font-size:12px;color:var(--text);cursor:pointer;padding:2px 0">
+        <input type="checkbox" id="vp-sticky"${info.headerSticky?' checked':''} onchange="veStickyHeader(this.checked)" style="width:auto;margin:0;cursor:pointer"> Sticky — stays visible while scrolling
+      </label>
+      <div class="desc" style="font-size:11px;margin-top:5px">Use <strong>Save to All</strong> above to apply this to the header on every page.</div>
+    `, 'header') : '';
 
   // Anchor / ID — any element (esp. sections & columns) can become a #jump target
-  const anchorField = `
-    <div class="ve-style-divider"><span>Anchor / ID</span></div>
-    <div class="ve-field"><label>Anchor ID <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(jump here with #id)</span></label>
-      <input type="text" id="vp-anchor" value="${esc(info.anchorId||'')}" placeholder="e.g. services, contact" oninput="this.value=this.value.replace(/\\s+/g,'-').replace(/[^A-Za-z0-9_\\-]/g,'')" onchange="veAutoApply()">
-      ${info.anchorId?`<div class="desc" style="margin:6px 0 0;font-size:11px">Link to this spot: <code style="background:var(--surface-3);padding:1px 5px;border-radius:4px">#${esc(info.anchorId)}</code></div>`:''}
-    </div>`;
+  const anchorField = veAccWrap('Anchor / ID', `
+      <div class="ve-field" style="margin:0"><label>Anchor ID <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(jump here with #id)</span></label>
+        <input type="text" id="vp-anchor" value="${esc(info.anchorId||'')}" placeholder="e.g. services, contact" oninput="this.value=this.value.replace(/\\s+/g,'-').replace(/[^A-Za-z0-9_\\-]/g,'')" onchange="veAutoApply()">
+        ${info.anchorId?`<div class="desc" style="margin:6px 0 0;font-size:11px">Link to this spot: <code style="background:var(--surface-3);padding:1px 5px;border-radius:4px">#${esc(info.anchorId)}</code></div>`:''}
+      </div>`, 'anchor');
 
   if(isImg){
     const imgSrc = info.src || info.bgImage || '';
@@ -6593,6 +6646,7 @@ function veShowProps(info){
       </div>
       ${(info.imgNatW&&info.imgNatH)?`<div class="desc" style="margin:6px 0 8px">Natural size: ${info.imgNatW}×${info.imgNatH}px. Set Width only (below) and leave Height blank to keep the aspect ratio.</div>`:`<div class="desc" style="margin:6px 0 8px">Tip: set Width only (below) and leave Height blank to keep the aspect ratio.</div>`}
       <button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veResetImgSize()">Reset to natural size</button>
+      ${headerField}
       ${spacingFields}
       ${anchorField}
       <button class="ve-apply-btn" style="margin:8px 0 12px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veOpenImgPicker()">Browse Library</button>
@@ -6614,6 +6668,7 @@ function veShowProps(info){
       <label class="ve-newtab" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);margin:-2px 0 12px;cursor:pointer">
         <input type="checkbox" id="vp-newtab"${info.target==='_blank'?' checked':''} onchange="veAutoApply()" style="width:auto;margin:0;cursor:pointer"> Open in a new tab
       </label>`:''}
+      ${veAccWrap('Text Style', `
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Color</label>
           <input type="color" id="vp-color" value="${st.color||'#000000'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
@@ -6637,16 +6692,18 @@ function veShowProps(info){
           </div>
         </div>
       </div>
+      `, 'text')}
+      ${headerField}
       ${spacingFields}
       ${anchorField}
-      ${info.isFlex?`<div class="ve-style-divider"><span>Layout · Flex${_veDevice!=='desktop'?' ('+(_veDevice==='tablet'?'Tablet':'Mobile')+')':''}</span></div>
-      <div class="ve-field"><label>Direction</label>
+      ${info.isFlex? veAccWrap('Layout · Flex'+devSuffix, `
+      <div class="ve-field" style="margin:0"><label>Direction</label>
         <select id="vp-flexdir" onchange="veApplyFlexDir(this.value)" style="width:100%">
           ${['','row','row-reverse','column','column-reverse'].map(o=>`<option value="${o}"${(info.flexDir||'')===o?' selected':''}>${o||'— (inherit)'}</option>`).join('')}
         </select>
         <div class="desc" style="margin-top:6px;font-size:11px">To reverse columns on phones: switch to <strong>Mobile</strong> in the top toolbar, then pick <code>column-reverse</code>.</div>
-      </div>`:''}
-      ${(isLink||info.isBtn)?`<div class="ve-style-divider"><span>Hover</span></div>
+      </div>`, 'flex') : ''}
+      ${(isLink||info.isBtn)? veAccWrap('Hover', `
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Background</label>
           <input type="color" id="vp-hover-bg" value="${st.bgColor||'#000000'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
@@ -6657,8 +6714,8 @@ function veShowProps(info){
       </div>
       ${vePaletteRow('vp-hover-bg')}
       ${vePaletteRow('vp-hover-color')}
-      <div class="desc" style="font-size:11px;margin-top:4px">Shown when a visitor hovers the ${isLink?'link':'button'}.</div>`:''}
-      ${info.isFaq?`<div class="ve-style-divider"><span>FAQ Item</span></div>
+      <div class="desc" style="font-size:11px;margin-top:4px">Shown when a visitor hovers the ${isLink?'link':'button'}.</div>`, 'hover') : ''}
+      ${info.isFaq? veAccWrap('FAQ Item', `
       <div class="ve-field"><label>Question</label>
         <input type="text" id="vp-faq-q" value="${esc(info.faqQuestion||'')}" placeholder="Question…" onchange="veApplyFaq()">
       </div>
@@ -6669,13 +6726,13 @@ function veShowProps(info){
       <div class="ve-btn-pair">
         <button class="ve-apply-btn" style="margin:0;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veAddFaq()">+ Add FAQ</button>
         <button class="ve-apply-btn" style="margin:0;background:#fce8e6;color:#b3261e;border:1px solid #f3c0bb" onclick="veRemoveFaq()">Remove FAQ</button>
-      </div>`:''}
-      ${info.isLi?`<div class="ve-style-divider"><span>List Item</span></div>
+      </div>`, 'faq') : ''}
+      ${info.isLi? veAccWrap('List Item', `
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${info.liCount} item${info.liCount===1?'':'s'} in this list</div>
       <div class="ve-btn-pair">
         <button class="ve-apply-btn" style="margin:0;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veAddListItem()">+ Add below</button>
         <button class="ve-apply-btn" style="margin:0;background:#fce8e6;color:#b3261e;border:1px solid #f3c0bb" onclick="veRemoveListItem()">Remove item</button>
-      </div>`:''}`;
+      </div>`, 'list') : ''}`;
   }
 
   // Stash original styles so Apply only sends changed values
@@ -6687,6 +6744,69 @@ function veShowProps(info){
 
 let _veOrigStyles = {};
 let _veAlignSel = null;
+
+// ── ACCORDION SECTIONS ───────────────────────────────────────────
+// Wrap a titled group of controls in a collapsible section. `key` (defaults to
+// the title) is the stable id used to persist open/closed state, so a device
+// suffix in the title doesn't reset the user's choice.
+function veAccWrap(title, inner, key){
+  key = key || title;
+  const collapsed = veAccState(key);
+  return '<div class="ve-acc'+(collapsed?' collapsed':'')+'" data-acc="'+esc(key)+'">'
+    + '<button type="button" class="ve-acc-head" onclick="veAccToggle(this)"><span>'+title+'</span>'
+    + '<svg class="ve-acc-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
+    + '</button><div class="ve-acc-body">'+inner+'</div></div>';
+}
+function veAccState(key){ try{ return JSON.parse(localStorage.getItem('fourge_acc')||'{}')[key]===true; }catch(e){ return false; } }
+function veAccToggle(btn){
+  const acc=btn.closest('.ve-acc'); if(!acc) return;
+  const collapsed=acc.classList.toggle('collapsed');
+  const key=acc.getAttribute('data-acc');
+  try{ const m=JSON.parse(localStorage.getItem('fourge_acc')||'{}'); m[key]=collapsed; localStorage.setItem('fourge_acc',JSON.stringify(m)); }catch(e){}
+}
+
+// ── BORDER ───────────────────────────────────────────────────────
+// Width / style / color route through the per-device cascade (ve-update →
+// applyStyleProp), same as the Size inputs.
+function veBorderField(field, el){
+  if(!_veCurSel) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  let v = (el&&el.value!==undefined) ? el.value : el;
+  if(field==='borderWidth') v=veNormalizeSize(v);
+  ifrm.contentWindow.postMessage({type:'ve-update', fid:_veCurSel.fid, field, value:v},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+}
+
+// ── BACKGROUND no-fill / image ───────────────────────────────────
+function veBgNoFill(){
+  if(!_veCurSel) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-update', fid:_veCurSel.fid, field:'bgColor', value:'transparent'},'*');
+  const bg=document.getElementById('vp-bgcolor'); if(bg) bg.dataset.dirty='0';
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Background set to no fill','ok');
+}
+function veBgImageChoose(){ veOpenImgPicker(true); }   // true = force background-image mode
+function veBgImageRemove(){
+  if(!_veCurSel) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-update', fid:_veCurSel.fid, field:'bgImage', value:''},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Background image removed','ok');
+}
+
+// ── STICKY HEADER ────────────────────────────────────────────────
+function veStickyHeader(on){
+  if(!_veCurSel) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-update', fid:_veCurSel.fid, field:'stickyHeader', value:on?'1':''},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast(on?'Header is now sticky — use Save to All to apply site-wide':'Sticky header turned off','ok');
+}
 
 function veSetAlign(btn){
   document.querySelectorAll('.ve-align-btn').forEach(b=>b.classList.remove('on'));
@@ -7682,11 +7802,13 @@ function veImgUrlPreview(url){
   if(p && url){ p.src=url; p.style.display='block'; }
 }
 
-async function veOpenImgPicker(){
+async function veOpenImgPicker(forceBg){
   // Lock the picker to the element selected RIGHT NOW — applying later
   // targets this element even if the selection changes in between
   _imgPickerFid = _veCurSel?.fid || null;
-  _imgPickerIsBg = !!(_veCurSel && _veCurSel.bgImage && !_veCurSel.src);
+  // forceBg lets the Background "Image" button set a background-image on any
+  // element (not just ones that already use one).
+  _imgPickerIsBg = forceBg===true || !!(_veCurSel && _veCurSel.bgImage && !_veCurSel.src);
   // Ensure media is loaded
   if(!_media || !_media.length){ await veLoadMediaLib(); }
   veRenderImgPicker();
