@@ -529,6 +529,9 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-swatch-none{position:relative;overflow:hidden;background:rgba(255,255,255,.6);border-color:var(--border-2)}
 html[data-theme="dark"] .ve-swatch-none{background:rgba(255,255,255,.14)}
 .ve-swatch-none::after{content:'';position:absolute;left:-4px;right:-4px;top:calc(50% - 1px);height:2px;background:#e0322a;transform:rotate(-45deg)}
+/* Icon library picker tiles. */
+.ip-item{display:flex;align-items:center;justify-content:center;height:48px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:20px;cursor:pointer;transition:all .12s}
+.ip-item:hover{border-color:var(--ember);color:var(--ember);background:var(--ember-soft)}
 .ve-align-btn{flex:1;display:flex;align-items:center;justify-content:center;padding:7px 4px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;transition:all .12s}
 .ve-align-btn:hover{border-color:var(--ember);color:var(--ember)}
 .ve-align-btn.on{background:var(--ember-soft);color:var(--ember);border-color:var(--ember)}
@@ -595,8 +598,8 @@ html[data-theme="dark"] .ve-swatch-none{background:rgba(255,255,255,.14)}
 .ve-ai-prompt{width:100%;min-height:72px;resize:vertical;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.5;box-sizing:border-box;margin-bottom:8px}
 .ve-ai-prompt:focus{outline:none;border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,83,30,.1)}
 .ve-ai-prompt::placeholder{color:var(--muted);font-size:12px;line-height:1.5}
-.ve-ai-btn{margin-top:0!important;background:var(--text)!important}
-.ve-ai-btn:hover{background:var(--ember-deep)!important}
+.ve-ai-btn{margin-top:0!important;background:var(--text)!important;color:var(--bg)!important}
+.ve-ai-btn:hover{background:var(--ember-deep)!important;color:#fff!important}
 .ve-ai-log{display:flex;flex-direction:column;gap:8px;margin:0;padding:12px;max-height:260px;overflow-y:auto}
 .ve-ai-msg{font-size:12.5px;line-height:1.5;padding:8px 11px;border-radius:12px;max-width:90%;word-wrap:break-word}
 .ve-ai-msg span{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.5;margin-right:6px}
@@ -2071,6 +2074,15 @@ textarea.fb-input{resize:vertical}
     </div>
   </div>
 </div>
+<div class="mw" id="m-iconpicker" style="z-index:900">
+  <div class="modal" style="width:560px;max-height:82vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Add an icon</h2><button class="ib" onclick="closeM('m-iconpicker')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" style="display:flex;flex-direction:column;gap:10px;min-height:0">
+      <input type="text" id="ip-search" placeholder="Search icons — e.g. phone, cart, star…" oninput="iconPickerRender()" autocomplete="off" style="width:100%">
+      <div id="ip-list" style="overflow-y:auto;flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:6px;min-height:280px"></div>
+    </div>
+  </div>
+</div>
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -2133,7 +2145,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.15';
+const CMS_VERSION='1.14.18';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -3606,7 +3618,7 @@ function openPostImgPicker(cb){
       +'<div class="ve-img-picker-head"><h3>Media Library</h3>'
       +'<button class="ve-img-picker-close" onclick="document.getElementById(\'post-img-picker\').style.display=\'none\'">&times;</button></div>'
       +'<div class="ve-img-picker-toolbar"><input class="ve-img-picker-search" id="pip-search" placeholder="Filter images…" oninput="renderPostImgPicker(this.value)">'
-      +'<label class="ve-img-picker-upload-btn"><input type="file" accept="image/*" style="display:none" onchange="postImgPickerUpload(this)"> Upload</label></div>'
+      +'<label class="ve-img-picker-upload-btn"><input type="file" accept="image/*,.svg" style="display:none" onchange="postImgPickerUpload(this)"> Upload</label></div>'
       +'<div id="pip-grid" style="flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px"></div>'
       +'</div>';
     document.body.appendChild(modal);
@@ -6178,7 +6190,7 @@ return '(function(){\n'
 +'    hbox.appendChild(h);handles[dir]=h;\n'
 +'  });\n'
 // Index all selectable elements
-+'  var idx=0, sel=null, hov=null, selResizable=false, resizing=null, resizeGuard=false;\n'
++'  var idx=0, sel=null, hov=null, selResizable=false, resizing=null, resizeGuard=false, editing=null;\n'
 +'  var curDevice="desktop", respData={desktop:{},tablet:{},mobile:{}}, fgeSeq=0, hoverData={};\n'
 +'  var SKIP={"HTML":1,"BODY":1,"SCRIPT":1,"STYLE":1,"NOSCRIPT":1,"META":1,"LINK":1,"HEAD":1,"BR":1,"HR":1};\n'
 +'  var LEAF={"H1":1,"H2":1,"H3":1,"H4":1,"H5":1,"H6":1,"P":1,"LI":1,"TD":1,"TH":1,"A":1,"BUTTON":1,"LABEL":1,"BLOCKQUOTE":1,"IMG":1,"SPAN":1,"STRONG":1,"EM":1,"B":1,"I":1,"FIGCAPTION":1,"CAPTION":1,"DT":1,"DD":1,"TIME":1,"MARK":1,"SMALL":1,"INPUT":1,"TEXTAREA":1,"SELECT":1};\n'
@@ -6420,7 +6432,7 @@ return '(function(){\n'
 +'  }\n'
 // Hover
 +'  document.addEventListener("mousemove",function(e){\n'
-+'    if(resizing) return;\n'
++'    if(resizing||editing) return;\n'
 +'    var t=best(e.target); if(!t) return;\n'
 +'    hov=t; if(t!==sel) paintOverlay(t,false);\n'
 +'  },true);\n'
@@ -6428,6 +6440,8 @@ return '(function(){\n'
 // Click
 +'  document.addEventListener("click",function(e){\n'
 +'    if(resizeGuard){ e.preventDefault(); e.stopPropagation(); return; }\n'
++'    var fb=document.getElementById("__fe_fmt__"); if(fb&&fb.contains(e.target)) return;\n'
++'    if(editing){ if(editing.contains(e.target)) return; exitInlineEdit(); }\n'
 +'    var t=best(e.target); if(!t) return;\n'
 +'    e.preventDefault();e.stopPropagation();\n'
 +'    selectEl(t);\n'
@@ -6473,6 +6487,19 @@ return '(function(){\n'
 +'        el.remove(); sel=null;\n'
 +'        ov.style.display="none"; badge.style.display="none"; hbox.style.display="none";\n'
 +'        veSetPaused(false);window.parent.postMessage({type:"ve-deselect"},"*");\n'
++'      }else if(m.action==="insertIcon"){\n'
+// Make sure the page actually loads Font Awesome so the icon renders here in the
+// editor AND on the published page (many client pages don\'t include it). The
+// link is saved with the page (veSerializeClean keeps <link> tags).
++'        var faOk=false, lks=document.getElementsByTagName("link");\n'
++'        for(var li=0;li<lks.length;li++){var lh=lks[li].href||"";if(lks[li].hasAttribute("data-fourge-fa")||lh.indexOf("font-awesome")>=0||lh.indexOf("fontawesome")>=0){faOk=true;break;}}\n'
++'        if(!faOk){var fl=document.createElement("link");fl.rel="stylesheet";fl.setAttribute("data-fourge-fa","");fl.href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css";(document.head||document.documentElement).appendChild(fl);}\n'
++'        var ic=document.createElement("i");\n'
++'        ic.className=String(m.iconClass||"fa-solid fa-star").replace(/[^a-z0-9 _-]/gi,"");\n'
++'        ic.style.fontSize="1.5em"; ic.style.display="inline-block"; ic.style.lineHeight="1";\n'
++'        var NOKIDS={IMG:1,BR:1,HR:1,INPUT:1,VIDEO:1,PICTURE:1,IFRAME:1,EMBED:1};\n'
++'        if(NOKIDS[el.tagName]){ el.parentElement.insertBefore(ic, el.nextSibling); } else { el.appendChild(ic); }\n'
++'        selectEl(ic);\n'
 +'      }\n'
 +'      return;\n'
 +'    }\n'
@@ -6525,6 +6552,48 @@ return '(function(){\n'
 // Reposition on scroll/resize
 +'  document.addEventListener("scroll",function(){if(sel){paintOverlay(sel,true);refreshHandles();}},true);\n'
 +'  window.addEventListener("resize",function(){if(sel){paintOverlay(sel,true);refreshHandles();}});\n'
+// ── INLINE TEXT FORMATTING (WYSIWYG) — double-click text to edit; a floating
+// bar appears on selection for bold/italic/underline, font, size, color.
++'  var Q=String.fromCharCode(39), fmtSaved=null;\n'
++'  var FMT_FONTS=["","Inter","Poppins","Montserrat","Roboto","Open Sans","Lato","Playfair Display","Merriweather","Oswald","Raleway","Nunito","Source Sans 3","Georgia","Arial","Times New Roman","Courier New"];\n'
++'  var FMT_WEBSAFE={Georgia:1,Arial:1,"Times New Roman":1,"Courier New":1};\n'
++'  var FMT_SIZES=["","12px","14px","16px","18px","20px","24px","28px","32px","40px","48px","64px"];\n'
++'  var fmtBar=document.createElement("div"); fmtBar.id="__fe_fmt__"; fmtBar.setAttribute("data-fourge-ui","");\n'
++'  fmtBar.style.cssText="position:fixed;z-index:2147483647;display:none;gap:1px;align-items:center;background:#1e1b15;border:1px solid #433c30;border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-family:Inter,sans-serif";\n'
++'  document.body.appendChild(fmtBar);\n'
++'  function fmtSaveRange(){ var s=window.getSelection(); if(s&&s.rangeCount){ var r=s.getRangeAt(0); if(!r.collapsed&&editing&&editing.contains(r.commonAncestorContainer)) fmtSaved=r.cloneRange(); } }\n'
++'  function fmtRestore(){ if(!fmtSaved) return false; var s=window.getSelection(); s.removeAllRanges(); s.addRange(fmtSaved); return true; }\n'
++'  function fmtDirty(){ window.parent.postMessage({type:"ve-inline-dirty"},"*"); }\n'
++'  function fmtLoadFont(f){ if(!f||FMT_WEBSAFE[f]) return; var id="fge-font-"+f.replace(/[^a-z0-9]/gi,""); if(document.getElementById(id)) return; var l=document.createElement("link"); l.id=id; l.rel="stylesheet"; l.setAttribute("data-fourge-font",""); l.href="https://fonts.googleapis.com/css2?family="+encodeURIComponent(f).replace(/%20/g,"+")+":wght@300;400;500;600;700;800&display=swap"; (document.head||document.documentElement).appendChild(l); }\n'
++'  function fmtCmd(cmd){ if(!editing) return; try{document.execCommand("styleWithCSS",false,true);}catch(e){} try{document.execCommand(cmd,false,null);}catch(e){} try{editing.focus();}catch(e){} fmtDirty(); }\n'
++'  function fmtWrap(prop,val){ if(!editing||!fmtRestore()) return; var s=window.getSelection(); if(!s.rangeCount) return; var r=s.getRangeAt(0); if(r.collapsed) return; var sp=document.createElement("span"); sp.style[prop]=val; try{ r.surroundContents(sp); }catch(e){ try{ sp.appendChild(r.extractContents()); r.insertNode(sp); }catch(e2){ return; } } s.removeAllRanges(); var nr=document.createRange(); nr.selectNodeContents(sp); s.addRange(nr); fmtSaved=nr.cloneRange(); fmtDirty(); }\n'
++'  function fmtMkBtn(txt,title,fn,style){ var b=document.createElement("button"); b.type="button"; b.title=title; b.innerHTML=txt; b.style.cssText="min-width:28px;height:28px;padding:0 7px;background:transparent;border:none;border-radius:5px;color:#f4f0e6;font-size:13px;cursor:pointer;"+(style||""); b.addEventListener("mousedown",function(e){e.preventDefault();}); b.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();fn();}); b.addEventListener("mouseover",function(){b.style.background="#332e23";}); b.addEventListener("mouseout",function(){b.style.background="transparent";}); return b; }\n'
++'  fmtBar.appendChild(fmtMkBtn("B","Bold",function(){fmtCmd("bold");},"font-weight:800"));\n'
++'  fmtBar.appendChild(fmtMkBtn("I","Italic",function(){fmtCmd("italic");},"font-style:italic"));\n'
++'  fmtBar.appendChild(fmtMkBtn("U","Underline",function(){fmtCmd("underline");},"text-decoration:underline"));\n'
++'  (function(){var sp=document.createElement("span");sp.style.cssText="width:1px;height:18px;background:#433c30;margin:0 3px";fmtBar.appendChild(sp);}());\n'
++'  var fontSel=document.createElement("select"); fontSel.title="Font"; fontSel.style.cssText="height:28px;max-width:112px;background:#1e1b15;color:#f4f0e6;border:1px solid #433c30;border-radius:5px;font-size:12px;cursor:pointer";\n'
++'  FMT_FONTS.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f||"Font"; fontSel.appendChild(o); });\n'
++'  fontSel.addEventListener("mousedown",function(){ fmtSaveRange(); });\n'
++'  fontSel.addEventListener("change",function(){ var f=fontSel.value; if(f){ fmtLoadFont(f); fmtWrap("fontFamily",(FMT_WEBSAFE[f]?"":Q+f+Q+",")+"sans-serif"); } fontSel.selectedIndex=0; });\n'
++'  fmtBar.appendChild(fontSel);\n'
++'  var sizeSel=document.createElement("select"); sizeSel.title="Text size"; sizeSel.style.cssText="height:28px;background:#1e1b15;color:#f4f0e6;border:1px solid #433c30;border-radius:5px;font-size:12px;cursor:pointer;margin-left:2px";\n'
++'  FMT_SIZES.forEach(function(sz){ var o=document.createElement("option"); o.value=sz; o.textContent=sz||"Size"; sizeSel.appendChild(o); });\n'
++'  sizeSel.addEventListener("mousedown",function(){ fmtSaveRange(); });\n'
++'  sizeSel.addEventListener("change",function(){ if(sizeSel.value) fmtWrap("fontSize",sizeSel.value); sizeSel.selectedIndex=0; });\n'
++'  fmtBar.appendChild(sizeSel);\n'
++'  var colorIn=document.createElement("input"); colorIn.type="color"; colorIn.title="Text color"; colorIn.value="#000000"; colorIn.style.cssText="width:30px;height:28px;padding:2px;background:transparent;border:none;border-radius:5px;cursor:pointer;margin-left:2px";\n'
++'  colorIn.addEventListener("mousedown",function(){ fmtSaveRange(); });\n'
++'  colorIn.addEventListener("input",function(){ fmtWrap("color",colorIn.value); });\n'
++'  fmtBar.appendChild(colorIn);\n'
++'  fmtBar.appendChild(fmtMkBtn("&#10005;","Remove formatting",function(){ if(!editing||!fmtRestore()) return; try{document.execCommand("removeFormat",false,null);}catch(e){} try{editing.focus();}catch(e){} fmtDirty(); },"font-size:11px;color:#b5ae9c"));\n'
++'  function isTextEditable(el){ if(!el) return false; var t=el.tagName; if({IMG:1,PICTURE:1,VIDEO:1,BR:1,HR:1,INPUT:1,SELECT:1,TEXTAREA:1,SVG:1}[t]) return false; if(t==="I"&&/fa-/.test(el.className||"")) return false; return (el.textContent||"").replace(/\\s+/g,"").length>0; }\n'
++'  function enterInlineEdit(el){ if(editing===el) return; if(editing) exitInlineEdit(); pushHistory(); editing=el; el.setAttribute("data-fe-editing","1"); el.contentEditable="true"; el.style.outline="2px solid #C8531E"; el.style.outlineOffset="2px"; ov.style.display="none"; badge.style.display="none"; hbox.style.display="none"; try{el.focus();}catch(e){} }\n'
++'  function exitInlineEdit(){ if(!editing) return; var el=editing; editing=null; fmtBar.style.display="none"; fmtSaved=null; try{ el.removeAttribute("contenteditable"); el.removeAttribute("data-fe-editing"); el.style.outline=""; el.style.outlineOffset=""; }catch(e){} fmtDirty(); }\n'
++'  function fmtPosition(){ var s=window.getSelection(); if(!editing||!s||!s.rangeCount){ fmtBar.style.display="none"; return; } var r=s.getRangeAt(0); if(r.collapsed||!editing.contains(r.commonAncestorContainer)){ fmtBar.style.display="none"; return; } var rect=r.getBoundingClientRect(); if(!rect||(!rect.width&&!rect.height)){ fmtBar.style.display="none"; return; } fmtBar.style.display="flex"; var bw=fmtBar.offsetWidth||300, bh=fmtBar.offsetHeight||36; var top=rect.top-bh-8; if(top<4) top=rect.bottom+8; var left=rect.left+(rect.width/2)-(bw/2); if(left<4) left=4; var mx=(window.innerWidth||document.documentElement.clientWidth)-bw-4; if(left>mx) left=mx; fmtBar.style.top=top+"px"; fmtBar.style.left=left+"px"; }\n'
++'  document.addEventListener("selectionchange",function(){ if(!editing) return; fmtSaveRange(); fmtPosition(); });\n'
++'  document.addEventListener("dblclick",function(e){ var t=best(e.target); if(t&&isTextEditable(t)){ e.preventDefault(); e.stopPropagation(); if(sel!==t) selectEl(t); enterInlineEdit(t); } },true);\n'
++'  document.addEventListener("keydown",function(e){ if(editing&&e.key==="Escape"){ e.preventDefault(); exitInlineEdit(); } },true);\n'
 +'  initResp(); initHover();\n'
 +'  window.parent.postMessage({type:"ve-ready"},"*");\n'
 +'  notifyHistory();\n'
@@ -6592,6 +6661,7 @@ window.addEventListener('message',function(e){
   }
   if(e.data.type==='ve-select'&&e.data.data) veShowProps(e.data.data);
   if(e.data.type==='ve-deselect') veDeselect();
+  if(e.data.type==='ve-inline-dirty') document.getElementById('ve-unsaved')?.classList.add('on');
   if(e.data.type==='ve-history'){
     const u=document.getElementById('ve-undo-btn'), r=document.getElementById('ve-redo-btn');
     if(u) u.disabled=!e.data.canUndo;
@@ -6868,7 +6938,8 @@ function veShowProps(info){
 
   // Stash original styles so Apply only sends changed values
   _veOrigStyles = st;
-  body.innerHTML = devBanner + templateBanner + actionsBar + veAiPanel() + fields;
+  const iconBtn = '<button class="ve-apply-btn" style="margin:10px 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openIconPicker()"><i class="fa-solid fa-icons"></i> Insert an icon</button>';
+  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
   if(_veAiChat && _veAiChat.sel && _veAiChat.sel.fid===info.fid && _veAiChat.log && _veAiChat.log.length){ veAiRenderLog(); }
 }
@@ -7022,6 +7093,50 @@ function veElemAction(action){
   if(!ifrm) return;
   ifrm.contentWindow.postMessage({type:'ve-action',action,fid:_veCurSel.fid},'*');
   if(action!=='selectParent') document.getElementById('ve-unsaved')?.classList.add('on');
+}
+
+// ── ICON LIBRARY (Font Awesome, already loaded) ───────────────────
+// A curated set of common icons. Picking one inserts a <i class="fa-…"> into
+// the selected element (or right after it), which is then fully editable
+// (color via the color control, size via font-size). Brands cover socials.
+const FA_ICONS=[
+  'fa-solid fa-phone','fa-solid fa-mobile-screen','fa-solid fa-envelope','fa-solid fa-location-dot','fa-solid fa-map','fa-solid fa-clock','fa-solid fa-calendar','fa-solid fa-calendar-check','fa-solid fa-paper-plane','fa-solid fa-headset','fa-solid fa-comment','fa-solid fa-comments','fa-solid fa-message',
+  'fa-solid fa-check','fa-solid fa-circle-check','fa-solid fa-xmark','fa-solid fa-circle-xmark','fa-solid fa-star','fa-regular fa-star','fa-solid fa-heart','fa-regular fa-heart','fa-solid fa-thumbs-up','fa-solid fa-circle-info','fa-solid fa-triangle-exclamation','fa-solid fa-circle-question','fa-solid fa-plus','fa-solid fa-minus',
+  'fa-solid fa-arrow-right','fa-solid fa-arrow-left','fa-solid fa-arrow-up','fa-solid fa-arrow-down','fa-solid fa-chevron-right','fa-solid fa-chevron-left','fa-solid fa-chevron-up','fa-solid fa-chevron-down','fa-solid fa-angles-right','fa-solid fa-bars','fa-solid fa-ellipsis','fa-solid fa-magnifying-glass',
+  'fa-solid fa-house','fa-solid fa-user','fa-solid fa-users','fa-solid fa-user-tie','fa-solid fa-people-group','fa-solid fa-building','fa-solid fa-briefcase','fa-solid fa-handshake','fa-solid fa-award','fa-solid fa-certificate','fa-solid fa-trophy','fa-solid fa-medal','fa-solid fa-shield','fa-solid fa-shield-halved','fa-solid fa-lock','fa-solid fa-unlock',
+  'fa-solid fa-cart-shopping','fa-solid fa-bag-shopping','fa-solid fa-credit-card','fa-solid fa-tag','fa-solid fa-tags','fa-solid fa-gift','fa-solid fa-dollar-sign','fa-solid fa-percent','fa-solid fa-receipt','fa-solid fa-wallet',
+  'fa-solid fa-truck','fa-solid fa-truck-fast','fa-solid fa-box','fa-solid fa-boxes-stacked','fa-solid fa-warehouse','fa-solid fa-clipboard-check','fa-solid fa-list-check','fa-solid fa-file-lines','fa-solid fa-folder','fa-solid fa-download','fa-solid fa-upload','fa-solid fa-print','fa-solid fa-share-nodes','fa-solid fa-link',
+  'fa-solid fa-play','fa-solid fa-pause','fa-solid fa-circle-play','fa-solid fa-image','fa-solid fa-images','fa-solid fa-camera','fa-solid fa-video','fa-solid fa-music','fa-solid fa-microphone','fa-solid fa-volume-high',
+  'fa-solid fa-wrench','fa-solid fa-screwdriver-wrench','fa-solid fa-hammer','fa-solid fa-gear','fa-solid fa-gears','fa-solid fa-paintbrush','fa-solid fa-paint-roller','fa-solid fa-bolt','fa-solid fa-plug','fa-solid fa-fire','fa-solid fa-droplet','fa-solid fa-temperature-half','fa-solid fa-snowflake','fa-solid fa-wind','fa-solid fa-sun','fa-solid fa-moon','fa-solid fa-cloud',
+  'fa-solid fa-leaf','fa-solid fa-seedling','fa-solid fa-tree','fa-solid fa-paw','fa-solid fa-heart-pulse','fa-solid fa-stethoscope','fa-solid fa-tooth','fa-solid fa-pills','fa-solid fa-notes-medical','fa-solid fa-utensils','fa-solid fa-mug-hot','fa-solid fa-cake-candles','fa-solid fa-graduation-cap','fa-solid fa-book','fa-solid fa-pen','fa-solid fa-pen-to-square',
+  'fa-solid fa-car','fa-solid fa-plane','fa-solid fa-key','fa-solid fa-globe','fa-solid fa-earth-americas','fa-solid fa-compass','fa-solid fa-thumbtack','fa-solid fa-flag','fa-solid fa-bell','fa-solid fa-quote-left','fa-solid fa-quote-right','fa-solid fa-scissors','fa-solid fa-ruler','fa-solid fa-lightbulb','fa-solid fa-rocket','fa-solid fa-chart-line','fa-solid fa-chart-pie','fa-solid fa-eye',
+  'fa-brands fa-facebook','fa-brands fa-facebook-f','fa-brands fa-instagram','fa-brands fa-x-twitter','fa-brands fa-linkedin','fa-brands fa-linkedin-in','fa-brands fa-youtube','fa-brands fa-tiktok','fa-brands fa-whatsapp','fa-brands fa-pinterest','fa-brands fa-yelp','fa-brands fa-google','fa-brands fa-facebook-messenger','fa-brands fa-snapchat','fa-brands fa-threads'
+];
+let _iconTargetFid=null;
+function openIconPicker(){
+  _iconTargetFid=_veCurSel?.fid||null;
+  if(!_iconTargetFid){ toast('Click an element on the page first, then add an icon','err'); return; }
+  openM('m-iconpicker');
+  const s=document.getElementById('ip-search'); if(s){ s.value=''; setTimeout(()=>s.focus(),50); }
+  iconPickerRender();
+}
+function iconPickerRender(){
+  const list=document.getElementById('ip-list'); if(!list) return;
+  const q=(document.getElementById('ip-search')?.value||'').trim().toLowerCase();
+  const nameOf=c=>c.replace(/fa-(solid|regular|brands)\s+fa-/,'').replace(/-/g,' ');
+  const items=FA_ICONS.filter(c=>!q||nameOf(c).includes(q)||c.includes(q));
+  list.innerHTML=items.map(c=>'<button type="button" class="ip-item" title="'+esc(nameOf(c))+'" onclick="veInsertIcon(\''+c+'\')"><i class="'+c+'"></i></button>').join('')
+    || '<div style="color:var(--muted);font-size:12px;padding:12px;grid-column:1/-1">No icons match “'+esc(q)+'”.</div>';
+}
+function veInsertIcon(iconClass){
+  const fid=_iconTargetFid||_veCurSel?.fid;
+  if(!fid){ toast('Click an element first','err'); return; }
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertIcon',fid,iconClass},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  closeM('m-iconpicker');
+  toast('Icon added — click it to change its color or size','ok');
 }
 
 function veUndo(){
@@ -7335,10 +7450,12 @@ function veSerializeClean(){
   const doc=iframe&&iframe.contentDocument;
   if(!doc||!doc.documentElement) return null;
   const root=doc.documentElement.cloneNode(true);
-  ['__fe_done__','__fe_ov__','__fe_badge__','__fe_handles__','__foundry_bridge__','__ve_pause_style__'].forEach(id=>{ root.querySelector('#'+id)?.remove(); });
+  ['__fe_done__','__fe_ov__','__fe_badge__','__fe_handles__','__foundry_bridge__','__ve_pause_style__','__fe_fmt__'].forEach(id=>{ root.querySelector('#'+id)?.remove(); });
   root.querySelectorAll('style').forEach(s=>{ if(s.textContent.includes('__fe_')||s.dataset.foundry) s.remove(); });
   root.classList.remove('__ve_paused');
   root.querySelectorAll('[style*="2147483"]').forEach(el=>{ el.style.removeProperty('outline'); el.style.removeProperty('z-index'); });
+  // If a page is saved mid inline-edit, strip the editing state (contenteditable + the orange outline).
+  root.querySelectorAll('[data-fe-editing]').forEach(el=>{ el.removeAttribute('data-fe-editing'); el.removeAttribute('contenteditable'); el.style.removeProperty('outline'); el.style.removeProperty('outline-offset'); });
   root.querySelectorAll('[data-fid],[data-feid]').forEach(el=>{ el.removeAttribute('data-fid'); el.removeAttribute('data-feid'); });
   root.querySelectorAll('.fe-sel,.fe-hover').forEach(el=>{ el.classList.remove('fe-sel','fe-hover'); });
   return ('<!DOCTYPE html>\n'+root.outerHTML).replace(/<script type="text\/foundry-ga"/gi,'<script');
