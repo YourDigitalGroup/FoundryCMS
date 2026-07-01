@@ -1514,10 +1514,6 @@ textarea.fb-input{resize:vertical}
                   Upload
                   <input type="file" multiple accept="image/*,video/*,.pdf,.svg" onchange="uploadMedia(this.files)" style="display:none">
                 </label>
-                <button class="fd-btn-secondary" onclick="applyAltToPages()" title="Write each image's saved alt text onto the matching images across all your pages" style="display:flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-                  Push alt to pages
-                </button>
                 <button class="fd-btn-primary" onclick="_media=[];initMedia()" style="display:flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
                   Scan Server
@@ -1970,6 +1966,12 @@ textarea.fb-input{resize:vertical}
     <div class="mb"><div class="mg" id="media-pick-grid" style="max-height:400px;overflow-y:auto"></div></div>
   </div>
 </div>
+<div class="mw" id="m-media-viewer">
+  <div class="modal" style="width:960px;max-width:96vw;height:88vh;max-height:88vh;display:flex;flex-direction:column">
+    <div class="mh"><h2 id="mv-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80%">Image</h2><button class="ib" onclick="closeM('m-media-viewer')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" id="mv-body" style="flex:1;min-height:0;display:flex;padding:0;overflow:hidden"></div>
+  </div>
+</div>
 <div class="mw" id="m-adduser">
   <div class="modal" style="width:480px">
     <div class="mh"><h2>Add User</h2><button class="ib" onclick="closeM('m-adduser')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -2149,7 +2151,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.24';
+const CMS_VERSION='1.14.25';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -4061,35 +4063,88 @@ async function initMedia(){
   renderMediaGrid();
 }
 function selMedia(i){
-  _media.forEach(m=>m.selected=false);
   const m=_media[i]; if(!m) return;
-  m.selected=true;
-  const md=document.getElementById('media-detail'); if(!md) return;
-  md.style.display='flex';
+  _mediaViewList=mediaFilteredItems();
+  let pos=_mediaViewList.indexOf(m);
+  if(pos<0){ _mediaViewList=[m]; pos=0; }
+  _mediaViewPos=pos;
+  openM('m-media-viewer');
+  renderMediaViewer();
+}
+// The files currently shown in the grid (respects the type filter + search) so
+// the viewer's prev/next arrows walk the same order the user sees.
+function mediaFilteredItems(){
+  let items=_media||[];
+  if(_mediaFilter==='image') items=items.filter(m=>/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name));
+  else if(_mediaFilter==='video') items=items.filter(m=>/\.(mp4|webm|mov|avi|mkv)$/i.test(m.name));
+  else if(_mediaFilter==='doc') items=items.filter(m=>/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv)$/i.test(m.name));
+  if(_mediaSearch) items=items.filter(m=>m.name.toLowerCase().includes(_mediaSearch));
+  return items;
+}
+// Full-screen viewer: large preview, roomy alt box, prev/next. Saving — or
+// moving to another photo — writes the alt to media.json AND onto the pages.
+function renderMediaViewer(){
+  const list=_mediaViewList||[];
+  const m=list[_mediaViewPos];
+  const body=document.getElementById('mv-body');
+  if(!m || !body){ closeM('m-media-viewer'); return; }
+  _mediaViewCurIdx=_media.indexOf(m);
   const isImg=/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name);
-  const altUI=isImg
-    ? '<label style="display:block;font-size:11px;font-weight:600;margin-bottom:4px">Alt text <span style="font-weight:400;color:var(--muted)">— describes the image for screen readers &amp; SEO</span></label>'
-      +'<textarea id="media-alt-input" rows="2" class="fd-input" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. Spray foam insulation applied to an attic" oninput="if(_media['+i+'])_media['+i+'].alt=this.value">'+esc(m.alt||'')+'</textarea>'
-      +'<button class="fd-btn-primary" style="margin-top:8px;font-size:12px;padding:7px 12px" onclick="saveMediaAlt('+i+')">Save alt text</button>'
-    : '';
-  md.innerHTML='<div style="aspect-ratio:4/3;background:var(--bg);overflow:hidden"><img src="'+esc(m.url)+'" alt="'+esc(m.alt||m.name)+'" style="width:100%;height:100%;object-fit:cover"></div>'
-    +'<div style="padding:14px">'
-    +'<div style="font-size:13px;font-weight:600;margin-bottom:4px">'+esc(m.name)+'</div>'
-    +'<div style="font-size:11px;color:var(--muted);margin-bottom:12px;word-break:break-all">'+esc(m.url)+'</div>'
-    +altUI
-    +'<div style="margin-top:8px"><button class="btn btn-n btn-sm" onclick="copyUrl(event,\''+esc(m.url)+'\')"><i class="fa-solid fa-copy"></i> Copy URL</button></div>'
+  const tEl=document.getElementById('mv-title'); if(tEl) tEl.textContent=m.name;
+  const hasPrev=_mediaViewPos>0, hasNext=_mediaViewPos<list.length-1;
+  const navBtn=(dir,side,ch)=>'<button title="'+(dir<0?'Previous':'Next')+' photo (saves this one first)" onclick="mediaViewerNav('+dir+')" style="position:absolute;top:50%;transform:translateY(-50%);'+side+':12px;width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.92);color:#111;font-size:26px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.35)">'+ch+'</button>';
+  const preview=isImg
+    ? '<img src="'+esc(m.url)+'" alt="'+esc(m.alt||m.name)+'" style="max-width:100%;max-height:100%;object-fit:contain;display:block">'
+    : '<div style="color:#bbb;font-size:13px;text-align:center;padding:24px">'+esc(m.name)+'<br><span style="font-size:11px">No preview available</span></div>';
+  const right=isImg
+    ? '<label style="display:block;font-size:12px;font-weight:700;margin-bottom:5px">Alt text</label>'
+      +'<div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">A short description of the image, used by screen readers and search engines. Saving applies it automatically everywhere this image is used on your site.</div>'
+      +'<textarea id="media-alt-input" rows="6" class="fd-input" style="width:100%;resize:vertical;font-size:14px;line-height:1.55" placeholder="e.g. Spray foam insulation being applied to an attic">'+esc(m.alt||'')+'</textarea>'
+      +'<div style="display:flex;gap:8px;margin-top:12px">'
+        +'<button class="fd-btn-primary" style="flex:1" onclick="saveMediaAlt('+_mediaViewCurIdx+')">Save</button>'
+        +(hasNext?'<button class="fd-btn-secondary" title="Save and open the next photo" onclick="mediaViewerNav(1)">Save &amp; next ›</button>':'')
+      +'</div>'
+    : '<div style="font-size:12px;color:var(--muted)">Alt text applies to images only.</div>';
+  body.innerHTML=
+    '<div style="position:relative;flex:1;min-width:0;display:flex;align-items:center;justify-content:center;background:#111;padding:18px">'
+      +preview
+      +(hasPrev?navBtn(-1,'left','‹'):'')
+      +(hasNext?navBtn(1,'right','›'):'')
+      +'<div style="position:absolute;bottom:10px;left:0;right:0;text-align:center;color:#ccc;font-size:11px;pointer-events:none">'+(_mediaViewPos+1)+' / '+list.length+'</div>'
+    +'</div>'
+    +'<div style="width:340px;flex-shrink:0;padding:20px;overflow-y:auto;border-left:1px solid var(--border);display:flex;flex-direction:column">'
+      +'<div style="font-size:13px;font-weight:600;word-break:break-word;margin-bottom:3px">'+esc(m.name)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);word-break:break-all;margin-bottom:16px">'+esc(m.url)+'</div>'
+      +right
+      +'<button class="btn btn-n btn-sm" style="margin-top:auto" onclick="copyUrl(event,\''+esc(m.url)+'\')"><i class="fa-solid fa-copy"></i> Copy URL</button>'
     +'</div>';
+  const ta=document.getElementById('media-alt-input'); if(ta){ ta.focus(); try{ ta.setSelectionRange(ta.value.length,ta.value.length); }catch(e){} }
+}
+async function mediaViewerNav(dir){
+  if(_mediaViewCurIdx>=0) await saveMediaAlt(_mediaViewCurIdx,{silent:true});   // save current before moving
+  const list=_mediaViewList||[]; let p=_mediaViewPos+dir;
+  if(p<0) p=0; if(p>list.length-1) p=list.length-1;
+  _mediaViewPos=p; renderMediaViewer();
 }
 function copyUrl(e,url){e.stopPropagation();navigator.clipboard.writeText(url).then(()=>toast('URL copied','ok'));}
 
-// ── Media alt text: edit in the library, then push onto matching page images ──
-async function saveMediaAlt(i){
+// ── Media alt text: edit in the library; saving applies it to the pages too ──
+async function saveMediaAlt(i,opts){
+  opts=opts||{};
   const ta=document.getElementById('media-alt-input');
-  if(ta && _media[i]) _media[i].alt=ta.value.trim();
-  try{
-    await apiCall('write_file',{path:'data/media.json',content:JSON.stringify(_media,null,2)});
-    toast('Alt text saved — use “Push alt to pages” to write it onto your pages','ok');
-  }catch(e){ toast('Save failed: '+(e.message||e),'err'); }
+  if(!ta || !_media[i]) return;                       // nothing to save (e.g. a non-image)
+  const val=ta.value.trim();
+  if(val===(_media[i].alt||'')) return;               // unchanged → no write, no page sweep
+  _media[i].alt=val;
+  try{ await apiCall('write_file',{path:'data/media.json',content:JSON.stringify(_media,null,2)}); }
+  catch(e){ toast('Save failed: '+(e.message||e),'err'); return; }
+  let res={imgsChanged:0,pagesChanged:0};
+  try{ res=await pushAltToPages({only:_media[i]}); }catch(e){}
+  if(!opts.silent){
+    toast(res.imgsChanged
+      ? ('Alt text saved & applied to '+res.imgsChanged+' image'+(res.imgsChanged===1?'':'s')+' on '+res.pagesChanged+' page'+(res.pagesChanged===1?'':'s'))
+      : 'Alt text saved','ok');
+  }
 }
 // Normalize an <img src> to a root-relative, lowercased path for matching.
 function normImgPath(src){
@@ -4101,11 +4156,12 @@ function normImgPath(src){
   return p.toLowerCase();
 }
 // The library alt text for a given image src: prefer a full-path match, fall
-// back to filename. Returns null when no image with alt text matches.
-function altForSrc(src){
+// back to filename. `only` restricts matching to a single media item.
+function altForSrc(src,only){
   const np=normImgPath(src); if(!np) return null;
   const base=np.split('/').pop(); let fallback=null;
-  for(const m of (_media||[])){
+  const list=only?[only]:(_media||[]);
+  for(const m of list){
     if(!m || !m.alt || !String(m.alt).trim()) continue;
     if(m.type && m.type!=='image') continue;
     const mp=String(m.path||'').replace(/^\/+/,'').toLowerCase(); if(!mp) continue;
@@ -4115,10 +4171,10 @@ function altForSrc(src){
   return fallback;
 }
 // Set/replace the alt attribute on one <img …> tag from the library.
-function applyAltToImgTag(tag){
+function applyAltToImgTag(tag,only){
   const sm=tag.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
   if(!sm) return {tag:tag,changed:false};
-  const alt=altForSrc(sm[1]!=null?sm[1]:sm[2]);
+  const alt=altForSrc(sm[1]!=null?sm[1]:sm[2],only);
   if(alt==null) return {tag:tag,changed:false};
   const escAlt=String(alt).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   if(/\balt\s*=\s*("[^"]*"|'[^']*')/i.test(tag)){
@@ -4127,26 +4183,26 @@ function applyAltToImgTag(tag){
   }
   return {tag:tag.replace(/^<img\b/i,'<img alt="'+escAlt+'"'),changed:true};
 }
-// Write every image's saved alt text onto the matching <img> tags on all pages.
-async function applyAltToPages(){
-  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
-  const withAlt=(_media||[]).filter(m=>m && (m.type==='image'||!m.type) && m.alt && String(m.alt).trim());
-  if(!withAlt.length){ toast('Add alt text to an image first (click it, fill Alt text, Save)','err'); return; }
+// Write image alt text onto matching <img> tags across all pages. opts.only
+// limits the sweep to one image (used by the auto-apply on save). Silent — no
+// dialogs. Returns {pagesChanged,imgsChanged,failed}.
+async function pushAltToPages(opts){
+  opts=opts||{};
+  const only=opts.only||null;
+  if(!canCallApi()) return {pagesChanged:0,imgsChanged:0,failed:0};
   if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
   const pages=getPageList();
-  if(!pages.length){ toast('No pages found','err'); return; }
-  if(!confirm('Write alt text onto matching images across all '+pages.length+' page(s)?')) return;
   let pagesChanged=0, imgsChanged=0, failed=0;
   for(const pg of pages){
     const fp=pg.path||pg.file; if(!fp) continue;
     try{
       const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
       let n=0;
-      const out=html.replace(/<img\b[^>]*>/gi,function(tag){ const r=applyAltToImgTag(tag); if(r.changed) n++; return r.tag; });
+      const out=html.replace(/<img\b[^>]*>/gi,function(tag){ const r=applyAltToImgTag(tag,only); if(r.changed) n++; return r.tag; });
       if(n>0){ await apiCall('write_file',{path:fp,content:out}); pagesChanged++; imgsChanged+=n; }
     }catch(e){ console.warn('alt apply failed for '+fp,e.message); failed++; }
   }
-  toast(imgsChanged?('Alt text applied to '+imgsChanged+' image'+(imgsChanged===1?'':'s')+' on '+pagesChanged+' page'+(pagesChanged===1?'':'s')+(failed?' ('+failed+' failed)':'')):'No matching images found on your pages','ok');
+  return {pagesChanged, imgsChanged, failed};
 }
 async function uploadMedia(files){
   if(!files?.length) return;
@@ -8463,6 +8519,9 @@ async function veUploadImg(file){
 // ── MEDIA FILTER ─────────────────────────────────────────────────
 let _mediaFilter = 'all';
 let _mediaSearch  = '';
+let _mediaViewList = [];   // items shown in the viewer (respects grid filter/search)
+let _mediaViewPos  = 0;    // current position within _mediaViewList
+let _mediaViewCurIdx = -1; // index into _media of the photo on screen (for saving)
 
 function filterMedia(type, btn){
   _mediaFilter = type;
@@ -8486,21 +8545,7 @@ function renderMediaGrid(){
   const grid = document.getElementById('media-body');
   if(!grid) return;
 
-  let items = _media || [];
-
-  // Filter by type
-  if(_mediaFilter === 'image'){
-    items = items.filter(m => /\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name));
-  } else if(_mediaFilter === 'video'){
-    items = items.filter(m => /\.(mp4|webm|mov|avi|mkv)$/i.test(m.name));
-  } else if(_mediaFilter === 'doc'){
-    items = items.filter(m => /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv)$/i.test(m.name));
-  }
-
-  // Filter by search
-  if(_mediaSearch){
-    items = items.filter(m => m.name.toLowerCase().includes(_mediaSearch));
-  }
+  const items = mediaFilteredItems();   // shared with the viewer so order matches
 
   if(!items.length){
     grid.innerHTML = '<div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><h3>No files found</h3><p>Try a different filter or click <strong>Scan Server</strong>.</p></div>';
