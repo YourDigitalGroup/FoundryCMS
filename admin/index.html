@@ -1695,7 +1695,7 @@ textarea.fb-input{resize:vertical}
           <div id="s-repo-info" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
         </div>
         <div class="si-sec architect-only"><h2>Repository Override</h2><div class="desc">Manually set GitHub repo if <code>data/site.json</code> hasn't been configured yet.</div>
-          <div class="fg"><label>Repository (owner/repo)</label><input type="text" id="s-repo-override" placeholder="scottecklund/my-client-site"></div>
+          <div class="fg"><label>Repository (owner/repo)</label><input type="text" id="s-repo-override" placeholder="YourDigitalGroup/my-client-site"></div>
           <button class="fd-btn-primary" onclick="saveRepoOverride()">Save Override</button>
         </div>
         <!-- Server API is automatic: the admin panel talks to its co-located
@@ -1835,7 +1835,7 @@ textarea.fb-input{resize:vertical}
             <div class="si-sec">
               <div class="fr"><div class="fg"><label>Repo Name</label><input type="text" id="nr-name" placeholder="client-site-name"></div><div class="fg"><label>Site Name</label><input type="text" id="nr-sitename" placeholder="Acme Corp"></div></div>
               <div class="fg"><label>Website URL (optional)</label><input type="text" id="nr-url" placeholder="https://acmecorp.com"></div>
-              <div class="fg"><label>GitHub Org / Username</label><input type="text" id="nr-org" placeholder="scottecklund"></div>
+              <div class="fg"><label>GitHub Org / Username</label><input type="text" id="nr-org" placeholder="YourDigitalGroup"></div>
               <button class="fd-btn-primary" onclick="createNewRepo()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
                 Create Repository
@@ -2145,7 +2145,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.18';
+const CMS_VERSION='1.14.19';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -5268,7 +5268,7 @@ async function deleteUser(){
 function getUpdateCfg(){return (_site&&_site.update)||{};}
 // Default to the canonical CMS repo so a freshly-deployed site can pull updates
 // out of the box. A site can override this in Settings → Auto-Update.
-const DEFAULT_TPL_REPO='scottecklund/foundrycms';
+const DEFAULT_TPL_REPO='YourDigitalGroup/foundrycms';
 function getTplRepo(){const u=getUpdateCfg();return (u.repo||DEFAULT_TPL_REPO);}
 // Updates are ALWAYS automatic: every site installs the latest engine at login
 // so no one can run a stale build (critical for pushing bug fixes). The old
