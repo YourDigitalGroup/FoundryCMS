@@ -1514,6 +1514,10 @@ textarea.fb-input{resize:vertical}
                   Upload
                   <input type="file" multiple accept="image/*,video/*,.pdf,.svg" onchange="uploadMedia(this.files)" style="display:none">
                 </label>
+                <button class="fd-btn-secondary" onclick="applyAltToPages()" title="Write each image's saved alt text onto the matching images across all your pages" style="display:flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                  Push alt to pages
+                </button>
                 <button class="fd-btn-primary" onclick="_media=[];initMedia()" style="display:flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
                   Scan Server
@@ -2145,7 +2149,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.23';
+const CMS_VERSION='1.14.24';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -4056,8 +4060,94 @@ async function initMedia(){
   const si=document.getElementById('media-search'); if(si) si.value='';
   renderMediaGrid();
 }
-function selMedia(i){_media.forEach(m=>m.selected=false);_media[i].selected=true;document.querySelectorAll('.mc').forEach((el,idx)=>el.classList.toggle('on',idx===i));const md=document.getElementById('media-detail');if(md){md.style.display='flex';const m=_media[i];md.innerHTML=`<div style="aspect-ratio:4/3;background:var(--bg);overflow:hidden"><img src="${esc(m.url)}" alt="${esc(m.name)}" style="width:100%;height:100%;object-fit:cover"></div><div style="padding:14px"><div style="font-size:13px;font-weight:600;margin-bottom:4px">${esc(m.name)}</div><div style="font-size:11px;color:var(--muted);margin-bottom:12px">${esc(m.url)}</div><button class="btn btn-n btn-sm" onclick="copyUrl(event,'${esc(m.url)}')"><i class="fa-solid fa-copy"></i> Copy URL</button></div>`;}}
+function selMedia(i){
+  _media.forEach(m=>m.selected=false);
+  const m=_media[i]; if(!m) return;
+  m.selected=true;
+  const md=document.getElementById('media-detail'); if(!md) return;
+  md.style.display='flex';
+  const isImg=/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name);
+  const altUI=isImg
+    ? '<label style="display:block;font-size:11px;font-weight:600;margin-bottom:4px">Alt text <span style="font-weight:400;color:var(--muted)">— describes the image for screen readers &amp; SEO</span></label>'
+      +'<textarea id="media-alt-input" rows="2" class="fd-input" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. Spray foam insulation applied to an attic" oninput="if(_media['+i+'])_media['+i+'].alt=this.value">'+esc(m.alt||'')+'</textarea>'
+      +'<button class="fd-btn-primary" style="margin-top:8px;font-size:12px;padding:7px 12px" onclick="saveMediaAlt('+i+')">Save alt text</button>'
+    : '';
+  md.innerHTML='<div style="aspect-ratio:4/3;background:var(--bg);overflow:hidden"><img src="'+esc(m.url)+'" alt="'+esc(m.alt||m.name)+'" style="width:100%;height:100%;object-fit:cover"></div>'
+    +'<div style="padding:14px">'
+    +'<div style="font-size:13px;font-weight:600;margin-bottom:4px">'+esc(m.name)+'</div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:12px;word-break:break-all">'+esc(m.url)+'</div>'
+    +altUI
+    +'<div style="margin-top:8px"><button class="btn btn-n btn-sm" onclick="copyUrl(event,\''+esc(m.url)+'\')"><i class="fa-solid fa-copy"></i> Copy URL</button></div>'
+    +'</div>';
+}
 function copyUrl(e,url){e.stopPropagation();navigator.clipboard.writeText(url).then(()=>toast('URL copied','ok'));}
+
+// ── Media alt text: edit in the library, then push onto matching page images ──
+async function saveMediaAlt(i){
+  const ta=document.getElementById('media-alt-input');
+  if(ta && _media[i]) _media[i].alt=ta.value.trim();
+  try{
+    await apiCall('write_file',{path:'data/media.json',content:JSON.stringify(_media,null,2)});
+    toast('Alt text saved — use “Push alt to pages” to write it onto your pages','ok');
+  }catch(e){ toast('Save failed: '+(e.message||e),'err'); }
+}
+// Normalize an <img src> to a root-relative, lowercased path for matching.
+function normImgPath(src){
+  let p=String(src||'').trim();
+  p=p.replace(/^[a-z][a-z0-9+.\-]*:\/\/[^/]+/i,'');   // strip scheme + host
+  p=p.replace(/[?#].*$/,'');                            // strip query / hash
+  p=p.replace(/^(\.\.?\/)+/,'').replace(/^\/+/,'');     // strip ./ ../ and leading /
+  try{ p=decodeURIComponent(p); }catch(e){}
+  return p.toLowerCase();
+}
+// The library alt text for a given image src: prefer a full-path match, fall
+// back to filename. Returns null when no image with alt text matches.
+function altForSrc(src){
+  const np=normImgPath(src); if(!np) return null;
+  const base=np.split('/').pop(); let fallback=null;
+  for(const m of (_media||[])){
+    if(!m || !m.alt || !String(m.alt).trim()) continue;
+    if(m.type && m.type!=='image') continue;
+    const mp=String(m.path||'').replace(/^\/+/,'').toLowerCase(); if(!mp) continue;
+    if(np===mp || np.endsWith('/'+mp) || mp.endsWith('/'+np)) return m.alt;   // strong path match
+    if(fallback==null && mp.split('/').pop()===base) fallback=m.alt;          // filename fallback
+  }
+  return fallback;
+}
+// Set/replace the alt attribute on one <img …> tag from the library.
+function applyAltToImgTag(tag){
+  const sm=tag.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+  if(!sm) return {tag:tag,changed:false};
+  const alt=altForSrc(sm[1]!=null?sm[1]:sm[2]);
+  if(alt==null) return {tag:tag,changed:false};
+  const escAlt=String(alt).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if(/\balt\s*=\s*("[^"]*"|'[^']*')/i.test(tag)){
+    const out=tag.replace(/\balt\s*=\s*("[^"]*"|'[^']*')/i,'alt="'+escAlt+'"');
+    return {tag:out,changed:out!==tag};
+  }
+  return {tag:tag.replace(/^<img\b/i,'<img alt="'+escAlt+'"'),changed:true};
+}
+// Write every image's saved alt text onto the matching <img> tags on all pages.
+async function applyAltToPages(){
+  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
+  const withAlt=(_media||[]).filter(m=>m && (m.type==='image'||!m.type) && m.alt && String(m.alt).trim());
+  if(!withAlt.length){ toast('Add alt text to an image first (click it, fill Alt text, Save)','err'); return; }
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
+  const pages=getPageList();
+  if(!pages.length){ toast('No pages found','err'); return; }
+  if(!confirm('Write alt text onto matching images across all '+pages.length+' page(s)?')) return;
+  let pagesChanged=0, imgsChanged=0, failed=0;
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
+      let n=0;
+      const out=html.replace(/<img\b[^>]*>/gi,function(tag){ const r=applyAltToImgTag(tag); if(r.changed) n++; return r.tag; });
+      if(n>0){ await apiCall('write_file',{path:fp,content:out}); pagesChanged++; imgsChanged+=n; }
+    }catch(e){ console.warn('alt apply failed for '+fp,e.message); failed++; }
+  }
+  toast(imgsChanged?('Alt text applied to '+imgsChanged+' image'+(imgsChanged===1?'':'s')+' on '+pagesChanged+' page'+(pagesChanged===1?'':'s')+(failed?' ('+failed+' failed)':'')):'No matching images found on your pages','ok');
+}
 async function uploadMedia(files){
   if(!files?.length) return;
   const{url,token}=getApiCfg();
@@ -8228,6 +8318,14 @@ function veImgPickerResizeEnd(){
 async function veLoadMediaLib(){
   const{url,token}=getApiCfg();
 
+  // Preserve saved alt text across re-scans: the file scan carries no alt, so
+  // read the previously-saved media.json and re-attach each image's alt by path.
+  let _altByPath={};
+  try{
+    const _pr=await fetch('../data/media.json?t='+Date.now());
+    if(_pr.ok){ const _pd=await _pr.json(); if(Array.isArray(_pd)) _pd.forEach(m=>{ if(m&&m.path&&m.alt) _altByPath[m.path]=m.alt; }); }
+  }catch{}
+
   // 1. Always scan via api.php first when server is configured (freshest data)
   if(url&&token){
     try{
@@ -8245,7 +8343,8 @@ async function veLoadMediaLib(){
           url: siteBase+'/'+f.path,
           type:f.type||'image',
           size:f.size||0,
-          ext:(f.name||'').split('.').pop().toLowerCase()
+          ext:(f.name||'').split('.').pop().toLowerCase(),
+          alt: _altByPath[f.path]||''
         }));
         // Save to server so Media panel can also read it
         try{ await apiCall('write_file',{path:'data/media.json',content:JSON.stringify(_media,null,2)}); }catch{}
