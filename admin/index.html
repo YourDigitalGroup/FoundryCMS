@@ -529,6 +529,9 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-swatch-none{position:relative;overflow:hidden;background:rgba(255,255,255,.6);border-color:var(--border-2)}
 html[data-theme="dark"] .ve-swatch-none{background:rgba(255,255,255,.14)}
 .ve-swatch-none::after{content:'';position:absolute;left:-4px;right:-4px;top:calc(50% - 1px);height:2px;background:#e0322a;transform:rotate(-45deg)}
+/* Icon library picker tiles. */
+.ip-item{display:flex;align-items:center;justify-content:center;height:48px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:20px;cursor:pointer;transition:all .12s}
+.ip-item:hover{border-color:var(--ember);color:var(--ember);background:var(--ember-soft)}
 .ve-align-btn{flex:1;display:flex;align-items:center;justify-content:center;padding:7px 4px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;transition:all .12s}
 .ve-align-btn:hover{border-color:var(--ember);color:var(--ember)}
 .ve-align-btn.on{background:var(--ember-soft);color:var(--ember);border-color:var(--ember)}
@@ -2071,6 +2074,15 @@ textarea.fb-input{resize:vertical}
     </div>
   </div>
 </div>
+<div class="mw" id="m-iconpicker" style="z-index:900">
+  <div class="modal" style="width:560px;max-height:82vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Add an icon</h2><button class="ib" onclick="closeM('m-iconpicker')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" style="display:flex;flex-direction:column;gap:10px;min-height:0">
+      <input type="text" id="ip-search" placeholder="Search icons — e.g. phone, cart, star…" oninput="iconPickerRender()" autocomplete="off" style="width:100%">
+      <div id="ip-list" style="overflow-y:auto;flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:6px;min-height:280px"></div>
+    </div>
+  </div>
+</div>
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -2133,7 +2145,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.16';
+const CMS_VERSION='1.14.17';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -3606,7 +3618,7 @@ function openPostImgPicker(cb){
       +'<div class="ve-img-picker-head"><h3>Media Library</h3>'
       +'<button class="ve-img-picker-close" onclick="document.getElementById(\'post-img-picker\').style.display=\'none\'">&times;</button></div>'
       +'<div class="ve-img-picker-toolbar"><input class="ve-img-picker-search" id="pip-search" placeholder="Filter images…" oninput="renderPostImgPicker(this.value)">'
-      +'<label class="ve-img-picker-upload-btn"><input type="file" accept="image/*" style="display:none" onchange="postImgPickerUpload(this)"> Upload</label></div>'
+      +'<label class="ve-img-picker-upload-btn"><input type="file" accept="image/*,.svg" style="display:none" onchange="postImgPickerUpload(this)"> Upload</label></div>'
       +'<div id="pip-grid" style="flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px"></div>'
       +'</div>';
     document.body.appendChild(modal);
@@ -6473,6 +6485,19 @@ return '(function(){\n'
 +'        el.remove(); sel=null;\n'
 +'        ov.style.display="none"; badge.style.display="none"; hbox.style.display="none";\n'
 +'        veSetPaused(false);window.parent.postMessage({type:"ve-deselect"},"*");\n'
++'      }else if(m.action==="insertIcon"){\n'
+// Make sure the page actually loads Font Awesome so the icon renders here in the
+// editor AND on the published page (many client pages don\'t include it). The
+// link is saved with the page (veSerializeClean keeps <link> tags).
++'        var faOk=false, lks=document.getElementsByTagName("link");\n'
++'        for(var li=0;li<lks.length;li++){var lh=lks[li].href||"";if(lks[li].hasAttribute("data-fourge-fa")||lh.indexOf("font-awesome")>=0||lh.indexOf("fontawesome")>=0){faOk=true;break;}}\n'
++'        if(!faOk){var fl=document.createElement("link");fl.rel="stylesheet";fl.setAttribute("data-fourge-fa","");fl.href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css";(document.head||document.documentElement).appendChild(fl);}\n'
++'        var ic=document.createElement("i");\n'
++'        ic.className=String(m.iconClass||"fa-solid fa-star").replace(/[^a-z0-9 _-]/gi,"");\n'
++'        ic.style.fontSize="1.5em"; ic.style.display="inline-block"; ic.style.lineHeight="1";\n'
++'        var NOKIDS={IMG:1,BR:1,HR:1,INPUT:1,VIDEO:1,PICTURE:1,IFRAME:1,EMBED:1};\n'
++'        if(NOKIDS[el.tagName]){ el.parentElement.insertBefore(ic, el.nextSibling); } else { el.appendChild(ic); }\n'
++'        selectEl(ic);\n'
 +'      }\n'
 +'      return;\n'
 +'    }\n'
@@ -6868,7 +6893,8 @@ function veShowProps(info){
 
   // Stash original styles so Apply only sends changed values
   _veOrigStyles = st;
-  body.innerHTML = devBanner + templateBanner + actionsBar + veAiPanel() + fields;
+  const iconBtn = '<button class="ve-apply-btn" style="margin:10px 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openIconPicker()"><i class="fa-solid fa-icons"></i> Insert an icon</button>';
+  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
   if(_veAiChat && _veAiChat.sel && _veAiChat.sel.fid===info.fid && _veAiChat.log && _veAiChat.log.length){ veAiRenderLog(); }
 }
@@ -7022,6 +7048,50 @@ function veElemAction(action){
   if(!ifrm) return;
   ifrm.contentWindow.postMessage({type:'ve-action',action,fid:_veCurSel.fid},'*');
   if(action!=='selectParent') document.getElementById('ve-unsaved')?.classList.add('on');
+}
+
+// ── ICON LIBRARY (Font Awesome, already loaded) ───────────────────
+// A curated set of common icons. Picking one inserts a <i class="fa-…"> into
+// the selected element (or right after it), which is then fully editable
+// (color via the color control, size via font-size). Brands cover socials.
+const FA_ICONS=[
+  'fa-solid fa-phone','fa-solid fa-mobile-screen','fa-solid fa-envelope','fa-solid fa-location-dot','fa-solid fa-map','fa-solid fa-clock','fa-solid fa-calendar','fa-solid fa-calendar-check','fa-solid fa-paper-plane','fa-solid fa-headset','fa-solid fa-comment','fa-solid fa-comments','fa-solid fa-message',
+  'fa-solid fa-check','fa-solid fa-circle-check','fa-solid fa-xmark','fa-solid fa-circle-xmark','fa-solid fa-star','fa-regular fa-star','fa-solid fa-heart','fa-regular fa-heart','fa-solid fa-thumbs-up','fa-solid fa-circle-info','fa-solid fa-triangle-exclamation','fa-solid fa-circle-question','fa-solid fa-plus','fa-solid fa-minus',
+  'fa-solid fa-arrow-right','fa-solid fa-arrow-left','fa-solid fa-arrow-up','fa-solid fa-arrow-down','fa-solid fa-chevron-right','fa-solid fa-chevron-left','fa-solid fa-chevron-up','fa-solid fa-chevron-down','fa-solid fa-angles-right','fa-solid fa-bars','fa-solid fa-ellipsis','fa-solid fa-magnifying-glass',
+  'fa-solid fa-house','fa-solid fa-user','fa-solid fa-users','fa-solid fa-user-tie','fa-solid fa-people-group','fa-solid fa-building','fa-solid fa-briefcase','fa-solid fa-handshake','fa-solid fa-award','fa-solid fa-certificate','fa-solid fa-trophy','fa-solid fa-medal','fa-solid fa-shield','fa-solid fa-shield-halved','fa-solid fa-lock','fa-solid fa-unlock',
+  'fa-solid fa-cart-shopping','fa-solid fa-bag-shopping','fa-solid fa-credit-card','fa-solid fa-tag','fa-solid fa-tags','fa-solid fa-gift','fa-solid fa-dollar-sign','fa-solid fa-percent','fa-solid fa-receipt','fa-solid fa-wallet',
+  'fa-solid fa-truck','fa-solid fa-truck-fast','fa-solid fa-box','fa-solid fa-boxes-stacked','fa-solid fa-warehouse','fa-solid fa-clipboard-check','fa-solid fa-list-check','fa-solid fa-file-lines','fa-solid fa-folder','fa-solid fa-download','fa-solid fa-upload','fa-solid fa-print','fa-solid fa-share-nodes','fa-solid fa-link',
+  'fa-solid fa-play','fa-solid fa-pause','fa-solid fa-circle-play','fa-solid fa-image','fa-solid fa-images','fa-solid fa-camera','fa-solid fa-video','fa-solid fa-music','fa-solid fa-microphone','fa-solid fa-volume-high',
+  'fa-solid fa-wrench','fa-solid fa-screwdriver-wrench','fa-solid fa-hammer','fa-solid fa-gear','fa-solid fa-gears','fa-solid fa-paintbrush','fa-solid fa-paint-roller','fa-solid fa-bolt','fa-solid fa-plug','fa-solid fa-fire','fa-solid fa-droplet','fa-solid fa-temperature-half','fa-solid fa-snowflake','fa-solid fa-wind','fa-solid fa-sun','fa-solid fa-moon','fa-solid fa-cloud',
+  'fa-solid fa-leaf','fa-solid fa-seedling','fa-solid fa-tree','fa-solid fa-paw','fa-solid fa-heart-pulse','fa-solid fa-stethoscope','fa-solid fa-tooth','fa-solid fa-pills','fa-solid fa-notes-medical','fa-solid fa-utensils','fa-solid fa-mug-hot','fa-solid fa-cake-candles','fa-solid fa-graduation-cap','fa-solid fa-book','fa-solid fa-pen','fa-solid fa-pen-to-square',
+  'fa-solid fa-car','fa-solid fa-plane','fa-solid fa-key','fa-solid fa-globe','fa-solid fa-earth-americas','fa-solid fa-compass','fa-solid fa-thumbtack','fa-solid fa-flag','fa-solid fa-bell','fa-solid fa-quote-left','fa-solid fa-quote-right','fa-solid fa-scissors','fa-solid fa-ruler','fa-solid fa-lightbulb','fa-solid fa-rocket','fa-solid fa-chart-line','fa-solid fa-chart-pie','fa-solid fa-eye',
+  'fa-brands fa-facebook','fa-brands fa-facebook-f','fa-brands fa-instagram','fa-brands fa-x-twitter','fa-brands fa-linkedin','fa-brands fa-linkedin-in','fa-brands fa-youtube','fa-brands fa-tiktok','fa-brands fa-whatsapp','fa-brands fa-pinterest','fa-brands fa-yelp','fa-brands fa-google','fa-brands fa-facebook-messenger','fa-brands fa-snapchat','fa-brands fa-threads'
+];
+let _iconTargetFid=null;
+function openIconPicker(){
+  _iconTargetFid=_veCurSel?.fid||null;
+  if(!_iconTargetFid){ toast('Click an element on the page first, then add an icon','err'); return; }
+  openM('m-iconpicker');
+  const s=document.getElementById('ip-search'); if(s){ s.value=''; setTimeout(()=>s.focus(),50); }
+  iconPickerRender();
+}
+function iconPickerRender(){
+  const list=document.getElementById('ip-list'); if(!list) return;
+  const q=(document.getElementById('ip-search')?.value||'').trim().toLowerCase();
+  const nameOf=c=>c.replace(/fa-(solid|regular|brands)\s+fa-/,'').replace(/-/g,' ');
+  const items=FA_ICONS.filter(c=>!q||nameOf(c).includes(q)||c.includes(q));
+  list.innerHTML=items.map(c=>'<button type="button" class="ip-item" title="'+esc(nameOf(c))+'" onclick="veInsertIcon(\''+c+'\')"><i class="'+c+'"></i></button>').join('')
+    || '<div style="color:var(--muted);font-size:12px;padding:12px;grid-column:1/-1">No icons match “'+esc(q)+'”.</div>';
+}
+function veInsertIcon(iconClass){
+  const fid=_iconTargetFid||_veCurSel?.fid;
+  if(!fid){ toast('Click an element first','err'); return; }
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertIcon',fid,iconClass},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  closeM('m-iconpicker');
+  toast('Icon added — click it to change its color or size','ok');
 }
 
 function veUndo(){
