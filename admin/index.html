@@ -595,8 +595,8 @@ html[data-theme="dark"] .ve-swatch-none{background:rgba(255,255,255,.14)}
 .ve-ai-prompt{width:100%;min-height:72px;resize:vertical;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.5;box-sizing:border-box;margin-bottom:8px}
 .ve-ai-prompt:focus{outline:none;border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,83,30,.1)}
 .ve-ai-prompt::placeholder{color:var(--muted);font-size:12px;line-height:1.5}
-.ve-ai-btn{margin-top:0!important;background:var(--text)!important}
-.ve-ai-btn:hover{background:var(--ember-deep)!important}
+.ve-ai-btn{margin-top:0!important;background:var(--text)!important;color:var(--bg)!important}
+.ve-ai-btn:hover{background:var(--ember-deep)!important;color:#fff!important}
 .ve-ai-log{display:flex;flex-direction:column;gap:8px;margin:0;padding:12px;max-height:260px;overflow-y:auto}
 .ve-ai-msg{font-size:12.5px;line-height:1.5;padding:8px 11px;border-radius:12px;max-width:90%;word-wrap:break-word}
 .ve-ai-msg span{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.5;margin-right:6px}
@@ -2133,7 +2133,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.15';
+const CMS_VERSION='1.14.16';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
