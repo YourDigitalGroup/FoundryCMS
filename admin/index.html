@@ -2145,7 +2145,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.22';
+const CMS_VERSION='1.14.23';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2624,6 +2624,8 @@ let _curForm=null;       // index being edited, or null
 let _formFields=[];      // working field array in builder
 let _curFormMeta={};     // working form settings
 let _entries=[];         // submissions
+let _curEntriesForm=null;// form id whose entries are on screen (used by CSV export)
+let _orphanEntryIds=[];  // entry formIds with no matching built form (external / hand-coded forms)
 
 // All Gravity-style field types
 const FIELD_TYPES=[
@@ -2655,6 +2657,7 @@ async function saveFormsJson(){
 }
 
 async function initForms(){
+  await loadEntries();   // load submissions first so the forms list shows accurate entry counts
   try{
     const{url,token}=getApiCfg();
     if(url&&token){
@@ -2670,12 +2673,17 @@ async function initForms(){
 function renderFormsList(){
   const body=document.getElementById('forms-body');
   if(!body)return;
-  if(!_forms.length){
+  // Submissions whose formId has no matching built form (e.g. a hand-coded form
+  // on the site posting to the same endpoint). Surface them so no entry is hidden.
+  const knownIds=new Set(_forms.map(f=>f.id));
+  const orphanCounts={};
+  (_entries||[]).forEach(e=>{ const id=e.formId; if(id && !knownIds.has(id)){ orphanCounts[id]=(orphanCounts[id]||0)+1; } });
+  _orphanEntryIds=Object.keys(orphanCounts);
+  if(!_forms.length && !_orphanEntryIds.length){
     body.innerHTML='<div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg><h3>No forms yet</h3><p>Click New Form to build your first form.</p></div>';
     return;
   }
-  body.innerHTML='<table class="dt"><thead><tr><th>Form</th><th>Fields</th><th>Shortcode</th><th>Entries</th><th></th></tr></thead><tbody>'
-    +_forms.map((f,i)=>{
+  let rows=_forms.map((f,i)=>{
       const entCount=_entries.filter(e=>e.formId===f.id).length;
       return '<tr style="cursor:pointer" onclick="editForm('+i+')">'
         +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(f.title||'Untitled'))+'</td>'
@@ -2684,8 +2692,19 @@ function renderFormsList(){
         +'<td style="font-size:12px"><a href="#" onclick="event.stopPropagation();viewEntries(\''+f.id+'\');return false" style="color:var(--ember);font-weight:600">'+entCount+'</a></td>'
         +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();editForm('+i+')">Edit</button></td>'
         +'</tr>';
-    }).join('')
-    +'</tbody></table>';
+    }).join('');
+  // External-form rows. The id comes from public submissions (untrusted), so it's
+  // opened by index (viewOrphanEntries), never interpolated into a JS handler.
+  rows+=_orphanEntryIds.map((id,oi)=>
+      '<tr>'
+        +'<td style="font-size:13px;font-weight:600">'+esc(id)+' <span style="font-weight:400;color:var(--muted);font-size:11px">· external form</span></td>'
+        +'<td style="font-size:12px;color:var(--muted)">—</td>'
+        +'<td style="font-size:12px;color:var(--muted)">—</td>'
+        +'<td style="font-size:12px"><a href="#" onclick="viewOrphanEntries('+oi+');return false" style="color:var(--ember);font-weight:600">'+orphanCounts[id]+'</a></td>'
+        +'<td></td>'
+        +'</tr>'
+    ).join('');
+  body.innerHTML='<table class="dt"><thead><tr><th>Form</th><th>Fields</th><th>Shortcode</th><th>Entries</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function copyShortcode(id){
@@ -2900,20 +2919,68 @@ async function loadEntries(){
 async function viewEntries(formId){
   await loadEntries();
   const form=_forms.find(f=>f.id===formId);
-  const rows=_entries.filter(e=>e.formId===formId).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  _curEntriesForm=formId;
+  const rows=entriesForForm(formId);
   goPanel('p-entries');
   const titleEl=document.getElementById('entries-title');
-  if(titleEl) titleEl.textContent=(form?decodeHtml(form.title):'Form')+' — Entries ('+rows.length+')';
+  const label=form?decodeHtml(form.title||'Form'):('External form · '+formId);
+  if(titleEl) titleEl.textContent=label+' — Entries ('+rows.length+')';
   const body=document.getElementById('entries-body');
   if(!body)return;
   if(!rows.length){ body.innerHTML='<div class="empty"><h3>No submissions yet</h3><p>Entries will appear here when visitors submit this form.</p></div>'; return; }
-  body.innerHTML=rows.map(e=>{
-    const data=e.data||{};
-    const rowsHtml=Object.keys(data).map(k=>'<div class="ent-row"><span class="ent-k">'+esc(k)+'</span><span class="ent-v">'+esc(String(data[k]))+'</span></div>').join('');
-    return '<div class="ent-card"><div class="ent-date">'+esc(e.date||'')+'</div>'+rowsHtml+'</div>';
+  const cols=entryColumns(rows);
+  const thead='<tr><th style="white-space:nowrap">Date</th>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
+  const tbody=rows.map(e=>{
+    const d=e.data||{};
+    return '<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc(e.date||'')+'</td>'
+      +cols.map(c=>'<td style="font-size:13px">'+esc(d[c]!=null?String(d[c]):'')+'</td>').join('')
+      +'</tr>';
   }).join('');
+  body.innerHTML=''
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">'
+      +'<div style="font-size:13px;color:var(--muted)">'+rows.length+' submission'+(rows.length===1?'':'s')+' · newest first</div>'
+      +'<button class="btn btn-o btn-sm" onclick="exportEntriesCsv()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download CSV</button>'
+    +'</div>'
+    +'<div style="overflow:auto"><table class="dt"><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table></div>';
 }
 function backToForms(){ goPanel('p-forms'); }
+function viewOrphanEntries(i){ const id=_orphanEntryIds[i]; if(id!=null) viewEntries(id); }
+function entriesForForm(formId){
+  return (_entries||[]).filter(e=>e.formId===formId).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+}
+// Columns = union of field labels across this form's entries, in first-seen order
+// (each entry's own key order follows the form's field order at submit time).
+function entryColumns(rows){
+  const cols=[], seen=new Set();
+  rows.forEach(e=>{ Object.keys(e.data||{}).forEach(k=>{ if(!seen.has(k)){ seen.add(k); cols.push(k); } }); });
+  return cols;
+}
+// One CSV cell: neutralize spreadsheet formula injection (=,+,-,@ leading), then
+// RFC-4180 quote if it contains a quote, comma, or newline.
+function csvCell(v){
+  let s=(v==null?'':String(v));
+  if(/^[=+\-@\t\r]/.test(s)) s="'"+s;
+  if(/[",\n\r]/.test(s)) s='"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function exportEntriesCsv(){
+  const formId=_curEntriesForm;
+  const form=_forms.find(f=>f.id===formId);
+  const rows=entriesForForm(formId);
+  if(!rows.length){ toast('No entries to export','err'); return; }
+  const cols=entryColumns(rows);
+  const header=['Date'].concat(cols).map(csvCell).join(',');
+  const lines=rows.map(e=>{ const d=e.data||{}; return [e.date||''].concat(cols.map(c=>d[c])).map(csvCell).join(','); });
+  const csv='\uFEFF'+[header].concat(lines).join('\r\n')+'\r\n';   // BOM so Excel opens it as UTF-8
+  let slug=((form?decodeHtml(form.title):formId)||'form').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  if(!slug) slug='form';
+  const fname=slug+'-entries-'+new Date().toISOString().slice(0,10)+'.csv';
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 150);
+  toast('Downloaded '+fname,'ok');
+}
 
 // ── RENDER FORM TO HTML (for embedding in pages) ──────────────────
 // Produces a self-contained <form> with inline conditional-logic + submit JS
