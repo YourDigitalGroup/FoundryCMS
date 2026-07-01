@@ -525,6 +525,10 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .ve-swatches{display:flex;flex-wrap:wrap;gap:5px}
 .ve-swatch{width:18px;height:18px;border-radius:4px;border:1px solid rgba(0,0,0,.18);cursor:pointer;padding:0;transition:transform .1s}
 .ve-swatch:hover{transform:scale(1.18)}
+/* "No fill" chip — semi-opaque box with a red 45° strike (Adobe-style). */
+.ve-swatch-none{position:relative;overflow:hidden;background:rgba(255,255,255,.6);border-color:var(--border-2)}
+html[data-theme="dark"] .ve-swatch-none{background:rgba(255,255,255,.14)}
+.ve-swatch-none::after{content:'';position:absolute;left:-4px;right:-4px;top:calc(50% - 1px);height:2px;background:#e0322a;transform:rotate(-45deg)}
 .ve-align-btn{flex:1;display:flex;align-items:center;justify-content:center;padding:7px 4px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;transition:all .12s}
 .ve-align-btn:hover{border-color:var(--ember);color:var(--ember)}
 .ve-align-btn.on{background:var(--ember-soft);color:var(--ember);border-color:var(--ember)}
@@ -1201,7 +1205,7 @@ textarea.fb-input{resize:vertical}
         </div>
 
         <!-- Pages section -->
-        <div style="display:grid;grid-template-columns:1fr 320px;gap:32px">
+        <div>
           <div>
             <div class="pages-sec-head">
               <div>
@@ -1226,23 +1230,6 @@ textarea.fb-input{resize:vertical}
               <div id="dash-pages-body">
                 <div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">Loading…</div>
               </div>
-            </div>
-          </div>
-          <!-- Right rail -->
-          <div>
-            <div data-fx="scramble" style="font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--ember);margin-bottom:10px">+ TODAY ON SITE</div>
-            <div data-fx="rise" style="font-size:24px;font-weight:800;color:var(--text);letter-spacing:-.025em;line-height:1.1;margin-bottom:4px">Team activity.</div>
-            <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Last 24 hours.</div>
-            <div id="dash-activity">
-              <div class="act-item">
-                <div class="act-av2" style="background:var(--ember)">ZC</div>
-                <div><div class="act-body">Fourge ready. <strong>Add GitHub token in Settings</strong> to start.</div><div class="act-time">Now</div></div>
-              </div>
-            </div>
-            <div class="blueprint-card">
-              <div class="blueprint-card-eye" data-fx="scramble">+ TOP PERFORMER</div>
-              <div class="blueprint-card-head" id="tp-head">Your pages.</div>
-              <div class="blueprint-card-sub" id="tp-sub">Publish your first page to see performance data here.</div>
             </div>
           </div>
         </div>
@@ -1567,11 +1554,18 @@ textarea.fb-input{resize:vertical}
           </div>
         </div>
         <div class="tab-panel" id="si-design">
-          <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Primary and secondary brand colors — these drive the <code>--brand-color-primary</code> / <code>--brand-color-secondary</code> CSS variables. They auto-fill from your site's CSS; change them and click Apply to update every page.</div>
+          <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Your two main brand colors. Pick them here and click Apply, and they’ll be used across every page of your site. They start from the colors your site already uses, so you can adjust from there.</div>
             <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch"></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch"></div></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="fd-btn-primary" onclick="brandApplyAll()"><i class="fa-solid fa-check-double"></i> Apply colors to all pages</button>
               <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
+            </div>
+          </div>
+          <div class="si-sec"><h2>Heading Styles</h2><div class="desc">Choose the font, size, weight, alignment, and color for your headings across the whole site. Headings are the titles on your pages — H1 is the main page title, H2 the section titles, and so on down to H6. Leave any box empty to keep what your design already uses. (A single page can still set its own heading look in that page's settings.)</div>
+            <div id="si-headings" style="display:flex;flex-direction:column;gap:9px;margin-top:10px"></div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+              <button type="button" class="fd-btn-primary" onclick="headingsApplyAll()"><i class="fa-solid fa-check-double"></i> Apply headings to all pages</button>
+              <span id="si-headings-status" style="font-size:12px;color:var(--muted)"></span>
             </div>
           </div>
           <div class="si-sec"><h2>Favicon</h2><div class="desc">The small icon shown in browser tabs, bookmarks, and history. Use a square PNG, SVG, or ICO — at least 32×32px (512×512 recommended).</div>
@@ -1830,7 +1824,7 @@ textarea.fb-input{resize:vertical}
             <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Create a GitHub repo from the Fourge template and push all core files.</p>
             <div class="si-sec">
               <h2>reCAPTCHA (Forms)</h2>
-              <div class="desc">Protect all forms from spam with Google reCAPTCHA v2 ("I'm not a robot" checkbox). Get keys at <code>google.com/recaptcha/admin</code>. Stored in <code>data/site.json</code> for all forms site-wide.</div>
+              <div class="desc">Stop spam bots from filling out your forms. Turn on Google’s free “I’m not a robot” check, then paste the two keys Google gives you (create them at <code>google.com/recaptcha/admin</code>). Once it’s on, every form on your site is protected.</div>
               <div class="fg"><label>Site Key (public)</label><input type="text" id="s-rc-site" placeholder="6Lc…"></div>
               <div class="fg"><label>Secret Key (server-side)</label><input type="password" id="s-rc-secret" placeholder="6Lc… (kept on server)"></div>
               <button class="fd-btn-primary" onclick="saveRecaptcha()">Save reCAPTCHA Keys</button>
@@ -1853,7 +1847,7 @@ textarea.fb-input{resize:vertical}
             <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Remove a page from the CMS without deleting it — the <code>.html</code> file stays on your server, it just won't appear in the pages list. Restore it any time.</p>
             <div class="si-sec" style="margin-bottom:20px">
               <h2 style="font-size:14px">Privacy Policy</h2>
-              <div class="desc">Generate a <code>privacy-policy.html</code> tailored to this site — company name, URL, and contact email are pulled from Design (email falls back to <code>info@yourdomain</code>).</div>
+              <div class="desc">Create a ready-to-use privacy policy page for your site. It fills in your business name, website, and contact email automatically from your Design tab.</div>
               <button class="fd-btn-primary" onclick="generatePrivacyPolicy()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                 Generate Privacy Policy Page
@@ -2045,18 +2039,18 @@ textarea.fb-input{resize:vertical}
     <div class="mh"><h2>Page Settings — <span id="ps-title">—</span></h2><button class="ib" onclick="closeM('m-pagesettings')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
     <div class="mb">
       <input type="hidden" id="ps-pid">
-      <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:16px"><input type="checkbox" id="ps-draft" style="width:16px;height:16px"> Draft — exclude from the sitemap and mark <code>noindex</code> (kept out of search)</label>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:16px"><input type="checkbox" id="ps-draft" style="width:16px;height:16px"> Draft — keep this page out of search results while you work on it (it won’t be added to your sitemap)</label>
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px"><input type="checkbox" id="ps-protect" style="width:16px;height:16px" onchange="psToggleProtect()"> Password-protect this page — visitors must enter a password to view it</label>
       <div id="ps-protect-pw-wrap" style="display:none;margin:-4px 0 18px 26px">
         <input type="password" id="ps-protect-pw" autocomplete="new-password" placeholder="Set a password (leave blank to keep current)" style="width:100%;max-width:340px">
         <div class="desc" style="margin-top:5px;font-size:11px">Visitors must enter this password to view the page. Minimum 4 characters.</div>
       </div>
-      <div class="fg"><label>Heading Styles <span style="font-weight:400;color:var(--muted)">— override the site design on this page (blank = use the design)</span></label>
+      <div class="fg"><label>Heading Styles <span style="font-weight:400;color:var(--muted)">— change how this page’s titles look (leave blank to match the rest of the site)</span></label>
         <div id="ps-headings" style="display:flex;flex-direction:column;gap:9px"></div>
       </div>
-      <div class="fg"><label>Custom Page CSS <span style="font-weight:400;color:var(--muted)">— applies to this page only</span></label><textarea id="ps-css" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="/* overrides the Design module for this page, e.g. */&#10;h1{font-size:3rem;color:#c0392b}"></textarea></div>
-      <div class="fg"><label>Custom Page JavaScript <span style="font-weight:400;color:var(--muted)">— runs on this page only</span></label><textarea id="ps-js" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="// runs just before &lt;/body&gt; on this page only"></textarea></div>
-      <div class="desc">Saved with the page. Custom CSS is injected into <code>&lt;head&gt;</code> and JS just before <code>&lt;/body&gt;</code> the next time you <strong>Save</strong> the page.</div>
+      <div class="fg"><label>Custom CSS <span style="font-weight:400;color:var(--muted)">— advanced: extra styling for this page only</span></label><textarea id="ps-css" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="/* Optional custom styling for this page, e.g. */&#10;h1{font-size:3rem;color:#c0392b}"></textarea></div>
+      <div class="fg"><label>Custom JavaScript <span style="font-weight:400;color:var(--muted)">— advanced: extra code for this page only</span></label><textarea id="ps-js" rows="6" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="// Optional custom code for this page"></textarea></div>
+      <div class="desc">For advanced users — add your own styling or code that applies to just this page. It takes effect the next time you <strong>Save</strong> the page. Most people can leave these empty.</div>
     </div>
     <div class="mf">
       <button class="btn btn-r btn-sm" onclick="deletePageNow()" title="Permanently delete the .html file from the server"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg> Delete page</button>
@@ -2139,7 +2133,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.14';
+const CMS_VERSION='1.14.15';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -4044,7 +4038,7 @@ async function initSEO(){
   const pages=getPageList();
   const ta=document.getElementById('seo-ta');
   if(ta) ta.innerHTML='<button class="fd-btn-primary" onclick="saveSEO()">Save</button>'
-    +'<button class="fd-btn-secondary" onclick="seoApplyAll()" title="Write SEO meta + schema into every page, regenerate sitemap.xml + robots.txt">Apply to all pages</button>'
+    +'<button class="fd-btn-secondary" onclick="seoApplyAll()" title="Save your SEO settings onto every page and rebuild your sitemap">Apply to all pages</button>'
     +'<button class="fd-btn-secondary" onclick="genAllSEO()"><i class="fa-solid fa-wand-magic"></i> Generate All</button>';
   if(!pages.length){ document.getElementById('seo-body').innerHTML='<div class="empty"><h3>No pages yet</h3><p>Upload your .html pages and they appear here.</p></div>'; }
   else{
@@ -4108,20 +4102,20 @@ function seoChecks(pid){
   const f=_seoFacts[pid];
   const checks=[
     {ok:!!kw, label:'Focus keyword set'},
-    {ok:seoKwMatch(title,kw), label:'Keyword in SEO title'},
-    {ok:seoKwMatch(desc,kw), label:'Keyword in meta description'},
-    {ok:!!kw&&seoKwMatch(slug,kw), label:'Keyword in URL'},
-    {ok:!!title.trim()&&!/^(page not found|untitled|new page|document)$/i.test(title.trim()), label:'Descriptive title (not a placeholder)'},
-    {ok:title.length>=40&&title.length<=65, label:'Title length 40–65'},
-    {ok:!!desc.trim(), label:'Meta description present'},
-    {ok:desc.length>=110&&desc.length<=170, label:'Description length 110–170'},
-    {ok:!s.noindex, label:'Indexable (not noindex)'},
-    {ok:!!(s.canonical||normSiteBase()), label:'Canonical URL available'},
-    {ok:!!(s.ogImage||seoGlobal().defaultOg), label:'Social image set'}
+    {ok:seoKwMatch(title,kw), label:'Keyword is in the title'},
+    {ok:seoKwMatch(desc,kw), label:'Keyword is in the description'},
+    {ok:!!kw&&seoKwMatch(slug,kw), label:'Keyword is in the page address'},
+    {ok:!!title.trim()&&!/^(page not found|untitled|new page|document)$/i.test(title.trim()), label:'Title is filled in (not a placeholder)'},
+    {ok:title.length>=40&&title.length<=65, label:'Title is a good length (40–65 characters)'},
+    {ok:!!desc.trim(), label:'Description is filled in'},
+    {ok:desc.length>=110&&desc.length<=170, label:'Description is a good length (110–170 characters)'},
+    {ok:!s.noindex, label:'Page can appear in search results'},
+    {ok:!!(s.canonical||normSiteBase()), label:'Page has a web address'},
+    {ok:!!(s.ogImage||seoGlobal().defaultOg), label:'Social sharing image set'}
   ];
   if(f&&f.loaded){
-    checks.push({ok:f.h1===1, label:'Exactly one H1 heading'});
-    checks.push({ok:f.imgs===0||f.imgsNoAlt===0, label:'All images have alt text'});
+    checks.push({ok:f.h1===1, label:'Has one main title (H1)'});
+    checks.push({ok:f.imgs===0||f.imgsNoAlt===0, label:'Every image has a description'});
     checks.push({ok:f.words>=250, label:'Enough content (250+ words)'});
     checks.push({ok:!kw||seoKwMatch(f.headings,kw), label:'Keyword in a heading'});
   }
@@ -4151,11 +4145,11 @@ function renderSEO(pid){
     +'<div class="fg"><label>Focus Keyword</label><input type="text" value="'+esc(s.focusKeyword||'')+'" oninput="updateSEO(\''+pid+'\',\'focusKeyword\',this.value)" placeholder="primary keyword for this page"></div>'
     +'<div class="fg"><label>SEO Title <span style="font-weight:400;color:var(--muted)">(50–60)</span></label><input type="text" value="'+esc(decodeHtml(s.title||''))+'" maxlength="70" oninput="updateSEO(\''+pid+'\',\'title\',this.value)"><small id="seo-title-count">'+(s.title||'').length+'/60</small></div>'
     +'<div class="fg"><label>Meta Description <span style="font-weight:400;color:var(--muted)">(120–160)</span></label><textarea rows="3" maxlength="200" oninput="updateSEO(\''+pid+'\',\'description\',this.value)">'+esc(s.description||'')+'</textarea><small id="seo-desc-count">'+(s.description||'').length+'/160</small></div>'
-    +'<div class="fr"><div class="fg"><label>Canonical URL <span style="font-weight:400;color:var(--muted)">(blank = auto)</span></label><input type="text" value="'+esc(s.canonical||'')+'" oninput="updateSEO(\''+pid+'\',\'canonical\',this.value)" placeholder="auto from Website URL + path"></div>'
-    +'<div class="fg"><label>Schema type</label><select onchange="updateSEO(\''+pid+'\',\'schemaType\',this.value)">'+opt(['WebPage','Article','Service','LocalBusiness','AboutPage','ContactPage','FAQPage','none'],s.schemaType||'WebPage')+'</select></div></div>'
-    +'<div class="fr"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.noindex?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'noindex\',this.checked)"> noindex (hide from search)</label>'
-    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.nofollow?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'nofollow\',this.checked)"> nofollow</label></div>'
-    +'<div class="si-sec"><h2 style="font-size:13px">Social (Open Graph / Twitter)</h2>'
+    +'<div class="fr"><div class="fg"><label>Preferred web address <span style="font-weight:400;color:var(--muted)">(leave blank to set automatically)</span></label><input type="text" value="'+esc(s.canonical||'')+'" oninput="updateSEO(\''+pid+'\',\'canonical\',this.value)" placeholder="Set automatically from your website address"></div>'
+    +'<div class="fg"><label>Page type</label><select onchange="updateSEO(\''+pid+'\',\'schemaType\',this.value)">'+opt(['WebPage','Article','Service','LocalBusiness','AboutPage','ContactPage','FAQPage','none'],s.schemaType||'WebPage')+'</select></div></div>'
+    +'<div class="fr"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.noindex?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'noindex\',this.checked)"> Hide this page from search results</label>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.nofollow?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'nofollow\',this.checked)"> Don’t follow links on this page</label></div>'
+    +'<div class="si-sec"><h2 style="font-size:13px">Social sharing preview</h2>'
     +'<div class="fg"><label>Social title <span style="font-weight:400;color:var(--muted)">(blank = SEO title)</span></label><input type="text" value="'+esc(s.ogTitle||'')+'" oninput="updateSEO(\''+pid+'\',\'ogTitle\',this.value)"></div>'
     +'<div class="fg"><label>Social description</label><textarea rows="2" oninput="updateSEO(\''+pid+'\',\'ogDescription\',this.value)">'+esc(s.ogDescription||'')+'</textarea></div>'
     +'<div class="fg"><label>Social image URL</label><input type="text" value="'+esc(s.ogImage||'')+'" oninput="updateSEO(\''+pid+'\',\'ogImage\',this.value)" placeholder="https://…"></div>'
@@ -4174,13 +4168,13 @@ function renderSEOGlobal(){
   const g=seoGlobal();
   const opt=(list,cur)=>list.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('');
   el.innerHTML='<div style="border-top:1px solid var(--border);margin-top:26px;padding-top:20px;max-width:760px">'
-    +'<div class="si-sec"><h2>Schema &amp; Business (site-wide)</h2><div class="desc">Feeds the structured data (JSON-LD) on every page. Address / phone / social come from Design → Contact.</div>'
+    +'<div class="si-sec"><h2>Your Business Info</h2><div class="desc">Helps Google understand your business so it can show richer results — like your address, phone, and hours. Your details come from the Design tab under Contact.</div>'
     +'<div class="fr"><div class="fg"><label>Organization type</label><select onchange="seoGlobal().orgType=this.value">'+opt(['LocalBusiness','Organization','ProfessionalService','HomeAndConstructionBusiness','GeneralContractor','Store','Restaurant'],g.orgType||'LocalBusiness')+'</select></div>'
     +'<div class="fg"><label>Default social image URL</label><input type="text" value="'+esc(g.defaultOg||'')+'" oninput="seoGlobal().defaultOg=this.value" placeholder="https://… used when a page has no image"></div></div>'
-    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(g.includeOrg!==false?'checked':'')+' onchange="seoGlobal().includeOrg=this.checked"> Include Organization/LocalBusiness schema on every page</label></div>'
-    +'<div class="si-sec"><h2>Sitemap</h2><div class="desc">Generates <code>/sitemap.xml</code> from your pages + posts (noindex excluded) and links it from robots.txt.</div>'
-    +'<button class="fd-btn-secondary" onclick="seoGenerateSitemap()">Generate sitemap.xml now</button><div id="seo-sitemap-status" style="font-size:12px;color:var(--muted);margin-top:8px"></div></div>'
-    +'<div class="si-sec"><h2>robots.txt</h2><div class="desc">Leave blank for a sensible default (allow all + sitemap link). Saved to <code>/robots.txt</code>.</div>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(g.includeOrg!==false?'checked':'')+' onchange="seoGlobal().includeOrg=this.checked"> Add my business info to every page (recommended)</label></div>'
+    +'<div class="si-sec"><h2>Sitemap</h2><div class="desc">A sitemap is a list of your pages that helps search engines find everything on your site. We build one for you automatically from your pages and posts (hidden and draft pages are left out).</div>'
+    +'<button class="fd-btn-secondary" onclick="seoGenerateSitemap()">Build my sitemap now</button><div id="seo-sitemap-status" style="font-size:12px;color:var(--muted);margin-top:8px"></div></div>'
+    +'<div class="si-sec"><h2>Search Engine Access</h2><div class="desc">Controls what search engines are allowed to look at on your site. Leave this blank and we’ll use a sensible default that lets them see everything.</div>'
     +'<textarea id="seo-robots" rows="4" style="font-family:var(--font-mono);font-size:12px;width:100%" oninput="seoGlobal().robotsTxt=this.value" placeholder="User-agent: *\nAllow: /">'+esc(g.robotsTxt||'')+'</textarea>'
     +'<button class="fd-btn-secondary" onclick="seoWriteRobots(true)" style="margin-top:6px">Save robots.txt</button></div></div>';
 }
@@ -4288,7 +4282,7 @@ function seoInjectIntoHtml(html,pg,base){
 async function seoApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply SEO','err'); return; }
   const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
-  if(!confirm('Write SEO meta tags + schema into all '+pages.length+' page file(s), and regenerate sitemap.xml + robots.txt?')) return;
+  if(!confirm('Apply your SEO settings to all '+pages.length+' page(s) and rebuild your sitemap?')) return;
   await saveSEO();
   const base=normSiteBase(); let done=0,failed=0;
   const st=document.getElementById('seo-apply-status');
@@ -4336,6 +4330,7 @@ async function loadSiteInfo(){
   const fields=[['si-name','name'],['si-tagline','tagline'],['si-website','website'],['si-notify','notifyEmail'],['si-phone','phone'],['si-email','email'],['si-street','address.street'],['si-city','address.city'],['si-state','address.state'],['si-zip','address.zip'],['si-facebook','social.facebook'],['si-instagram','social.instagram'],['si-linkedin','social.linkedin'],['si-youtube','social.youtube']];
   fields.forEach(([id,path])=>{const el=document.getElementById(id);if(!el)return;const keys=path.split('.');let val=_site;keys.forEach(k=>val=val?.[k]);el.value=val||'';});
   faviconRender();
+  siRenderHeadings(_site.headingStyles||{});   // site-wide heading controls
   designAutofill();   // fill brand colors + any empty contact/social from the site's HTML
 }
 // Pull what we can from the live site HTML: brand-color CSS variables, and any
@@ -4508,6 +4503,8 @@ async function saveSiteInfo(){
   if(!_site.address)_site.address={};_site.address.street=get('si-street');_site.address.city=get('si-city');_site.address.state=get('si-state');_site.address.zip=get('si-zip');
   if(!_site.social)_site.social={};_site.social.facebook=get('si-facebook');_site.social.instagram=get('si-instagram');_site.social.linkedin=get('si-linkedin');_site.social.youtube=get('si-youtube');
   if(!_site.brand)_site.brand={};_site.brand.primary=get('si-brand-primary');_site.brand.secondary=get('si-brand-secondary');
+  // Site-wide heading styles — only touch them if the controls are actually on screen.
+  if(document.getElementById('sh-h1-size')){ const hs=siReadHeadings(); if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles; }
 
   const json=JSON.stringify(_site,null,2);
   let savedLocal=false, savedGH=false;
@@ -5744,9 +5741,9 @@ function adminLoadFonts(fonts){
   lk.href='https://fonts.googleapis.com/css2?'+[..._adminFontSet].map(f=>'family='+encodeURIComponent(f).replace(/%20/g,'+')).join('&')+'&display=swap';
 }
 // ── FULL GOOGLE FONTS PICKER (searchable, previews each font) ──────────────
-let _allFonts=null, _fontPickerTag=null;
-async function openFontPicker(tag){
-  _fontPickerTag=tag;
+let _allFonts=null, _fontPickerTag=null, _fontPickerScope='ps';
+async function openFontPicker(tag, scope){
+  _fontPickerTag=tag; _fontPickerScope=scope||'ps';   // 'ps' = per-page, 'sh' = site-wide
   openM('m-fontpicker');
   const s=document.getElementById('fp-search'); if(s){ s.value=''; setTimeout(()=>s.focus(),50); }
   if(!_allFonts) await loadAllFonts();
@@ -5781,7 +5778,7 @@ function fontPickerRender(){
 function fontPickerPick(family){
   const tag=_fontPickerTag;
   if(tag){
-    const sel=document.getElementById('ps-'+tag+'-font');
+    const sel=document.getElementById((_fontPickerScope||'ps')+'-'+tag+'-font');
     if(sel){
       if(!Array.from(sel.options).some(o=>o.value===family)){ const o=document.createElement('option'); o.value=family; o.textContent=family; o.style.fontFamily="'"+family+"',sans-serif"; const more=sel.querySelector('option[value="__more__"]'); sel.insertBefore(o,more); }
       sel.value=family; sel.dataset.prev=family; sel.style.fontFamily="'"+family+"',inherit";
@@ -5803,6 +5800,114 @@ function psReadHeadings(){
     if(Object.keys(o).length) out[tag]=o;
   });
   return out;
+}
+
+// ── SITE-WIDE HEADING STYLES (Design tab) ─────────────────────────
+// Same controls as per-page, but applied to every page. A per-page override
+// still wins: it emits "body h1 { … !important }" while the site-wide rule is
+// just "h1 { … !important }" — the more specific per-page selector takes over.
+function siRenderHeadings(hs){
+  hs=hs||{};
+  const wrap=document.getElementById('si-headings'); if(!wrap) return;
+  const weights=['','300','400','500','600','700','800','900'];
+  const aligns=['','left','center','right'];
+  wrap.innerHTML=HEADING_TAGS.map(tag=>{
+    const s=hs[tag]||{};
+    const wopt=weights.map(w=>`<option value="${w}"${String(s.weight||'')===w?' selected':''}>${w||'weight'}</option>`).join('');
+    const aopt=aligns.map(a=>`<option value="${a}"${(s.align||'')===a?' selected':''}>${a||'align'}</option>`).join('');
+    const inCur=GOOGLE_FONTS.indexOf(s.font||'')>=0;
+    const fopt='<option value="">— font (default)</option>'
+      +GOOGLE_FONTS.map(f=>`<option value="${esc(f)}"${(s.font||'')===f?' selected':''} style="font-family:'${esc(f)}',sans-serif">${esc(f)}</option>`).join('')
+      +((s.font&&!inCur)?`<option value="${esc(s.font)}" selected style="font-family:'${esc(s.font)}',sans-serif">${esc(s.font)}</option>`:'')
+      +'<option value="__more__">More fonts…</option>';
+    const hasColor=!!s.color;
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:9px 11px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-weight:700;font-size:12px;width:26px;text-transform:uppercase;color:var(--text)">${tag}</span>
+        <input type="text" id="sh-${tag}-size" value="${esc(s.size||'')}" placeholder="size e.g. 2.5rem" style="flex:1;font-size:12px">
+        <input type="color" id="sh-${tag}-color" value="${hasColor?esc(s.color):'#000000'}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (leave unset to keep your design's color)" style="width:38px;height:30px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+        <select id="sh-${tag}-weight" style="font-size:12px">${wopt}</select>
+        <select id="sh-${tag}-align" style="font-size:12px">${aopt}</select>
+      </div>
+      <select id="sh-${tag}-font" data-prev="${esc(s.font||'')}" onchange="siFontChange('${tag}',this)" style="width:100%;font-size:12px;margin-top:6px;font-family:'${esc(s.font||'')}',inherit">${fopt}</select>
+    </div>`;
+  }).join('');
+  adminLoadFonts(GOOGLE_FONTS);
+  HEADING_TAGS.forEach(t=>{ const f=hs[t]&&hs[t].font; if(f) adminLoadFonts([f]); });
+}
+function siFontChange(tag, sel){
+  if(sel.value==='__more__'){ sel.value=sel.dataset.prev||''; openFontPicker(tag,'sh'); return; }
+  sel.dataset.prev=sel.value;
+  sel.style.fontFamily=sel.value?("'"+sel.value+"',inherit"):'inherit';
+}
+function siReadHeadings(){
+  const out={};
+  HEADING_TAGS.forEach(tag=>{
+    const size=(document.getElementById('sh-'+tag+'-size')?.value||'').trim();
+    const weight=document.getElementById('sh-'+tag+'-weight')?.value||'';
+    const align=document.getElementById('sh-'+tag+'-align')?.value||'';
+    const font=document.getElementById('sh-'+tag+'-font')?.value||'';
+    const colEl=document.getElementById('sh-'+tag+'-color');
+    const color=(colEl&&colEl.dataset.set==='1')?colEl.value:'';
+    const o={}; if(size)o.size=size; if(weight)o.weight=weight; if(align)o.align=align; if(font)o.font=font; if(color)o.color=color;
+    if(Object.keys(o).length) out[tag]=o;
+  });
+  return out;
+}
+// Site-wide heading CSS: plain "h1" selector + !important so it beats the theme;
+// a per-page "body h1 !important" is more specific, so the page override wins.
+function siHeadingCss(hs){
+  if(!hs) return '';
+  const norm=v=>{ v=String(v||'').trim(); return /^[0-9.]+$/.test(v)?v+'px':v; };
+  const out=[];
+  HEADING_TAGS.forEach(tag=>{
+    const s=hs[tag]||{}; const d=[];
+    if(s.size)   d.push('font-size:'+norm(s.size)+' !important');
+    if(s.weight) d.push('font-weight:'+s.weight+' !important');
+    if(s.align)  d.push('text-align:'+s.align+' !important');
+    if(s.color)  d.push('color:'+s.color+' !important');
+    if(s.font)   d.push("font-family:'"+String(s.font).replace(/'/g,'')+"',sans-serif !important");
+    if(d.length) out.push(tag+'{'+d.join(';')+'}');
+  });
+  return out.join('\n');
+}
+function siHeadingFontLink(hs){
+  if(!hs) return '';
+  const fonts=[]; HEADING_TAGS.forEach(t=>{ const f=hs[t]&&hs[t].font; if(f && fonts.indexOf(f)<0) fonts.push(f); });
+  if(!fonts.length) return '';
+  return 'https://fonts.googleapis.com/css2?'+fonts.map(f=>'family='+encodeURIComponent(f).replace(/%20/g,'+')+':wght@300;400;500;600;700;800;900').join('&')+'&display=swap';
+}
+// Inject the site-wide heading styles as a managed, idempotent block into a page.
+function headingInjectIntoHtml(html, hs){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const head=doc.head||doc.documentElement;
+  doc.querySelectorAll('[data-fourge-headings]').forEach(el=>el.remove());
+  const css=siHeadingCss(hs);
+  if(css){
+    const link=siHeadingFontLink(hs);
+    if(link){ const l=doc.createElement('link'); l.rel='stylesheet'; l.href=link; l.setAttribute('data-fourge-headings',''); head.appendChild(l); }
+    const st=doc.createElement('style'); st.id='fourge-headings'; st.setAttribute('data-fourge-headings',''); st.textContent=css; head.appendChild(st);
+  }
+  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+}
+async function headingsApplyAll(){
+  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
+  const hs=siReadHeadings();
+  if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
+  const st=document.getElementById('si-headings-status'); if(st) st.textContent='Applying…';
+  let done=0,failed=0;
+  for(const pg of pages){ const fp=pg.path||pg.file; if(!fp) continue;
+    try{ const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){failed++;continue;}
+      await apiCall('write_file',{path:fp,content:headingInjectIntoHtml(html,hs)}); done++;
+    }catch(e){ console.warn('Heading apply failed for '+fp,e.message); failed++; }
+  }
+  if(st) st.textContent='Applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'');
+  toast(done?('Heading styles applied to '+done+' page(s)'):'Nothing updated', done?'ok':'err');
 }
 async function savePagesJson(){
   const json=JSON.stringify(_pages,null,2); let ok=false;
@@ -6602,11 +6707,10 @@ function veShowProps(info){
         </div>
       </div>
       <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">
-        <button type="button" class="ve-mini-btn" onclick="veBgNoFill()" title="Transparent background">No fill</button>
         <button type="button" class="ve-mini-btn" onclick="veBgImageChoose()"><i class="fa-solid fa-image"></i> Image</button>
         ${info.bgImage?`<button type="button" class="ve-mini-btn ve-mini-btn-danger" onclick="veBgImageRemove()">Remove image</button>`:''}
       </div>
-      ${vePaletteRow('vp-bgcolor')}
+      ${vePaletteRow('vp-bgcolor','veBgNoFill()')}
     `, 'spacing') +
     veAccWrap('Border', `
       <div class="ve-style-row">
@@ -6888,10 +6992,14 @@ function veSitePalette(){
 }
 // Render a labeled row of the site's colors that, on click, set + apply to the
 // given color input. Returns '' when no palette is available.
-function vePaletteRow(inputId){
+function vePaletteRow(inputId,noFill){
   const pal=veSitePalette().slice(0,16);
-  if(!pal.length) return '';
+  // Adobe-style "no fill" chip (semi-opaque box + red 45° strike) sits first in
+  // the swatch row when a clear action is passed (e.g. transparent background).
+  const none = noFill ? '<button type="button" class="ve-swatch ve-swatch-none" title="No fill" onclick="'+noFill+'"></button>' : '';
+  if(!pal.length && !none) return '';
   return '<div class="ve-swatches-wrap"><div class="ve-swatches">'
+    + none
     + pal.map(h=>'<button type="button" class="ve-swatch" title="'+h+'" style="background:'+h+'" onclick="vePickSwatch(\''+inputId+'\',\''+h+'\')"></button>').join('')
     + '</div></div>';
 }
