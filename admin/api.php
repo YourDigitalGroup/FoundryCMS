@@ -27,6 +27,19 @@ define('MG_API_KEY',   (string)($__secret['mg_api_key']   ?? ''));
 define('MG_FROM',      (string)($__secret['mg_from']      ?? 'Fourge CMS <postmaster@mg.example.com>'));
 define('MG_NOTIFY_TO', (string)($__secret['mg_notify_to'] ?? ''));
 
+// Contact-form email via SMTP (Mailgun/SendGrid/any relay). When these are set,
+// the form handler sends over SMTP instead of the Mailgun HTTP API — so a
+// migrated site's EXISTING SMTP credentials work as-is, no API key needed. Kept
+// in config.secret.php (gitignored) so it never passes through the repo. The
+// From address uses mg_from; the recipient uses the form's notify address (or
+// mg_notify_to). smtp_secure: 'auto' (STARTTLS on 587, implicit TLS on 465),
+// or force 'tls' / 'ssl' / 'none'.
+define('SMTP_HOST',   (string)($__secret['smtp_host']     ?? ''));
+define('SMTP_PORT',   (int)   ($__secret['smtp_port']     ?? 587));
+define('SMTP_USER',   (string)($__secret['smtp_username'] ?? ''));
+define('SMTP_PASS',   (string)($__secret['smtp_password'] ?? ''));
+define('SMTP_SECURE', (string)($__secret['smtp_secure']   ?? 'auto'));
+
 // Require a secure (HTTPS) connection for sign-in and credential/secret changes.
 // Defaults ON. Localhost/dev is always exempt. To allow plain HTTP in an unusual
 // setup, add  'require_https' => false  to your config.secret.php array.
@@ -518,6 +531,84 @@ function cmsMailgun() {
     ];
 }
 
+function cmsSmtpEnabled() {
+    return SMTP_HOST !== '' && SMTP_USER !== '' && SMTP_PASS !== '';
+}
+
+// Minimal dependency-free SMTP sender (no PHPMailer needed). Speaks enough of
+// ESMTP to authenticate and deliver a multipart/alternative message. $opt keys:
+// host, port, secure(auto|tls|ssl|none), user, pass, from, fromName, to, toName,
+// replyTo, replyName, subject, html, text. Returns true, or false with $err set.
+function cmsSmtpSend($opt, &$err) {
+    $host = (string)$opt['host']; $port = (int)$opt['port'];
+    $secure = $opt['secure'] ?? 'auto';
+    if ($secure === 'auto') $secure = ($port === 465) ? 'ssl' : 'tls';
+    // Strip CR/LF/NUL from anything that lands in an SMTP command or a raw header
+    // (Reply-To comes from the visitor) to prevent command / header injection.
+    $strip = function ($s) { return str_replace(["\r", "\n", "\0"], '', (string)$s); };
+    $from = $strip($opt['from']); $to = $strip($opt['to']); $rt = $strip($opt['replyTo'] ?? '');
+
+    $remote = ($secure === 'ssl' ? 'ssl://' : 'tcp://') . $host . ':' . $port;
+    $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]);
+    $fp = @stream_socket_client($remote, $errno, $errstr, 20, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fp) { $err = "connect failed: $errstr ($errno)"; return false; }
+    stream_set_timeout($fp, 20);
+
+    $read = function () use ($fp) {
+        $d = '';
+        while (($l = fgets($fp, 600)) !== false) {
+            $d .= $l;
+            if (strlen($l) < 4 || $l[3] === ' ') break;   // last line of a (possibly multiline) reply
+        }
+        return $d;
+    };
+    $put  = function ($s) use ($fp) { fwrite($fp, $s . "\r\n"); };
+    $code = function ($r) { return (int)substr($r, 0, 3); };
+    $bail = function ($m) use (&$err, $fp) { $err = $m; @fclose($fp); return false; };
+
+    $r = $read(); if ($code($r) !== 220) return $bail('greeting: ' . trim($r));
+    $ehlo = preg_replace('/[^A-Za-z0-9.\-]/', '', ($_SERVER['SERVER_NAME'] ?? 'localhost')) ?: 'localhost';
+    $put("EHLO $ehlo"); $r = $read();
+    if ($code($r) !== 250) { $put("HELO $ehlo"); $r = $read(); if ($code($r) !== 250) return $bail('EHLO: ' . trim($r)); }
+
+    if ($secure === 'tls') {
+        $put("STARTTLS"); $r = $read(); if ($code($r) !== 220) return $bail('STARTTLS: ' . trim($r));
+        $crypto = STREAM_CRYPTO_METHOD_TLS_CLIENT;
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) $crypto |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
+        if (!@stream_socket_enable_crypto($fp, true, $crypto)) return $bail('TLS handshake failed');
+        $put("EHLO $ehlo"); $r = $read(); if ($code($r) !== 250) return $bail('EHLO(TLS): ' . trim($r));
+    }
+
+    $put("AUTH LOGIN"); $r = $read(); if ($code($r) !== 334) return $bail('AUTH not accepted: ' . trim($r));
+    $put(base64_encode((string)$opt['user'])); $r = $read(); if ($code($r) !== 334) return $bail('username stage: ' . trim($r));
+    $put(base64_encode((string)$opt['pass'])); $r = $read(); if ($code($r) !== 235) return $bail('login rejected: ' . trim($r));
+
+    $put("MAIL FROM:<$from>"); $r = $read(); if ($code($r) !== 250) return $bail('MAIL FROM: ' . trim($r));
+    $put("RCPT TO:<$to>");     $r = $read(); if ($code($r) !== 250 && $code($r) !== 251) return $bail('RCPT TO: ' . trim($r));
+    $put("DATA");              $r = $read(); if ($code($r) !== 354) return $bail('DATA: ' . trim($r));
+
+    $enc = function ($s) { return '=?UTF-8?B?' . base64_encode((string)$s) . '?='; };   // RFC2047 for names/subject
+    $b = 'fge' . bin2hex(random_bytes(10));
+    $H = [];
+    $H[] = 'Date: ' . date('r');
+    $H[] = 'Message-ID: <' . bin2hex(random_bytes(12)) . '@' . $host . '>';
+    $H[] = 'From: ' . (($opt['fromName'] ?? '') !== '' ? $enc($opt['fromName']) . ' ' : '') . "<$from>";
+    $H[] = 'To: '   . (($opt['toName'] ?? '')   !== '' ? $enc($opt['toName'])   . ' ' : '') . "<$to>";
+    if ($rt !== '') $H[] = 'Reply-To: ' . (!empty($opt['replyName']) ? $enc($opt['replyName']) . ' ' : '') . "<$rt>";
+    $H[] = 'Subject: ' . $enc($opt['subject']);
+    $H[] = 'MIME-Version: 1.0';
+    $H[] = 'Content-Type: multipart/alternative; boundary="' . $b . '"';
+    $M  = implode("\r\n", $H) . "\r\n\r\n";
+    $M .= '--' . $b . "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode((string)$opt['text'])) . "\r\n";
+    $M .= '--' . $b . "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode((string)$opt['html'])) . "\r\n";
+    $M .= '--' . $b . "--\r\n";
+    $M = preg_replace('/^\./m', '..', $M);   // dot-stuff (defensive; base64 has no leading dots)
+    fwrite($fp, $M . "\r\n.\r\n");
+    $r = $read(); if ($code($r) !== 250) return $bail('message rejected: ' . trim($r));
+    $put("QUIT"); @fclose($fp);
+    return true;
+}
+
 function cmsSendForm($body) {
     $mg      = cmsMailgun();
     $fields  = $body['fields']  ?? [];
@@ -557,6 +648,26 @@ function cmsSendForm($body) {
       <table style="width:100%;border-collapse:collapse;border:1px solid #eee">' . $htmlRows . '</table>
       <p style="font-size:11px;color:#A09882;margin-top:16px">Sent via Fourge CMS · ' . date('Y-m-d H:i') . '</p>
     </body></html>';
+
+    // Reply-To = the first submitted value that looks like an email address.
+    $replyTo = ''; foreach ($fields as $val) { $v = trim((string)$val); if (filter_var($v, FILTER_VALIDATE_EMAIL)) { $replyTo = $v; break; } }
+
+    // Prefer SMTP when configured (a migrated site's existing SMTP creds work
+    // as-is); otherwise fall through to the Mailgun HTTP API below.
+    if (cmsSmtpEnabled()) {
+        $fromEmail = MG_FROM; $fromName = '';
+        if (preg_match('/^\s*(.*?)\s*<([^>]+)>\s*$/', MG_FROM, $mm)) { $fromName = trim($mm[1], " \"'"); $fromEmail = trim($mm[2]); }
+        if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) $fromEmail = SMTP_USER;
+        $err = '';
+        $sent = cmsSmtpSend([
+            'host' => SMTP_HOST, 'port' => SMTP_PORT, 'secure' => SMTP_SECURE, 'user' => SMTP_USER, 'pass' => SMTP_PASS,
+            'from' => $fromEmail, 'fromName' => $fromName, 'to' => $toEmail, 'toName' => '',
+            'replyTo' => $replyTo, 'replyName' => '', 'subject' => $subject, 'html' => $html, 'text' => $text,
+        ], $err);
+        if ($sent) { echo json_encode(['ok' => true]); }
+        else { error_log('Fourge SMTP send failed: ' . $err); http_response_code(500); echo json_encode(['error' => 'Email could not be sent right now. Please try again, or contact us directly.']); }
+        return;
+    }
 
     $ch = curl_init('https://api.mailgun.net/v3/' . $mg['domain'] . '/messages');
     curl_setopt_array($ch, [
