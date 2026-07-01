@@ -68,6 +68,31 @@
     return 'bottom:64px';
   }
 
+  // reCAPTCHA drops a floating badge into a bottom corner (default bottom-right).
+  // When ADAptify shares that corner the two overlap (see the widget sitting on
+  // top of the badge), so lift the launch button + panel to just above the badge.
+  // The badge loads asynchronously and may not exist when we build, so we re-check
+  // for a short window and stop once we've measured it (or the page has none).
+  function avoidRecaptcha(btn, pnl, position) {
+    if (!btn || position.indexOf('bottom') !== 0) return;   // only bottom corners can collide
+    var wantRight = position.indexOf('right') !== -1;
+    function apply() {
+      var badge = document.querySelector('.grecaptcha-badge');
+      if (!badge) { btn.style.bottom = '20px'; if (pnl) pnl.style.bottom = '64px'; return false; }
+      var r = badge.getBoundingClientRect();
+      if (!r.width || !r.height) return false;              // in the DOM but not laid out yet — keep waiting
+      var badgeOnRight = (r.left + r.width / 2) > (window.innerWidth / 2);
+      // Only lift when the badge is in the SAME corner as the widget; otherwise
+      // they don't overlap and we leave the widget where the site placed it.
+      var b = (badgeOnRight === wantRight) ? Math.max(20, Math.round(window.innerHeight - r.top) + 10) : 20;
+      btn.style.bottom = b + 'px';
+      if (pnl) pnl.style.bottom = (b + 44) + 'px';          // panel opens just above the button (matches the 20→64 default)
+      return true;                                          // measured — final decision made
+    }
+    if (apply()) return;
+    var n = 0, iv = setInterval(function () { if (apply() || ++n >= 24) clearInterval(iv); }, 600);
+  }
+
   // ── PANEL MARKUP ────────────────────────────────────────────────────────
   function tg(act, label) {
     return '<button type="button" class="adaptify-tg" data-act="' + act + '" aria-pressed="false">'
@@ -161,6 +186,7 @@
     });
 
     applyAll(prefs); reflect(root, prefs);
+    avoidRecaptcha(btn, pnl, cfg.position);
   }
 
   // Fill in any missing keys so reads never hit undefined.
