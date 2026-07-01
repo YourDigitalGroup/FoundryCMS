@@ -62,4 +62,14 @@ return [
     // 'mg_api_key'    => 'key-...',
     // 'mg_from'       => 'Your Site <postmaster@mg.yoursite.com>',
     // 'mg_notify_to'  => 'you@yoursite.com',
+
+    // ── Team onboarding (OPTIONAL) ──
+    // Let your team self-provision accounts across client sites: a NEW email on
+    // 'onboard_domain' that signs in with 'onboard_password' gets an EDITOR
+    // account created automatically, then is forced to set a new password on
+    // first login. It NEVER overrides an existing account and never grants more
+    // than 'editor'. OFF unless 'onboard_password' is set. Keep this password
+    // ONLY here (config.secret.php) — never in api.php, which is public.
+    // 'onboard_domain'   => 'youragency.com',   // defaults to 44interactive.com
+    // 'onboard_password' => 'a-shared-onboarding-secret',
 ];

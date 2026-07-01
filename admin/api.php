@@ -32,6 +32,17 @@ define('MG_NOTIFY_TO', (string)($__secret['mg_notify_to'] ?? ''));
 // setup, add  'require_https' => false  to your config.secret.php array.
 define('REQUIRE_HTTPS', array_key_exists('require_https', $__secret) ? (bool)$__secret['require_https'] : true);
 
+// Team onboarding (optional). A NEW email on ONBOARD_EMAIL_DOMAIN that signs in
+// with ONBOARD_PASSWORD self-provisions an EDITOR account with a forced first-
+// login password change — a convenience for standing up your team across client
+// sites. It NEVER overrides an existing account (so it can't be a backdoor into
+// established logins), only ever grants the 'editor' role (never Architect), and
+// stays OFF unless onboard_password is set. Keep that password in
+// config.secret.php, NOT here: api.php ships in a public repo, so a value in this
+// file would be world-readable. The domain isn't secret, so it defaults inline.
+define('ONBOARD_EMAIL_DOMAIN', strtolower((string)($__secret['onboard_domain']   ?? '44interactive.com')));
+define('ONBOARD_PASSWORD',              (string)($__secret['onboard_password'] ?? ''));
+
 // Folders to always exclude from scan (relative paths from public_html root)
 // Add any site-specific paths you want hidden from import
 define('SKIP_PATHS', [
@@ -857,11 +868,39 @@ function fourgeApiLogin($body) {
     }
     $user = fourgeGetUserByLogin($pdo, $identifier);
     if (!$user || !fourgeVerifyPassword($pdo, $user, $password)) {
-        http_response_code(401); echo json_encode(['error' => 'Invalid login or password']); return;
+        // Team onboarding: a NEW email on the agency domain + the shared onboard
+        // password self-provisions an editor account (forced password change on
+        // first login). Only when no account exists for that email — never an
+        // override of an existing login. See the ONBOARD_* config above.
+        $user = fourgeTryOnboard($pdo, $identifier, $password);
+        if (!$user) { http_response_code(401); echo json_encode(['error' => 'Invalid login or password']); return; }
     }
     $token = fourgeCreateSession($pdo, $user['username']);
     $user  = fourgeGetUser($pdo, $user['username']); // reload — verify may have upgraded the hash
     echo json_encode(['ok' => true, 'token' => $token, 'user' => fourgePublicUser($user)]);
+}
+
+// Self-provision an editor account for a NEW email on the agency domain when the
+// shared onboard password is supplied. Returns the freshly-created user row, or
+// null when onboarding doesn't apply: feature off, wrong password, not an email
+// on ONBOARD_EMAIL_DOMAIN, or an account already exists for that email (we never
+// override an existing login). must_change_password=1 forces a new password on
+// first login; until then this same onboard password authenticates the account.
+function fourgeTryOnboard($pdo, $identifier, $password) {
+    if (ONBOARD_PASSWORD === '') return null;                            // feature off
+    if (!hash_equals(ONBOARD_PASSWORD, (string)$password)) return null;  // constant-time
+    $email = strtolower(trim((string)$identifier));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) return null;         // must be an email
+    $at     = strrpos($email, '@');
+    $domain = $at === false ? '' : substr($email, $at + 1);
+    if ($domain === '' || $domain !== ONBOARD_EMAIL_DOMAIN) return null; // exact domain match
+    if (fourgeLoginTaken($pdo, $email, $email, 0)) return null;          // never override an existing account
+    $now  = date('c');
+    $hash = password_hash($password, fourgePwAlgo());
+    $pdo->prepare("INSERT INTO users (username, display_name, email, first_name, last_name, role, is_architect, password_hash, must_change_password, permissions, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        ->execute([$email, $email, $email, '', '', 'editor', 0, $hash, 1, null, $now, $now]);
+    return fourgeGetUser($pdo, $email);
 }
 
 function fourgeApiLogout($token) {
