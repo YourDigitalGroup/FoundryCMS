@@ -105,7 +105,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Legacy file / GA / mail / AI actions accept the shared API_TOKEN OR a
 //    session token, so existing publishing and public form posts keep working.
 $PUBLIC_ACTIONS  = ['login'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -158,6 +158,7 @@ try {
         case 'get_secrets':     ob_end_clean(); fourgeApiGetSecrets($authUser); break;
         case 'set_secret':      ob_end_clean(); fourgeApiSetSecret($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
+        case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
         case 'list_pages':  ob_end_clean(); cmsListPages();    break;
         case 'list_media':  ob_end_clean(); cmsListMedia();    break;
@@ -1120,6 +1121,59 @@ function fourgeWriteProtectHtaccess($paths) {
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
     return file_put_contents($htPath, $existing) !== false;
+}
+// Clean URLs: serve /page from /page.html and 301 the .html form away, so each
+// page has one extensionless address. Managed as its own delimited block so it
+// coexists with the HTTPS redirect and the password-gate block. The CMS calls
+// this (via install_clean_urls) whenever it applies SEO — and once per session
+// on load — so the server rule and the extensionless links the CMS writes into
+// pages always ship together and a site can't advertise URLs it can't serve.
+function fourgeWriteCleanUrlHtaccess() {
+    $htPath   = PUBLIC_HTML . '/.htaccess';
+    $existing = is_file($htPath) ? file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Clean URLs';
+    $end   = '# END Fourge Clean URLs';
+    // Nowdoc (single-quoted) so \s \. $1 %1 are all taken literally, and the
+    // closing marker sits at column 0 for pre-7.3 PHP compatibility.
+    $rules = <<<'HT'
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # /index.html -> the site root (one canonical home URL)
+  RewriteCond %{REQUEST_URI} !^/(admin|data)/ [NC]
+  RewriteCond %{THE_REQUEST} \s/+index\.html?[\s?] [NC]
+  RewriteRule ^ / [R=301,L]
+  # Any explicit .html request -> its extensionless URL (301)
+  RewriteCond %{REQUEST_URI} !^/(admin|data)/ [NC]
+  RewriteCond %{THE_REQUEST} \s/+(.+?)\.html[\s?] [NC]
+  RewriteRule ^ /%1 [R=301,L]
+  # Extensionless request -> serve the matching .html file when it exists
+  RewriteCond %{REQUEST_URI} !^/(admin|data)/ [NC]
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_FILENAME}\.html -f
+  RewriteRule ^(.+?)/?$ $1.html [L]
+</IfModule>
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        // Replace the existing managed block in place (substr splice, NOT
+        // preg_replace: the block contains $1, which preg would treat as a
+        // backreference).
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+function fourgeApiInstallCleanUrls($me) {
+    if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
+    if (!fourgeWriteCleanUrlHtaccess()) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Could not write .htaccess (check that the site root is writable by PHP)']);
+        return;
+    }
+    echo json_encode(['ok' => true]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');

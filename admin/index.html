@@ -2145,7 +2145,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.19';
+const CMS_VERSION='1.14.20';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2521,6 +2521,13 @@ async function initApp(){
   await checkGH();
   await loadDash();
   localStorage.setItem('cd_version',CMS_VERSION);
+  // Self-heal: ensure this site's server has the clean-URL rewrite rule, so the
+  // extensionless links the CMS writes into pages actually resolve. Runs once
+  // per tab session (retries on reload until it succeeds), non-blocking, and
+  // silently no-ops on an older api.php that doesn't know the action yet.
+  if(sessionStorage.getItem('fourge_cu_ok')!=='1'){
+    ensureCleanUrlRewrite().then(r=>{ if(r&&r.ok) sessionStorage.setItem('fourge_cu_ok','1'); });
+  }
   // Update check runs during the post-login loader (see initUpdateGate)
   try{ await initUpdateGate(); }catch(e){ console.warn('Update gate:',e.message); }
 }
@@ -4291,6 +4298,17 @@ function seoInjectIntoHtml(html,pg,base){
   doc.querySelectorAll('a[href]').forEach(a=>{ const h=a.getAttribute('href'), c=cleanHref(h); if(c!==h) a.setAttribute('href',c); });
   return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
 }
+// Clean URLs are always on, so the server needs a rewrite that serves /page
+// from /page.html (and 301s the .html form away). api.php writes that rule into
+// the site's .htaccess; we call it here so the extensionless links the CMS puts
+// into pages always have a matching server rule — a site can never advertise a
+// URL it can't serve. Best-effort: an older api.php (before this action) returns
+// an error, which we report rather than letting it fail the whole apply.
+async function ensureCleanUrlRewrite(){
+  if(!canCallApi()) return {ok:false,reason:'auth'};
+  try{ await apiCall('install_clean_urls',{}); return {ok:true}; }
+  catch(e){ console.warn('clean-URL rewrite install skipped:',e.message); return {ok:false,reason:e.message||'error'}; }
+}
 async function seoApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply SEO','err'); return; }
   const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
@@ -4308,7 +4326,10 @@ async function seoApplyAll(){
   }
   try{ await seoWriteSitemap(); }catch(e){}
   try{ await seoWriteRobots(false); }catch(e){}
-  toast(done?('SEO applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'')+' + sitemap/robots updated'):'Nothing applied','ok');
+  const cu=await ensureCleanUrlRewrite();
+  let msg = done?('SEO applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'')+' + sitemap/robots updated'):'Nothing applied';
+  if(done) msg += cu.ok ? '. Clean-URL server rule is active.' : '. Update admin/api.php to finish clean URLs.';
+  toast(msg,'ok');
 }
 // ── Sitemap + robots.txt ────────────────────────────────────────────────────
 function seoBuildSitemap(){
