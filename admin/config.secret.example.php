@@ -55,11 +55,23 @@ return [
     // deploying/updating api.php never overwrites it.
     // 'api_token'     => 'a-long-random-shared-secret',
 
-    // ── Mailgun (forms) ──
-    // Put your Mailgun values here so deploying/updating api.php never clobbers
-    // them. All optional — only needed if you use the contact forms.
+    // ── Contact forms: email delivery ──
+    // Two ways to send form submissions. Set ONE of them.
+    //
+    // (A) SMTP — works with any SMTP relay (Mailgun/SendGrid/etc.). Best for a
+    //     migrated site: paste the SMTP credentials you already have. When these
+    //     are set the CMS sends over SMTP (no API key needed).
+    // 'smtp_host'     => 'smtp.mailgun.org',   // 'smtp.eu.mailgun.org' for EU
+    // 'smtp_port'     => 587,                   // 587 = STARTTLS, 465 = implicit TLS
+    // 'smtp_username' => 'postmaster@mg.yoursite.com',
+    // 'smtp_password' => 'your-smtp-password',
+    // 'smtp_secure'   => 'auto',                // auto | tls | ssl | none (auto is fine)
+    //
+    // (B) Mailgun HTTP API — uses the Mailgun API KEY (not the SMTP password).
     // 'mg_domain'     => 'mg.yoursite.com',
     // 'mg_api_key'    => 'key-...',
+    //
+    // From address + where submissions land (used by BOTH methods above).
     // 'mg_from'       => 'Your Site <postmaster@mg.yoursite.com>',
     // 'mg_notify_to'  => 'you@yoursite.com',
 
