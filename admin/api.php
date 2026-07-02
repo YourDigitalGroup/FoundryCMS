@@ -125,10 +125,12 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 
 // ── AUTH MODEL ────────────────────────────────────────────────────────────────
 //  • 'login' is public — it verifies the email/password itself.
+//  • 'send_form' is public — it's the public contact-form endpoint. Site visitors
+//    have no token or session, so it must be reachable without auth; spam is held
+//    off by the optional reCAPTCHA check inside cmsSendForm.
 //  • Account + secret actions require a valid session token (from login).
-//  • Legacy file / GA / mail / AI actions accept the shared API_TOKEN OR a
-//    session token, so existing publishing and public form posts keep working.
-$PUBLIC_ACTIONS  = ['login'];
+//  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
+$PUBLIC_ACTIONS  = ['login', 'send_form'];
 $SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
