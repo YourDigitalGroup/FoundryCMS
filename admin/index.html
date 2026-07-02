@@ -1480,6 +1480,11 @@ textarea.fb-input{resize:vertical}
               <label class="pe-field-label">Submit button label</label>
               <input type="text" id="fb-submit-label" style="width:100%">
             </div>
+            <div class="pe-side-card">
+              <div class="pe-side-title">Custom CSS</div>
+              <label class="pe-field-label">Style this form (targets <code>.foundry-form</code>)</label>
+              <textarea id="fb-css" rows="6" spellcheck="false" style="width:100%;font-family:var(--font-mono);font-size:12px" placeholder="/* e.g. */&#10;.foundry-form .ff-submit{background:#111;border-radius:999px}&#10;.foundry-form input{border-color:#c8531e}"></textarea>
+            </div>
           </div>
         </div>
       </div>
@@ -2164,7 +2169,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.29';
+const CMS_VERSION='1.14.30';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2757,6 +2762,7 @@ function showFormBuilder(f){
   set('fb-subject',_curFormMeta.subject);
   set('fb-confirm',_curFormMeta.confirmation);
   set('fb-submit-label',_curFormMeta.submitLabel);
+  set('fb-css',_curFormMeta.css);
   renderFieldPalette();
   renderFormFields();
 }
@@ -2950,7 +2956,8 @@ async function saveForm(){
       notifyTo:get('fb-notify'),
       subject:get('fb-subject')||'New Form Submission',
       confirmation:get('fb-confirm')||'Thank you!',
-      submitLabel:get('fb-submit-label')||'Submit'
+      submitLabel:get('fb-submit-label')||'Submit',
+      css:get('fb-css')
     }
   };
   if(_curForm!=null) _forms[_curForm]=form;
@@ -2960,8 +2967,38 @@ async function saveForm(){
     goPanel('p-forms');
     renderFormsList();
     if(_convertSource){ await placeConvertedForm(form.id); }   // conversion: swap the on-page form for this one
-    else { toast('Form saved ✓','ok'); }
+    else {
+      const synced=await syncFormOnPages(form);   // re-render this form everywhere it's already placed
+      toast(synced.pages ? ('Form saved ✓ — updated on '+synced.pages+' page'+(synced.pages===1?'':'s')) : 'Form saved ✓','ok');
+    }
   }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+// Re-render a saved form onto every page where it's already placed, so field or
+// CSS edits actually reach the live site (placed forms are static HTML).
+async function syncFormOnPages(form){
+  if(!canCallApi()) return {pages:0};
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
+  const pages=getPageList();
+  const rendered=renderFormHtml(form);
+  const idAttr='data-form-id="'+form.id+'"';
+  let changed=0;
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp}); let html=d.content||'';
+      if(!html || html.indexOf(idAttr)<0) continue;   // this page doesn't have the form
+      let replaced=false;
+      html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ if(m.indexOf(idAttr)>=0){ replaced=true; return rendered; } return m; });
+      if(!replaced) continue;
+      if(!/\.foundry-form\s*\{|function ffSubmit/.test(html)){   // keep the runtime present
+        const assets=formsRuntimeAssets();
+        html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i, assets+'\n</body>') : (html+assets);
+      }
+      await apiCall('write_file',{path:fp,content:html});
+      changed++;
+    }catch(e){ console.warn('form sync failed for '+fp,e.message); }
+  }
+  return {pages:changed};
 }
 
 // ── CONVERT A HAND-CODED PAGE FORM INTO A BUILDER FORM ─────────────
@@ -3225,7 +3262,9 @@ function renderFormHtml(form){
     navBtns='<button type="submit" class="ff-submit">'+submitLabel+'</button>';
   }
 
-  return '<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'" data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
+  const fcss=String((form.settings&&form.settings.css)||'').replace(/<\/style/gi,'<\\/style');
+  const fst=fcss.trim()?'<style>'+fcss+'</style>':'';
+  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'" data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
     +pagesHtml
     +rcHtml
     +'<div class="ff-msg" style="display:none"></div>'
@@ -4152,7 +4191,8 @@ function ffRenderForm(form){
   var sl=esc((form.settings&&form.settings.submitLabel)||'Submit');
   var nav=multi?('<div class=\"ff-nav\"><button type=\"button\" class=\"ff-prev\" data-dir=\"-1\" style=\"display:none\">← Previous</button><button type=\"button\" class=\"ff-next\" data-dir=\"1\">Next →</button><button type=\"submit\" class=\"ff-submit\" style=\"display:none\">'+sl+'</button></div>'):('<button type=\"submit\" class=\"ff-submit\">'+sl+'</button>');
   var rc=_rcSiteKey?'<div class=\"ff-field\"><div class=\"g-recaptcha\" data-sitekey=\"'+_rcSiteKey+'\"></div></div>':'';
-  return '<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\" data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
+  var fst=((form.settings&&form.settings.css)||'').toString().trim()?('<style>'+form.settings.css+'</style>'):'';
+  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\" data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
