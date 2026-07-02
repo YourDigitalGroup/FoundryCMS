@@ -2169,7 +2169,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.31';
+const CMS_VERSION='1.14.32';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2990,10 +2990,7 @@ async function syncFormOnPages(form){
       let replaced=false;
       html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ if(m.indexOf(idAttr)>=0){ replaced=true; return rendered; } return m; });
       if(!replaced) continue;
-      if(!/\.foundry-form\s*\{|function ffSubmit/.test(html)){   // keep the runtime present
-        const assets=formsRuntimeAssets();
-        html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i, assets+'\n</body>') : (html+assets);
-      }
+      html=ensureFormsRuntime(html);   // refresh the managed CSS so older pages pick up the current layout
       await apiCall('write_file',{path:fp,content:html});
       changed++;
     }catch(e){ console.warn('form sync failed for '+fp,e.message); }
@@ -3111,10 +3108,7 @@ async function placeConvertedForm(formId){
     let n=-1, replaced=false;
     html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===src.formIndex && !/class=["'][^"']*foundry-form/.test(m)){ replaced=true; return rendered; } return m; });
     if(!replaced){ toast('Form saved. Couldn’t auto-locate the original form on '+src.label+' — add [form id='+formId+'] there manually.','err'); return; }
-    if(!/\.foundry-form\s*\{|function ffSubmit/.test(html)){   // inject the shared form CSS+JS once
-      const assets=formsRuntimeAssets();
-      html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i, assets+'\n</body>') : (html+assets);
-    }
+    html=ensureFormsRuntime(html);   // refresh/inject the shared form CSS+JS
     await apiCall('write_file',{path:src.path,content:html});
     toast('Form converted and placed on '+src.label+' ✓ — submissions will now show in Entries.','ok');
   }catch(e){ toast('Form saved, but updating '+src.label+' failed: '+(e.message||e),'err'); }
@@ -3274,28 +3268,35 @@ function renderFormHtml(form){
 }
 
 // Generates the shared runtime JS+CSS injected into pages that contain forms
-function formsRuntimeAssets(){
-  const css='<style>'
+// The shared form CSS, as one id'd <style> block so it can be found and
+// refreshed on older pages. Rules are scoped under .foundry-form and the layout
+// rules use !important so a host site's own form styles can't override the
+// side-by-side (half-width) layout — same reason the input border already does.
+function formsRuntimeCss(){
+  return '<style id="foundry-forms-css">'
     +'.foundry-form{max-width:600px;margin:0 auto;font-family:inherit}'
-    +'.foundry-form .ff-page{display:flex;flex-wrap:wrap;column-gap:18px}'
-    +'.ff-field{margin-bottom:18px;flex:1 1 100%;min-width:0}'
-    +'.ff-field.ff-half{flex:1 1 calc(50% - 9px)}'
-    +'@media(max-width:520px){.ff-field.ff-half{flex-basis:100%}}'
+    +'.foundry-form .ff-page{display:flex !important;flex-wrap:wrap;column-gap:18px}'
+    +'.foundry-form .ff-field{margin-bottom:18px;flex:1 1 100% !important;min-width:0;max-width:100%;box-sizing:border-box}'
+    +'.foundry-form .ff-field.ff-half{flex:1 1 calc(50% - 9px) !important;max-width:calc(50% - 9px)}'
+    +'@media(max-width:520px){.foundry-form .ff-field.ff-half{flex:1 1 100% !important;max-width:100%}}'
     +'.foundry-form label.ff-label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}'
-    +'.ff-req{color:#dc2626}'
+    +'.foundry-form .ff-req{color:#dc2626}'
     +'.foundry-form input,.foundry-form textarea,.foundry-form select{width:100%;padding:11px 13px;border:1px solid #d8d4cc !important;border-radius:10px !important;font-size:15px;font-family:inherit;box-sizing:border-box}'
     +'.foundry-form input[type=radio],.foundry-form input[type=checkbox]{width:auto;margin-right:8px}'
-    +'.ff-choices{display:flex;flex-direction:column;gap:8px}'
-    +'.ff-choice{display:flex;align-items:center;font-weight:400!important;font-size:15px}'
-    +'.ff-row{display:flex;gap:10px}.ff-row>*{flex:1}'
-    +'.ff-addr{display:flex;flex-direction:column;gap:10px}'
-    +'.ff-section{margin:24px 0 12px;border-bottom:2px solid #eee;padding-bottom:8px}.ff-section h3{font-size:18px;margin:0}.ff-section p{color:#777;font-size:14px;margin:4px 0 0}'
-    +'.ff-submit,.ff-next,.ff-prev{background:var(--ember,#C8531E);color:#fff;border:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}'
-    +'.ff-prev{background:#888}'
-    +'.ff-nav{display:flex;gap:10px;justify-content:space-between}'
-    +'.ff-msg{padding:14px;border-radius:8px;margin-bottom:14px;font-size:14px}'
-    +'.ff-msg.ok{background:#dcfce7;color:#166534}.ff-msg.err{background:#fee2e2;color:#991b1b}'
+    +'.foundry-form .ff-choices{display:flex;flex-direction:column;gap:8px}'
+    +'.foundry-form .ff-choice{display:flex;align-items:center;font-weight:400!important;font-size:15px}'
+    +'.foundry-form .ff-row{display:flex;gap:10px}.foundry-form .ff-row>*{flex:1}'
+    +'.foundry-form .ff-addr{display:flex;flex-direction:column;gap:10px}'
+    +'.foundry-form .ff-section{margin:24px 0 12px;border-bottom:2px solid #eee;padding-bottom:8px}.foundry-form .ff-section h3{font-size:18px;margin:0}.foundry-form .ff-section p{color:#777;font-size:14px;margin:4px 0 0}'
+    +'.foundry-form .ff-submit,.foundry-form .ff-next,.foundry-form .ff-prev{background:var(--ember,#C8531E);color:#fff;border:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}'
+    +'.foundry-form .ff-prev{background:#888}'
+    +'.foundry-form .ff-nav{display:flex;gap:10px;justify-content:space-between}'
+    +'.foundry-form .ff-msg{padding:14px;border-radius:8px;margin-bottom:14px;font-size:14px}'
+    +'.foundry-form .ff-msg.ok{background:#dcfce7;color:#166534}.foundry-form .ff-msg.err{background:#fee2e2;color:#991b1b}'
     +'</style>';
+}
+function formsRuntimeAssets(){
+  const css=formsRuntimeCss();
   const js='<scr'+'ipt>'
     +'function ffApiBase(){return (window.FOUNDRY_API||"/admin/api.php");}'
     +'function ffEvalCond(form){form.querySelectorAll("[data-cond-field]").forEach(function(el){'
@@ -3323,6 +3324,27 @@ function formsRuntimeAssets(){
     +'return false;}'
     +'</scr'+'ipt>';
   return css+js;
+}
+// Make sure a page carries the CURRENT shared form CSS/JS. Older pages were
+// injected with an earlier version of the runtime (before side-by-side fields
+// existed), and the old code skipped injection whenever any .foundry-form rule
+// was already present — so those pages never got the new layout CSS. This strips
+// any prior managed CSS (the id'd block or a legacy unmarked runtime <style>)
+// and re-adds the fresh one; the CSS goes in <head> so a form's own <style>
+// (placed just before the <form>) still wins, and the JS is added only if absent.
+function ensureFormsRuntime(html){
+  html=String(html||'');
+  html=html.replace(/<style id="foundry-forms-css">[\s\S]*?<\/style>/gi,'');
+  html=html.replace(/<style>(?:(?!<\/style>)[\s\S])*?\.foundry-form\s*\{\s*max-width:600px[\s\S]*?<\/style>/gi,'');
+  const css=formsRuntimeCss();
+  html = /<\/head>/i.test(html) ? html.replace(/<\/head>/i, css+'\n</head>')
+       : (/<\/body>/i.test(html) ? html.replace(/<\/body>/i, css+'\n</body>') : (html+css));
+  if(!/function ffSubmit/.test(html)){                       // runtime JS (submit/paging/conditional)
+    const full=formsRuntimeAssets();
+    const js=full.slice(full.indexOf('</style>')+'</style>'.length);   // assets minus the CSS block
+    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, js+'\n</body>') : (html+js);
+  }
+  return html;
 }
 
 
@@ -4114,10 +4136,10 @@ a:hover{text-decoration:underline}
 .empty-state{text-align:center;padding:80px 24px;color:var(--muted)}
 @media(max-width:600px){.single h1{font-size:32px}.archive-head h1{font-size:30px}.single .content{font-size:17px}}
 .foundry-form{max-width:600px;margin:32px 0}
-.foundry-form .ff-page{display:flex;flex-wrap:wrap;column-gap:18px}
-.ff-field{margin-bottom:18px;flex:1 1 100%;min-width:0}
-.ff-field.ff-half{flex:1 1 calc(50% - 9px)}
-@media(max-width:520px){.ff-field.ff-half{flex-basis:100%}}
+.foundry-form .ff-page{display:flex !important;flex-wrap:wrap;column-gap:18px}
+.foundry-form .ff-field{margin-bottom:18px;flex:1 1 100% !important;min-width:0;max-width:100%;box-sizing:border-box}
+.foundry-form .ff-field.ff-half{flex:1 1 calc(50% - 9px) !important;max-width:calc(50% - 9px)}
+@media(max-width:520px){.foundry-form .ff-field.ff-half{flex:1 1 100% !important;max-width:100%}}
 .foundry-form label.ff-label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
 .ff-req{color:#dc2626}
 .foundry-form input,.foundry-form textarea,.foundry-form select{width:100%;padding:11px 13px;border:1px solid #d8d4cc;border-radius:10px;font-size:15px;font-family:inherit;box-sizing:border-box}
