@@ -1438,7 +1438,7 @@ textarea.fb-input{resize:vertical}
            FORMS
       ═══════════════════════════════════════════════════════ -->
       <div class="panel" id="p-forms">
-        <div class="ta"><button class="fd-btn-primary" onclick="openNewForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Form</button></div>
+        <div class="ta" style="display:flex;gap:8px;flex-wrap:wrap"><button class="fd-btn-primary" onclick="openNewForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Form</button><button class="fd-btn-secondary" onclick="openConvertForm()" title="Turn an existing form on one of your pages into a managed form so its submissions are captured"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg> Convert a page form</button></div>
         <div id="forms-body"></div>
       </div>
 
@@ -1972,6 +1972,12 @@ textarea.fb-input{resize:vertical}
     <div class="mb" id="mv-body" style="flex:1;min-height:0;display:flex;padding:0;overflow:hidden"></div>
   </div>
 </div>
+<div class="mw" id="m-form-convert">
+  <div class="modal" style="width:640px;max-width:94vw;max-height:82vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Convert a form from a page</h2><button class="ib" onclick="closeM('m-form-convert')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" id="form-convert-body" style="overflow-y:auto"></div>
+  </div>
+</div>
 <div class="mw" id="m-adduser">
   <div class="modal" style="width:480px">
     <div class="mh"><h2>Add User</h2><button class="ib" onclick="closeM('m-adduser')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -2151,7 +2157,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.26';
+const CMS_VERSION='1.14.27';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -2632,6 +2638,8 @@ let _curFormMeta={};     // working form settings
 let _entries=[];         // submissions
 let _curEntriesForm=null;// form id whose entries are on screen (used by CSV export)
 let _orphanEntryIds=[];  // entry formIds with no matching built form (external / hand-coded forms)
+let _convertScan=[];     // forms found on pages, ready to convert to builder forms
+let _convertSource=null; // {pageId,path,formIndex,label} of a form being converted (placed on save)
 
 // All Gravity-style field types
 const FIELD_TYPES=[
@@ -2683,7 +2691,7 @@ function renderFormsList(){
   // on the site posting to the same endpoint). Surface them so no entry is hidden.
   const knownIds=new Set(_forms.map(f=>f.id));
   const orphanCounts={};
-  (_entries||[]).forEach(e=>{ const id=e.formId; if(id && !knownIds.has(id)){ orphanCounts[id]=(orphanCounts[id]||0)+1; } });
+  (_entries||[]).forEach(e=>{ const id=e.formId||''; if(!knownIds.has(id)){ orphanCounts[id]=(orphanCounts[id]||0)+1; } });   // '' = submissions with no form ID
   _orphanEntryIds=Object.keys(orphanCounts);
   if(!_forms.length && !_orphanEntryIds.length){
     body.innerHTML='<div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg><h3>No forms yet</h3><p>Click New Form to build your first form.</p></div>';
@@ -2703,7 +2711,7 @@ function renderFormsList(){
   // opened by index (viewOrphanEntries), never interpolated into a JS handler.
   rows+=_orphanEntryIds.map((id,oi)=>
       '<tr>'
-        +'<td style="font-size:13px;font-weight:600">'+esc(id)+' <span style="font-weight:400;color:var(--muted);font-size:11px">· external form</span></td>'
+        +'<td style="font-size:13px;font-weight:600">'+(id?esc(id):'Uncategorized')+' <span style="font-weight:400;color:var(--muted);font-size:11px">· '+(id?'external form':'no form ID')+'</span></td>'
         +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td style="font-size:12px"><a href="#" onclick="viewOrphanEntries('+oi+');return false" style="color:var(--ember);font-weight:600">'+orphanCounts[id]+'</a></td>'
@@ -2904,10 +2912,130 @@ async function saveForm(){
   else _forms.unshift(form);
   try{
     await saveFormsJson();
-    toast('Form saved ✓','ok');
     goPanel('p-forms');
     renderFormsList();
+    if(_convertSource){ await placeConvertedForm(form.id); }   // conversion: swap the on-page form for this one
+    else { toast('Form saved ✓','ok'); }
   }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+
+// ── CONVERT A HAND-CODED PAGE FORM INTO A BUILDER FORM ─────────────
+// Migrated sites arrive with plain HTML <form>s that post to their old handler,
+// so the CMS never sees a submission. Converting parses the form's inputs into a
+// builder form and (on save) swaps the on-page markup for the CMS form, so from
+// then on submissions are captured and appear under Forms → Entries.
+function humanizeName(n){
+  return String(n||'').replace(/\[\]$/,'').replace(/[_\-.\[\]]+/g,' ').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/\s+/g,' ').trim().replace(/\b\w/g,c=>c.toUpperCase());
+}
+function attrEsc(s){ return String(s).replace(/(["\\])/g,'\\$1'); }   // for a quoted attribute selector
+function ctrlLabel(formEl,el){
+  if(el.id){ const l=formEl.querySelector('label[for="'+attrEsc(el.id)+'"]'); if(l&&l.textContent.trim()) return l.textContent.trim(); }
+  let p=el.parentElement; while(p&&p!==formEl){ if(p.tagName==='LABEL'){ const t=p.textContent.trim(); if(t) return t; } p=p.parentElement; }
+  const aria=el.getAttribute&&el.getAttribute('aria-label'); if(aria) return aria.trim();
+  if(el.placeholder) return el.placeholder.trim();
+  return humanizeName(el.name||el.id||'Field');
+}
+function choiceLabel(formEl,el){
+  if(el.id){ const l=formEl.querySelector('label[for="'+attrEsc(el.id)+'"]'); if(l&&l.textContent.trim()) return l.textContent.trim(); }
+  let p=el.parentElement; while(p&&p!==formEl){ if(p.tagName==='LABEL'){ const t=p.textContent.trim(); if(t) return t; } p=p.parentElement; }
+  const sib=el.nextSibling; if(sib&&sib.textContent&&sib.textContent.trim()) return sib.textContent.trim();
+  return el.value||'';
+}
+// Map an HTML <form>'s controls to builder fields (grouping radios/checkboxes).
+function parseHtmlFormToFields(formEl){
+  const fields=[], seen={};
+  const map={email:'email',tel:'phone',number:'number',url:'website',date:'date'};
+  formEl.querySelectorAll('input,textarea,select').forEach(el=>{
+    const tag=el.tagName.toLowerCase();
+    const type=(el.getAttribute('type')||'').toLowerCase();
+    const name=el.name||'';
+    if(tag==='input' && ['submit','button','image','reset'].indexOf(type)>=0) return;
+    if(tag==='input' && type==='hidden'){
+      if(/honey|hp|company|_gotcha|captcha|token|csrf/i.test(name)) return;   // drop obvious honeypots / tokens
+      fields.push({id:uid(),type:'hidden',label:name||'hidden',value:el.value||''}); return;
+    }
+    if(tag==='textarea'){ fields.push({id:uid(),type:'textarea',label:ctrlLabel(formEl,el),required:!!el.required,placeholder:el.placeholder||''}); return; }
+    if(tag==='select'){
+      const named=[...el.options].filter(o=>o.value!=='').map(o=>o.textContent.trim()).filter(Boolean);
+      const all=[...el.options].map(o=>o.textContent.trim()).filter(Boolean);
+      fields.push({id:uid(),type:'select',label:ctrlLabel(formEl,el),required:!!el.required,choices:named.length?named:all}); return;
+    }
+    if(tag==='input' && (type==='radio'||type==='checkbox')){
+      const key=type+':'+name; if(seen[key]) return; seen[key]=true;
+      const group=[...formEl.querySelectorAll('input[type='+type+'][name="'+attrEsc(name)+'"]')];
+      const choices=group.map(g=>choiceLabel(formEl,g)).filter(Boolean);
+      fields.push({id:uid(),type:type,label:humanizeName(name.replace(/\[\]$/,''))||ctrlLabel(formEl,el),required:group.some(g=>g.required),choices:choices.length?choices:[ctrlLabel(formEl,el)]}); return;
+    }
+    if(tag==='input'){ fields.push({id:uid(),type:(map[type]||'text'),label:ctrlLabel(formEl,el),required:!!el.required,placeholder:el.placeholder||''}); return; }
+  });
+  return fields;
+}
+// Scan every page for hand-coded forms and parse each into builder fields.
+async function formScanPages(){
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
+  const pages=getPageList(), found=[];
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    let html=''; try{ const d=await apiCall('read_file',{path:fp}); html=d.content||''; }catch{ continue; }
+    if(!html || !/<form\b/i.test(html)) continue;
+    let doc; try{ doc=new DOMParser().parseFromString(html,'text/html'); }catch{ continue; }
+    [...doc.querySelectorAll('form')].forEach((f,idx)=>{
+      if(f.classList.contains('foundry-form')) return;   // already a CMS form
+      const fields=parseHtmlFormToFields(f);
+      if(!fields.length) return;
+      found.push({ pageId:pg.id, path:fp, label:pg.label||fp, formIndex:idx, fields,
+        summary:fields.filter(x=>x.type!=='hidden').slice(0,6).map(x=>x.label).join(', ') });
+    });
+  }
+  return found;
+}
+async function openConvertForm(){
+  if(!canCallApi()){ toast('Sign in again to scan your pages','err'); return; }
+  openM('m-form-convert');
+  const body=document.getElementById('form-convert-body');
+  body.innerHTML='<div style="padding:16px;color:var(--muted);font-size:13px">Scanning your pages for forms…</div>';
+  _convertScan=await formScanPages();
+  if(!_convertScan.length){ body.innerHTML='<div class="empty" style="padding:24px"><h3>No convertible forms found</h3><p>No hand-coded &lt;form&gt; was found on your pages. (Forms already built in the CMS are skipped.)</p></div>'; return; }
+  body.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Pick a form to turn into a managed form. You can review the fields before it goes live; on Save the CMS replaces the form on that page so submissions start landing in Entries.</div>'
+    +_convertScan.map((it,i)=>
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
+        +'<div style="min-width:0"><div style="font-size:13px;font-weight:600">'+esc(it.label)+'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis">'+it.fields.length+' field'+(it.fields.length===1?'':'s')+': '+esc(it.summary)+(it.fields.filter(x=>x.type!=='hidden').length>6?'…':'')+'</div></div>'
+        +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:13px;padding:8px 14px" onclick="startConvertForm('+i+')">Convert →</button>'
+      +'</div>'
+    ).join('');
+}
+function startConvertForm(i){
+  const it=_convertScan[i]; if(!it) return;
+  closeM('m-form-convert');
+  _curForm=null;
+  _curFormMeta={ notifyTo:(_site&&_site.email)||'', subject:'New Form Submission', confirmation:'Thanks! Your message has been received.', submitLabel:'Submit' };
+  _formFields=JSON.parse(JSON.stringify(it.fields));
+  _convertSource={ pageId:it.pageId, path:it.path, formIndex:it.formIndex, label:it.label };
+  const t=String(it.label||'').replace(/\.html?$/i,'').replace(/[\/_-]+/g,' ').trim();
+  showFormBuilder({ title:(t?t.replace(/\b\w/g,c=>c.toUpperCase()):'Contact')+' Form' });
+  toast('Review the fields, then click Save — I’ll place the form on '+it.label+' automatically.','ok');
+}
+// After the converted form is saved, swap the original <form> on the page for the
+// CMS-rendered form and make sure the forms runtime is present, then save the page.
+async function placeConvertedForm(formId){
+  const src=_convertSource; _convertSource=null;
+  if(!src) return;
+  const form=_forms.find(f=>f.id===formId); if(!form){ toast('Form saved.','ok'); return; }
+  try{
+    const d=await apiCall('read_file',{path:src.path}); let html=d.content||'';
+    if(!html){ toast('Form saved, but the page couldn’t be read. Add [form id='+formId+'] where you want it.','err'); return; }
+    const rendered=renderFormHtml(form);
+    let n=-1, replaced=false;
+    html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===src.formIndex && !/class=["'][^"']*foundry-form/.test(m)){ replaced=true; return rendered; } return m; });
+    if(!replaced){ toast('Form saved. Couldn’t auto-locate the original form on '+src.label+' — add [form id='+formId+'] there manually.','err'); return; }
+    if(!/\.foundry-form\s*\{|function ffSubmit/.test(html)){   // inject the shared form CSS+JS once
+      const assets=formsRuntimeAssets();
+      html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i, assets+'\n</body>') : (html+assets);
+    }
+    await apiCall('write_file',{path:src.path,content:html});
+    toast('Form converted and placed on '+src.label+' ✓ — submissions will now show in Entries.','ok');
+  }catch(e){ toast('Form saved, but updating '+src.label+' failed: '+(e.message||e),'err'); }
 }
 
 // ── ENTRIES ───────────────────────────────────────────────────────
@@ -2929,7 +3057,7 @@ async function viewEntries(formId){
   const rows=entriesForForm(formId);
   goPanel('p-entries');
   const titleEl=document.getElementById('entries-title');
-  const label=form?decodeHtml(form.title||'Form'):('External form · '+formId);
+  const label=form?decodeHtml(form.title||'Form'):(formId?('External form · '+formId):'Submissions with no form ID');
   if(titleEl) titleEl.textContent=label+' — Entries ('+rows.length+')';
   const body=document.getElementById('entries-body');
   if(!body)return;
@@ -2952,7 +3080,7 @@ async function viewEntries(formId){
 function backToForms(){ goPanel('p-forms'); }
 function viewOrphanEntries(i){ const id=_orphanEntryIds[i]; if(id!=null) viewEntries(id); }
 function entriesForForm(formId){
-  return (_entries||[]).filter(e=>e.formId===formId).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  return (_entries||[]).filter(e=>(e.formId||'')===(formId||'')).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 }
 // Columns = union of field labels across this form's entries, in first-seen order
 // (each entry's own key order follows the form's field order at submit time).
