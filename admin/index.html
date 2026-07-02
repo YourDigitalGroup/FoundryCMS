@@ -2169,7 +2169,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.30';
+const CMS_VERSION='1.14.31';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets. api.php is deliberately excluded
 // (it carries this site's API token + Mailgun keys) — it stays a manual update.
@@ -6135,6 +6135,24 @@ function updatePageCount(){
   const stP=document.getElementById('st-pages'); if(stP) stP.textContent=n;
 }
 
+// Pull the CSS that already lives in a page's own <style> blocks so the per-page
+// CSS box shows what's there and can be edited. Skips our managed override block
+// and the shared forms-runtime styles — those aren't hand-authored page CSS and
+// shouldn't round-trip back into the editable box.
+function extractPageOwnCss(html){
+  try{
+    const doc=new DOMParser().parseFromString(String(html||''),'text/html');
+    const parts=[];
+    doc.querySelectorAll('style').forEach(s=>{
+      if(s.hasAttribute('data-fourge-page')||s.id==='fourge-page-css') return; // managed override block
+      const t=(s.textContent||'').trim();
+      if(!t) return;
+      if(/\.foundry-form\s*\{\s*max-width/.test(t)) return; // forms runtime, not page CSS
+      parts.push(t);
+    });
+    return parts.join('\n\n');
+  }catch(e){ return ''; }
+}
 // ── PAGE SETTINGS (gear icon on each page row) ──────────────────────────────
 function openPageSettings(pid){
   const pg=_pages[pid]; if(!pg){ toast('Page not found','err'); return; }
@@ -6144,7 +6162,24 @@ function openPageSettings(pid){
   const protEl=document.getElementById('ps-protect'); if(protEl) protEl.checked=!!pg.protected;
   const pwEl=document.getElementById('ps-protect-pw'); if(pwEl){ pwEl.value=''; pwEl.placeholder=pg.protected?'Leave blank to keep current password':'Set a password (min 4 characters)'; }
   psToggleProtect();
-  document.getElementById('ps-css').value=pg.customCss||'';
+  const cssEl=document.getElementById('ps-css');
+  if(cssEl._ph==null) cssEl._ph=cssEl.getAttribute('placeholder')||''; // cache the real default once
+  cssEl.placeholder=cssEl._ph;
+  cssEl.value=pg.customCss||'';
+  // First open (no custom CSS yet): surface the page's own <style> CSS so it's
+  // visible and editable. Saved edits layer on top as a managed override block.
+  if(!(pg.customCss||'').trim()){
+    const fp=pg.path||pg.file;
+    if(fp && canCallApi()){
+      cssEl.placeholder='Loading this page’s CSS…';
+      apiCall('read_file',{path:fp}).then(d=>{
+        if(document.getElementById('ps-pid').value!==pid) return; // page switched while loading
+        const own=extractPageOwnCss(d&&d.content||'');
+        if(own && !cssEl.value.trim()) cssEl.value=own;
+        cssEl.placeholder=cssEl._ph;
+      }).catch(()=>{ cssEl.placeholder=cssEl._ph; });
+    }
+  }
   document.getElementById('ps-js').value=pg.customJs||'';
   psRenderHeadings(pg.headingStyles||{});
   openM('m-pagesettings');
