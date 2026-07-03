@@ -414,6 +414,15 @@ function cmsWriteFile($body) {
         echo json_encode(['error' => 'Path not allowed']);
         return;
     }
+    // api.php may be auto-updated by the engine updater, but ONLY on installs that
+    // keep their secrets in config.secret.php. If that file is absent, this site may
+    // still carry secrets inline in api.php — refuse the overwrite so an update can
+    // never wipe them. (Move secrets into config.secret.php to enable auto-update.)
+    if (realpath($dest) === realpath(__FILE__) && !is_file(__DIR__ . '/config.secret.php')) {
+        http_response_code(409);
+        echo json_encode(['error' => 'Refusing to overwrite api.php: config.secret.php not found. Move this site\'s secrets into config.secret.php first — then api.php auto-updates.']);
+        return;
+    }
     if (!is_dir($dir)) mkdir($dir, 0755, true);
     if (file_put_contents($dest, $content) === false) {
         http_response_code(500);
@@ -1372,6 +1381,7 @@ function fourgeUpdateFetchAllow() {
         'posts.jsx',
         'preview.html',
         'adaptify.js',
+        'admin/api.php',
     ];
 }
 

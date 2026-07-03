@@ -2169,12 +2169,15 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.32';
+const CMS_VERSION='1.14.33';
 // Engine files the self-updater is allowed to pull from the CMS repo.
-// These hold NO per-site data or secrets. api.php is deliberately excluded
-// (it carries this site's API token + Mailgun keys) — it stays a manual update.
+// These hold NO per-site data or secrets — secrets live in config.secret.php.
+// api.php is now auto-updatable too (it reads its secrets from config.secret.php,
+// so the repo copy is secret-free): it's written best-effort, and the server
+// refuses the overwrite on any site missing config.secret.php (see api.php →
+// cmsWriteFile) so an update can never wipe an un-migrated site's inline secrets.
 // This must mirror the server allow-list in api.php → fourgeUpdateFetchAllow().
-const UPDATE_FILES_ALLOWED=['admin/index.html','admin/db.php','block-renderer.jsx','blog-post.jsx','interior-shell.jsx','posts.jsx','preview.html','adaptify.js'];
+const UPDATE_FILES_ALLOWED=['admin/index.html','admin/db.php','block-renderer.jsx','blog-post.jsx','interior-shell.jsx','posts.jsx','preview.html','adaptify.js','admin/api.php'];
 const UPDATE_FILES_DEFAULT=UPDATE_FILES_ALLOWED.slice(); // used when version.json omits "files"
 const UPDATE_THROTTLE_MS=20*60*60*1000; // ~daily: don't re-check on every login within a day
 const F_PAGES='data/pages.json',F_POSTS='data/posts.json',F_SEO='data/seo.json';
@@ -5840,8 +5843,10 @@ async function checkForUpdates(){
 
 // Pull the CMS engine files from the repo (read-only) and write them back to
 // THIS server via api.php. The file set comes from version.json's "files"
-// manifest, hard-filtered to UPDATE_FILES_ALLOWED — so api.php (this site's
-// secrets) and any site data can NEVER be overwritten by an update.
+// manifest, hard-filtered to UPDATE_FILES_ALLOWED — so site data can never be
+// overwritten by an update. api.php is handled as a best-effort extra (below):
+// it's secret-free in the repo, but the server refuses to overwrite it on a site
+// that lacks config.secret.php, so an update can't wipe inline secrets.
 // Pass the status object from getUpdateStatus() to reuse its manifest; omit to
 // resolve a fresh one. index.html is written LAST so the entry point never runs
 // ahead of the data layer it depends on.
@@ -5858,6 +5863,10 @@ async function doUpdate(st){
     let files=(Array.isArray(remote.files)&&remote.files.length?remote.files:UPDATE_FILES_DEFAULT)
                 .filter(f=>UPDATE_FILES_ALLOWED.includes(f));
     if(!files.length) files=UPDATE_FILES_DEFAULT.slice();
+    // api.php rides along but is best-effort — pull it out of the core set so a
+    // refusal (site without config.secret.php) can't abort the engine update.
+    const wantApi=files.includes('admin/api.php');
+    files=files.filter(f=>f!=='admin/api.php');
     // 1) Download everything first so a mid-way failure leaves nothing written.
     const blobs={};
     for(const f of files){ blobs[f]=await fetchRepoFile(repo,branch,f); }
@@ -5868,6 +5877,15 @@ async function doUpdate(st){
     // 2) Write engine files, index.html last.
     const order=files.slice().sort((a,b)=> a==='admin/index.html'?1 : (b==='admin/index.html'?-1:0));
     for(const f of order){ await apiCall('write_file',{path:f,content:blobs[f]}); }
+    // 3) api.php last, isolated: migrated sites (config.secret.php present) get it;
+    //    others are refused server-side and skip silently — never fails the update.
+    if(wantApi){
+      try{
+        const apiContent=await fetchRepoFile(repo,branch,'admin/api.php');
+        if(apiContent && apiContent.indexOf('$PUBLIC_ACTIONS')>=0)   // sanity: looks like our api.php
+          await apiCall('write_file',{path:'admin/api.php',content:apiContent});
+      }catch(e){ console.warn('api.php not auto-updated (site may not use config.secret.php):',e.message); }
+    }
     return true;
   }catch(e){ toast('Update failed: '+e.message,'err'); return false; }
 }
