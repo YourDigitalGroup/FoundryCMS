@@ -1481,8 +1481,41 @@ textarea.fb-input{resize:vertical}
               <input type="text" id="fb-submit-label" style="width:100%">
             </div>
             <div class="pe-side-card">
+              <div class="pe-side-title">Form Header</div>
+              <label class="pe-field-label">Heading (shown above the form)</label>
+              <input type="text" id="fb-header-title" placeholder="e.g. Get in touch" style="width:100%;margin-bottom:12px">
+              <label class="pe-field-label">Intro text</label>
+              <textarea id="fb-header-desc" rows="2" placeholder="A short line under the heading (optional)" style="width:100%"></textarea>
+            </div>
+            <div class="pe-side-card">
+              <div class="pe-side-title">Styles</div>
+              <label class="pe-field-label">Background color</label>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                <input type="color" id="fb-style-bg" value="#ffffff" data-set="0" oninput="this.dataset.set='1'" style="width:44px;height:32px;border:1px solid var(--border);border-radius:6px;padding:2px;cursor:pointer">
+                <button type="button" class="btn btn-o btn-xs" onclick="fbClearColor('fb-style-bg')">None</button>
+              </div>
+              <label class="pe-field-label">Field corner radius (px)</label>
+              <input type="number" id="fb-style-radius" min="0" max="80" placeholder="e.g. 10" style="width:100%;margin-bottom:12px">
+              <label class="fb-check" style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><input type="checkbox" id="fb-style-labels" checked> Show field labels</label>
+              <label class="pe-field-label">Button color</label>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                <input type="color" id="fb-style-button" value="#c8531e" data-set="0" oninput="this.dataset.set='1'" style="width:44px;height:32px;border:1px solid var(--border);border-radius:6px;padding:2px;cursor:pointer">
+                <button type="button" class="btn btn-o btn-xs" onclick="fbClearColor('fb-style-button')">Default</button>
+              </div>
+              <label class="pe-field-label">Label color</label>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                <input type="color" id="fb-style-label" value="#1a1917" data-set="0" oninput="this.dataset.set='1'" style="width:44px;height:32px;border:1px solid var(--border);border-radius:6px;padding:2px;cursor:pointer">
+                <button type="button" class="btn btn-o btn-xs" onclick="fbClearColor('fb-style-label')">Default</button>
+              </div>
+              <label class="pe-field-label">Input border color</label>
+              <div style="display:flex;align-items:center;gap:8px">
+                <input type="color" id="fb-style-border" value="#d8d4cc" data-set="0" oninput="this.dataset.set='1'" style="width:44px;height:32px;border:1px solid var(--border);border-radius:6px;padding:2px;cursor:pointer">
+                <button type="button" class="btn btn-o btn-xs" onclick="fbClearColor('fb-style-border')">Default</button>
+              </div>
+            </div>
+            <div class="pe-side-card">
               <div class="pe-side-title">Custom CSS</div>
-              <label class="pe-field-label">Style this form (targets <code>.foundry-form</code>)</label>
+              <label class="pe-field-label">Advanced — extra CSS (targets <code>.foundry-form</code>)</label>
               <textarea id="fb-css" rows="6" spellcheck="false" style="width:100%;font-family:var(--font-mono);font-size:12px" placeholder="/* e.g. */&#10;.foundry-form .ff-submit{background:#111;border-radius:999px}&#10;.foundry-form input{border-color:#c8531e}"></textarea>
             </div>
           </div>
@@ -2169,7 +2202,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.33';
+const CMS_VERSION='1.14.34';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2672,9 +2705,11 @@ const FIELD_TYPES=[
   {t:'website',  label:'Website / URL',    cat:'advanced'},
   {t:'file',     label:'File Upload',      cat:'advanced'},
   {t:'hidden',   label:'Hidden Field',     cat:'advanced'},
-  {t:'html',     label:'HTML Block',       cat:'advanced'},
-  {t:'section',  label:'Section Break',    cat:'advanced'},
-  {t:'pagebreak',label:'Page Break',       cat:'advanced'},
+  {t:'heading',  label:'Heading',          cat:'layout'},
+  {t:'paragraph',label:'Text',             cat:'layout'},
+  {t:'section',  label:'Section Break',    cat:'layout'},
+  {t:'html',     label:'HTML Block',       cat:'layout'},
+  {t:'pagebreak',label:'Page Break',       cat:'layout'},
 ];
 
 async function saveFormsJson(){
@@ -2766,14 +2801,26 @@ function showFormBuilder(f){
   set('fb-confirm',_curFormMeta.confirmation);
   set('fb-submit-label',_curFormMeta.submitLabel);
   set('fb-css',_curFormMeta.css);
+  set('fb-header-title',_curFormMeta.headerTitle);
+  set('fb-header-desc',_curFormMeta.headerDesc);
+  const style=_curFormMeta.style||{};
+  const setColor=(id,val,def)=>{const el=document.getElementById(id);if(!el)return; if(val){el.value=val;el.dataset.set='1';}else{el.value=def;el.dataset.set='0';}};
+  setColor('fb-style-bg',(style.bg&&style.bg!=='none')?style.bg:'','#ffffff');
+  setColor('fb-style-button',style.button,'#c8531e');
+  setColor('fb-style-label',style.label,'#1a1917');
+  setColor('fb-style-border',style.border,'#d8d4cc');
+  const radEl=document.getElementById('fb-style-radius'); if(radEl) radEl.value=(style.radius!=null&&style.radius!=='')?style.radius:'';
+  const labEl=document.getElementById('fb-style-labels'); if(labEl) labEl.checked=(style.labels!=='hide');
   renderFieldPalette();
   renderFormFields();
 }
+// Clear a form-builder color swatch back to "unset" (uses the theme default).
+function fbClearColor(id){ const el=document.getElementById(id); if(el) el.dataset.set='0'; }
 
 function renderFieldPalette(){
   const pal=document.getElementById('fb-palette');
   if(!pal)return;
-  const groups={standard:'Standard Fields',advanced:'Advanced Fields'};
+  const groups={standard:'Standard Fields',advanced:'Advanced Fields',layout:'Layout & Content'};
   pal.innerHTML=Object.keys(groups).map(cat=>
     '<div class="fb-pal-group"><div class="fb-pal-label">'+groups[cat]+'</div>'
     +FIELD_TYPES.filter(ft=>ft.cat===cat).map(ft=>
@@ -2787,6 +2834,8 @@ function addField(type){
   const f={id:uid(),type,label:defaultLabel(type),required:false};
   if(['select','radio','checkbox'].includes(type)) f.choices=['First Choice','Second Choice','Third Choice'];
   if(type==='html') f.content='<p>Custom HTML here</p>';
+  if(type==='paragraph') f.content='Add your text here.';
+  if(type==='heading') f.label='Section Heading';
   if(type==='section') f.label='Section Break';
   if(type==='pagebreak') f.label='Page Break';
   _formFields.push(f);
@@ -2794,7 +2843,7 @@ function addField(type){
 }
 
 function defaultLabel(type){
-  const m={text:'Untitled',textarea:'Message',email:'Email',phone:'Phone',number:'Number',select:'Dropdown',radio:'Pick One',checkbox:'Select All That Apply',date:'Date',name:'Name',address:'Address',website:'Website',file:'Upload File',hidden:'Hidden',html:'HTML',section:'Section Break',pagebreak:'Page Break'};
+  const m={text:'Untitled',textarea:'Message',email:'Email',phone:'Phone',number:'Number',select:'Dropdown',radio:'Pick One',checkbox:'Select All That Apply',date:'Date',name:'Name',address:'Address',website:'Website',file:'Upload File',hidden:'Hidden',html:'HTML',heading:'Heading',paragraph:'Text',section:'Section Break',pagebreak:'Page Break'};
   return m[type]||'Field';
 }
 
@@ -2813,8 +2862,14 @@ function renderFieldCard(f,i){
   const typeLabel=ft?ft.label:f.type;
   let body='';
   // Label (most fields)
-  if(!['section','pagebreak','html','hidden'].includes(f.type)){
+  if(!['section','pagebreak','html','hidden','heading','paragraph'].includes(f.type)){
     body+='<label class="fb-fl">Field Label</label><input type="text" value="'+esc(f.label||'')+'" oninput="updateField('+i+',\'label\',this.value)" class="fb-input">';
+  }
+  if(f.type==='heading'){
+    body+='<label class="fb-fl">Heading text</label><input type="text" value="'+esc(f.label||'')+'" oninput="updateField('+i+',\'label\',this.value)" class="fb-input">';
+  }
+  if(f.type==='paragraph'){
+    body+='<label class="fb-fl">Text</label><textarea class="fb-input" placeholder="Write a line or paragraph of text" oninput="updateField('+i+',\'content\',this.value)" rows="3">'+esc(f.content||'')+'</textarea>';
   }
   if(f.type==='section'){
     body+='<label class="fb-fl">Section Title</label><input type="text" value="'+esc(f.label||'')+'" oninput="updateField('+i+',\'label\',this.value)" class="fb-input">';
@@ -2839,11 +2894,11 @@ function renderFieldCard(f,i){
     body+='<label class="fb-fl">Choices (one per line)</label><textarea class="fb-input" oninput="updateField('+i+',\'choicesText\',this.value)" rows="3">'+esc((f.choices||[]).join('\n'))+'</textarea>';
   }
   // Required toggle (not for layout fields)
-  if(!['section','pagebreak','html','hidden'].includes(f.type)){
+  if(!['section','pagebreak','html','hidden','heading','paragraph'].includes(f.type)){
     body+='<label class="fb-check"><input type="checkbox" '+(f.required?'checked':'')+' onchange="updateField('+i+',\'required\',this.checked)"> Required field</label>';
   }
   // Width — two half-width fields sit side by side (e.g. First Name | Last Name)
-  if(!['section','pagebreak','html','hidden'].includes(f.type)){
+  if(!['section','pagebreak','html','hidden','heading','paragraph'].includes(f.type)){
     const w=(f.width==='half')?'half':'full';
     body+='<label class="fb-fl">Width</label>'
       +'<div class="fb-width-toggle">'
@@ -2852,7 +2907,7 @@ function renderFieldCard(f,i){
       +'</div>';
   }
   // Conditional logic
-  if(!['section','pagebreak'].includes(f.type)){
+  if(!['section','pagebreak','heading','paragraph'].includes(f.type)){
     body+=renderConditionalUI(f,i);
   }
   return '<div class="fb-field" data-id="'+f.id+'" ondragover="fbDragOver(event,'+i+')" ondragleave="fbDragLeave(event)" ondrop="fbDrop(event,'+i+')">'
@@ -2951,6 +3006,16 @@ async function saveForm(){
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
   const title=get('fb-title');
   if(!title){ toast('Form needs a title','err'); return; }
+  // Visual style controls → a compact style object (only keys the user actually set).
+  const colorVal=id=>{const el=document.getElementById(id);return (el&&el.dataset.set==='1')?el.value:'';};
+  const style={};
+  const bg=colorVal('fb-style-bg'); if(bg) style.bg=bg;
+  const radRaw=(document.getElementById('fb-style-radius')||{}).value;
+  if(radRaw!=='' && radRaw!=null && isFinite(+radRaw)) style.radius=Math.max(0,Math.min(80,Math.round(+radRaw)));
+  const showLabels=(document.getElementById('fb-style-labels')||{checked:true}).checked; if(!showLabels) style.labels='hide';
+  const btn=colorVal('fb-style-button'); if(btn) style.button=btn;
+  const lc=colorVal('fb-style-label'); if(lc) style.label=lc;
+  const bc=colorVal('fb-style-border'); if(bc) style.border=bc;
   const form={
     id:(_curForm!=null&&_forms[_curForm]?.id)||('form-'+uid().slice(0,5)),
     title,
@@ -2960,7 +3025,10 @@ async function saveForm(){
       subject:get('fb-subject')||'New Form Submission',
       confirmation:get('fb-confirm')||'Thank you!',
       submitLabel:get('fb-submit-label')||'Submit',
-      css:get('fb-css')
+      css:get('fb-css'),
+      headerTitle:get('fb-header-title'),
+      headerDesc:get('fb-header-desc'),
+      style
     }
   };
   if(_curForm!=null) _forms[_curForm]=form;
@@ -3052,6 +3120,25 @@ function parseHtmlFormToFields(formEl){
   });
   return fields;
 }
+// Grab a heading + intro paragraph associated with a hand-coded form, so converting
+// it doesn't lose the "Get in touch"-style header that sat with the original form.
+// Looks inside the form (before its first field) and in the form's container
+// (siblings that appear before the form) — the first heading + first paragraph win.
+function captureFormHeader(formEl){
+  const out={title:'',desc:''};
+  const scan=(root,stopAt)=>{
+    if(!root) return;
+    for(const el of root.children){
+      if(el===stopAt) break;
+      const tag=el.tagName.toLowerCase();
+      if(!out.title && /^h[1-6]$/.test(tag)){ const t=el.textContent.trim(); if(t) out.title=t; }
+      else if(!out.desc && tag==='p'){ const t=el.textContent.trim(); if(t) out.desc=t; }
+    }
+  };
+  scan(formEl, formEl.querySelector('input,textarea,select,button'));   // header nested inside the form
+  if(!out.title || !out.desc) scan(formEl.parentElement, formEl);       // or above the form in its container
+  return out;
+}
 // Scan every page for hand-coded forms and parse each into builder fields.
 async function formScanPages(){
   if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
@@ -3065,7 +3152,9 @@ async function formScanPages(){
       if(f.classList.contains('foundry-form')) return;   // already a CMS form
       const fields=parseHtmlFormToFields(f);
       if(!fields.length) return;
+      const hdr=captureFormHeader(f);
       found.push({ pageId:pg.id, path:fp, label:pg.label||fp, formIndex:idx, fields,
+        headerTitle:hdr.title, headerDesc:hdr.desc,
         summary:fields.filter(x=>x.type!=='hidden').slice(0,6).map(x=>x.label).join(', ') });
     });
   }
@@ -3091,7 +3180,8 @@ function startConvertForm(i){
   const it=_convertScan[i]; if(!it) return;
   closeM('m-form-convert');
   _curForm=null;
-  _curFormMeta={ notifyTo:(_site&&_site.email)||'', subject:'New Form Submission', confirmation:'Thanks! Your message has been received.', submitLabel:'Submit' };
+  _curFormMeta={ notifyTo:(_site&&_site.email)||'', subject:'New Form Submission', confirmation:'Thanks! Your message has been received.', submitLabel:'Submit',
+    headerTitle:it.headerTitle||'', headerDesc:it.headerDesc||'' };   // keep the header the page form had
   _formFields=JSON.parse(JSON.stringify(it.fields));
   _convertSource={ pageId:it.pageId, path:it.path, formIndex:it.formIndex, label:it.label };
   const t=String(it.label||'').replace(/\.html?$/i,'').replace(/[\/_-]+/g,' ').trim();
@@ -3204,6 +3294,7 @@ function renderFormHtml(form){
   form.fields.forEach(f=>{ if(f.type==='pagebreak'){pages.push([]);pageIdx++;} else pages[pageIdx].push(f); });
   const multi=pages.length>1;
 
+  const hideLabels=!!(form.settings&&form.settings.style&&form.settings.style.labels==='hide');
   const renderField=f=>{
     const name=f.label?slugify(f.label)+'-'+f.id.slice(0,4):f.id;
     const req=f.required?' required':'';
@@ -3211,11 +3302,12 @@ function renderFormHtml(form){
     const condAttr=(f.cond&&f.cond.enabled&&f.cond.field)?' data-cond-field="'+esc(f.cond.field)+'" data-cond-op="'+esc(f.cond.op||'is')+'" data-cond-val="'+esc(f.cond.value||'')+'" style="display:none"':'';
     let inner='';
     const lbl='<label class="ff-label">'+esc(f.label||'')+reqMark+'</label>';
+    const ph=f.placeholder||(hideLabels?(f.label||''):'');   // when labels are hidden, fall back to the label as placeholder
     if(f.type==='text'||f.type==='email'||f.type==='phone'||f.type==='number'||f.type==='website'){
       const itype=f.type==='website'?'url':(f.type==='phone'?'tel':f.type);
-      inner=lbl+'<input type="'+itype+'" name="'+esc(name)+'" placeholder="'+esc(f.placeholder||'')+'"'+req+' data-fid="'+f.id+'">';
+      inner=lbl+'<input type="'+itype+'" name="'+esc(name)+'" placeholder="'+esc(ph)+'"'+req+' data-fid="'+f.id+'">';
     }else if(f.type==='textarea'){
-      inner=lbl+'<textarea name="'+esc(name)+'" placeholder="'+esc(f.placeholder||'')+'" rows="4"'+req+' data-fid="'+f.id+'"></textarea>';
+      inner=lbl+'<textarea name="'+esc(name)+'" placeholder="'+esc(ph)+'" rows="4"'+req+' data-fid="'+f.id+'"></textarea>';
     }else if(f.type==='select'){
       inner=lbl+'<select name="'+esc(name)+'"'+req+' data-fid="'+f.id+'"><option value="">Select…</option>'+(f.choices||[]).map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('')+'</select>';
     }else if(f.type==='radio'){
@@ -3235,6 +3327,10 @@ function renderFormHtml(form){
       return '<input type="hidden" name="'+esc(f.label||name)+'" value="'+esc(f.value||'')+'">';
     }else if(f.type==='html'){
       return '<div class="ff-html"'+condAttr+'>'+(f.content||'')+'</div>';
+    }else if(f.type==='heading'){
+      return '<div class="ff-heading"'+condAttr+'><h3>'+esc(f.label||'')+'</h3></div>';
+    }else if(f.type==='paragraph'){
+      return '<div class="ff-text"'+condAttr+'><p>'+esc(f.content||'').replace(/\n/g,'<br>')+'</p></div>';
     }else if(f.type==='section'){
       return '<div class="ff-section"><h3>'+esc(f.label||'')+'</h3>'+(f.desc?'<p>'+esc(f.desc)+'</p>':'')+'</div>';
     }
@@ -3260,14 +3356,45 @@ function renderFormHtml(form){
   }
 
   const fcss=String((form.settings&&form.settings.css)||'').replace(/<\/style/gi,'<\\/style');
-  const fst=fcss.trim()?'<style>'+fcss+'</style>':'';
+  const fst=formStyleCss(form)+(fcss.trim()?'<style>'+fcss+'</style>':'');
+  const s=form.settings||{};
+  const hdrTitle=String(s.headerTitle||'').trim(), hdrDesc=String(s.headerDesc||'').trim();
+  const hdr=(hdrTitle||hdrDesc)?'<div class="ff-header">'
+      +(hdrTitle?'<h2 class="ff-form-title">'+esc(hdrTitle)+'</h2>':'')
+      +(hdrDesc?'<p class="ff-form-desc">'+esc(hdrDesc).replace(/\n/g,'<br>')+'</p>':'')
+      +'</div>':'';
   return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'" data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
+    +hdr
     +pagesHtml
     +rcHtml
     +'<div class="ff-msg" style="display:none"></div>'
     +navBtns
     +'</form>'
     +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js" async defer></scr'+'ipt>':'');
+}
+
+// Turn a form's simple style settings into ONE scoped <style> block. Scoped by the
+// form's #id so it beats the shared runtime CSS (which uses !important on layout);
+// every value is sanitized so a stray character can't break out of the stylesheet.
+function formStyleCss(form){
+  const s=(form&&form.settings&&form.settings.style)||{};
+  const id='ffm-'+String((form&&form.id)||'').replace(/[^A-Za-z0-9_-]/g,'');
+  const R='#'+id;
+  const col=v=>{ v=String(v==null?'':v).trim(); return /^#[0-9a-fA-F]{3,8}$/.test(v)||/^(rgb|rgba|hsl|hsla)\([0-9.,%\s]+\)$/.test(v)||/^[a-zA-Z]+$/.test(v)?v:''; };
+  const px=v=>{ const n=parseFloat(v); return isFinite(n)?Math.max(0,Math.min(80,Math.round(n))):null; };
+  const r=[];
+  const bg=col(s.bg);
+  if(bg && s.bg!=='none') r.push(R+'.foundry-form{background:'+bg+';padding:28px;border-radius:14px}');
+  const rad=px(s.radius);
+  if(rad!=null){
+    r.push(R+' input,'+R+' textarea,'+R+' select{border-radius:'+rad+'px !important}');
+    r.push(R+' .ff-submit,'+R+' .ff-next,'+R+' .ff-prev{border-radius:'+rad+'px !important}');
+  }
+  if(s.labels==='hide') r.push(R+' .ff-label{position:absolute !important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}');
+  const btn=col(s.button); if(btn) r.push(R+' .ff-submit,'+R+' .ff-next{background:'+btn+' !important}');
+  const lc=col(s.label);  if(lc)  r.push(R+' .ff-label{color:'+lc+'}');
+  const bc=col(s.border); if(bc)  r.push(R+' input,'+R+' textarea,'+R+' select{border-color:'+bc+' !important}');
+  return r.length?'<style>'+r.join('')+'</style>':'';
 }
 
 // Generates the shared runtime JS+CSS injected into pages that contain forms
@@ -3291,6 +3418,12 @@ function formsRuntimeCss(){
     +'.foundry-form .ff-row{display:flex;gap:10px}.foundry-form .ff-row>*{flex:1}'
     +'.foundry-form .ff-addr{display:flex;flex-direction:column;gap:10px}'
     +'.foundry-form .ff-section{margin:24px 0 12px;border-bottom:2px solid #eee;padding-bottom:8px}.foundry-form .ff-section h3{font-size:18px;margin:0}.foundry-form .ff-section p{color:#777;font-size:14px;margin:4px 0 0}'
+    +'.foundry-form .ff-header{margin-bottom:20px}'
+    +'.foundry-form .ff-form-title{font-size:26px;font-weight:800;line-height:1.15;margin:0 0 6px}'
+    +'.foundry-form .ff-form-desc{color:#666;font-size:15px;line-height:1.5;margin:0}'
+    +'.foundry-form .ff-heading{margin:8px 0 2px}.foundry-form .ff-heading h3{font-size:19px;font-weight:700;margin:0}'
+    +'.foundry-form .ff-text{color:#555;font-size:15px;line-height:1.5}.foundry-form .ff-text p{margin:0}'
+    +'.foundry-form .ff-page>.ff-heading,.foundry-form .ff-page>.ff-text,.foundry-form .ff-page>.ff-section,.foundry-form .ff-page>.ff-html{flex:1 1 100% !important}'
     +'.foundry-form .ff-submit,.foundry-form .ff-next,.foundry-form .ff-prev{background:var(--ember,#C8531E);color:#fff;border:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}'
     +'.foundry-form .ff-prev{background:#888}'
     +'.foundry-form .ff-nav{display:flex;gap:10px;justify-content:space-between}'
@@ -4152,6 +4285,10 @@ a:hover{text-decoration:underline}
 .ff-row{display:flex;gap:10px}.ff-row>*{flex:1}
 .ff-addr{display:flex;flex-direction:column;gap:10px}
 .ff-section{margin:24px 0 12px;border-bottom:2px solid #eee;padding-bottom:8px}.ff-section h3{font-size:18px;margin:0}.ff-section p{color:#777;font-size:14px;margin:4px 0 0}
+.ff-header{margin-bottom:20px}.ff-form-title{font-size:26px;font-weight:800;line-height:1.15;margin:0 0 6px}.ff-form-desc{color:#666;font-size:15px;line-height:1.5;margin:0}
+.ff-heading{margin:8px 0 2px}.ff-heading h3{font-size:19px;font-weight:700;margin:0}
+.ff-text{color:#555;font-size:15px;line-height:1.5}.ff-text p{margin:0}
+.ff-page>.ff-heading,.ff-page>.ff-text,.ff-page>.ff-section,.ff-page>.ff-html{flex:1 1 100% !important}
 .ff-submit,.ff-next,.ff-prev{background:var(--ember);color:#fff;border:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}
 .ff-prev{background:#888}
 .ff-nav{display:flex;gap:10px;justify-content:space-between}
@@ -4190,6 +4327,7 @@ function ffRenderForm(form){
   var pages=[[]],pi=0;
   form.fields.forEach(function(f){if(f.type==='pagebreak'){pages.push([]);pi++;}else pages[pi].push(f);});
   var multi=pages.length>1;
+  var hideLabels=!!(form.settings&&form.settings.style&&form.settings.style.labels==='hide');
   function fld(f){
     var name=f.label?slugify(f.label)+'-'+f.id.slice(0,4):f.id;
     var req=f.required?' required':'';
@@ -4197,8 +4335,9 @@ function ffRenderForm(form){
     var cond=(f.cond&&f.cond.enabled&&f.cond.field)?' data-cond-field=\"'+f.cond.field+'\" data-cond-op=\"'+(f.cond.op||'is')+'\" data-cond-val=\"'+esc(f.cond.value||'')+'\" style=\"display:none\"':'';
     var lbl='<label class=\"ff-label\">'+esc(f.label||'')+rm+'</label>';
     var inner='';
-    if(['text','email','phone','number','website'].indexOf(f.type)>=0){var it=f.type==='website'?'url':(f.type==='phone'?'tel':f.type);inner=lbl+'<input type=\"'+it+'\" name=\"'+name+'\" placeholder=\"'+esc(f.placeholder||'')+'\"'+req+' data-fid=\"'+f.id+'\">';}
-    else if(f.type==='textarea'){inner=lbl+'<textarea name=\"'+name+'\" placeholder=\"'+esc(f.placeholder||'')+'\" rows=\"4\"'+req+' data-fid=\"'+f.id+'\"></textarea>';}
+    var pph=f.placeholder||(hideLabels?(f.label||''):'');
+    if(['text','email','phone','number','website'].indexOf(f.type)>=0){var it=f.type==='website'?'url':(f.type==='phone'?'tel':f.type);inner=lbl+'<input type=\"'+it+'\" name=\"'+name+'\" placeholder=\"'+esc(pph)+'\"'+req+' data-fid=\"'+f.id+'\">';}
+    else if(f.type==='textarea'){inner=lbl+'<textarea name=\"'+name+'\" placeholder=\"'+esc(pph)+'\" rows=\"4\"'+req+' data-fid=\"'+f.id+'\"></textarea>';}
     else if(f.type==='select'){inner=lbl+'<select name=\"'+name+'\"'+req+' data-fid=\"'+f.id+'\"><option value=\"\">Select…</option>'+(f.choices||[]).map(function(c){return '<option value=\"'+esc(c)+'\">'+esc(c)+'</option>';}).join('')+'</select>';}
     else if(f.type==='radio'){inner=lbl+'<div class=\"ff-choices\" data-fid=\"'+f.id+'\">'+(f.choices||[]).map(function(c){return '<label class=\"ff-choice\"><input type=\"radio\" name=\"'+name+'\" value=\"'+esc(c)+'\"> '+esc(c)+'</label>';}).join('')+'</div>';}
     else if(f.type==='checkbox'){inner=lbl+'<div class=\"ff-choices\" data-fid=\"'+f.id+'\">'+(f.choices||[]).map(function(c){return '<label class=\"ff-choice\"><input type=\"checkbox\" name=\"'+name+'[]\" value=\"'+esc(c)+'\"> '+esc(c)+'</label>';}).join('')+'</div>';}
@@ -4208,6 +4347,8 @@ function ffRenderForm(form){
     else if(f.type==='file'){inner=lbl+'<input type=\"file\" name=\"'+name+'\" data-fid=\"'+f.id+'\">';}
     else if(f.type==='hidden'){return '<input type=\"hidden\" name=\"'+esc(f.label||name)+'\" value=\"'+esc(f.value||'')+'\">';}
     else if(f.type==='html'){return '<div class=\"ff-html\"'+cond+'>'+(f.content||'')+'</div>';}
+    else if(f.type==='heading'){return '<div class=\"ff-heading\"'+cond+'><h3>'+esc(f.label||'')+'</h3></div>';}
+    else if(f.type==='paragraph'){return '<div class=\"ff-text\"'+cond+'><p>'+esc(f.content||'').replace(/\\n/g,'<br>')+'</p></div>';}
     else if(f.type==='section'){return '<div class=\"ff-section\"><h3>'+esc(f.label||'')+'</h3>'+(f.desc?'<p>'+esc(f.desc)+'</p>':'')+'</div>';}
     return '<div class=\"ff-field'+(f.width==='half'?' ff-half':'')+'\"'+cond+'>'+inner+'</div>';
   }
@@ -4216,8 +4357,20 @@ function ffRenderForm(form){
   var sl=esc((form.settings&&form.settings.submitLabel)||'Submit');
   var nav=multi?('<div class=\"ff-nav\"><button type=\"button\" class=\"ff-prev\" data-dir=\"-1\" style=\"display:none\">← Previous</button><button type=\"button\" class=\"ff-next\" data-dir=\"1\">Next →</button><button type=\"submit\" class=\"ff-submit\" style=\"display:none\">'+sl+'</button></div>'):('<button type=\"submit\" class=\"ff-submit\">'+sl+'</button>');
   var rc=_rcSiteKey?'<div class=\"ff-field\"><div class=\"g-recaptcha\" data-sitekey=\"'+_rcSiteKey+'\"></div></div>':'';
-  var fst=((form.settings&&form.settings.css)||'').toString().trim()?('<style>'+form.settings.css+'</style>'):'';
-  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\" data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
+  var st=(form.settings&&form.settings.style)||{};
+  function ffCol(v){v=(''+v).trim();return (v&&/^[#a-zA-Z0-9(),.% ]+$/.test(v))?v:'';}
+  var R='#'+fid, rs=[];
+  var sbg=ffCol(st.bg); if(sbg&&st.bg!=='none')rs.push(R+'.foundry-form{background:'+sbg+';padding:28px;border-radius:14px}');
+  var srad=parseFloat(st.radius); if(isFinite(srad)){srad=Math.max(0,Math.min(80,Math.round(srad)));rs.push(R+' input,'+R+' textarea,'+R+' select{border-radius:'+srad+'px !important}');rs.push(R+' .ff-submit,'+R+' .ff-next,'+R+' .ff-prev{border-radius:'+srad+'px !important}');}
+  if(st.labels==='hide')rs.push(R+' .ff-label{position:absolute !important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}');
+  var sbt=ffCol(st.button); if(sbt)rs.push(R+' .ff-submit,'+R+' .ff-next{background:'+sbt+' !important}');
+  var slc=ffCol(st.label); if(slc)rs.push(R+' .ff-label{color:'+slc+'}');
+  var sbc=ffCol(st.border); if(sbc)rs.push(R+' input,'+R+' textarea,'+R+' select{border-color:'+sbc+' !important}');
+  var stl=rs.length?('<style>'+rs.join('')+'</style>'):'';
+  var hs=form.settings||{}, ht=(hs.headerTitle||'').toString().trim(), hd=(hs.headerDesc||'').toString().trim();
+  var hdr=(ht||hd)?('<div class=\"ff-header\">'+(ht?'<h2 class=\"ff-form-title\">'+esc(ht)+'</h2>':'')+(hd?'<p class=\"ff-form-desc\">'+esc(hd).replace(/\\n/g,'<br>')+'</p>':'')+'</div>'):'';
+  var fst=stl+((((form.settings&&form.settings.css)||'').toString().trim())?('<style>'+form.settings.css+'</style>'):'');
+  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\" data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
