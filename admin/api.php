@@ -18,6 +18,44 @@ $__secret = (function () {
     return is_array($c) ? $c : [];
 })();
 
+// Read SMTP mail credentials out of a legacy PHPMailer "send.php" (the handler a
+// site used before it was moved onto the CMS). The file is parsed as TEXT and is
+// NEVER included or executed — we only pull the string/number literals from its
+// $CONFIG array. This lets an already-launched site keep sending form email with
+// no config.secret.php rewrite. Returns [] when there's no usable send.php.
+function fourgeLegacySendConfig($root) {
+    if (!$root) return [];
+    $files = [];
+    if (is_file($root . '/send.php')) $files[] = $root . '/send.php';
+    else foreach (glob($root . '/*/send.php') ?: [] as $g) $files[] = $g;   // one level down, only if not at root
+    foreach ($files as $file) {
+        $src = @file_get_contents($file);
+        if ($src === false || stripos($src, 'smtp_host') === false) continue;
+        $str = function ($key) use ($src) {
+            return preg_match('/[\'"]' . $key . '[\'"]\s*=>\s*[\'"]([^\'"]*)[\'"]/', $src, $m) ? trim($m[1]) : '';
+        };
+        $host = $str('smtp_host'); $user = $str('smtp_username'); $pass = $str('smtp_password');
+        if ($host === '' || $user === '' || $pass === '') continue;   // not a usable SMTP block
+        $cfg = [
+            'smtp_host'     => $host,
+            'smtp_port'     => preg_match('/[\'"]smtp_port[\'"]\s*=>\s*(\d+)/', $src, $m) ? (int)$m[1] : 587,
+            'smtp_username' => $user,
+            'smtp_password' => $pass,
+        ];
+        $sec = $str('smtp_secure'); if ($sec !== '') $cfg['smtp_secure'] = $sec;
+        $fe = $str('from_email');   $fn = $str('from_name');
+        if ($fe !== '') $cfg['mg_from'] = ($fn !== '' ? $fn . ' <' . $fe . '>' : $fe);
+        $to = $str('to_email');     if ($to !== '') $cfg['mg_notify_to'] = $to;
+        return $cfg;
+    }
+    return [];
+}
+// Only when config.secret.php configures no mail of its own — explicit config always wins.
+if (empty($__secret['smtp_host']) && empty($__secret['mg_api_key'])) {
+    $__legacy = fourgeLegacySendConfig(dirname(__DIR__));
+    if ($__legacy) $__secret = array_merge($__legacy, $__secret);
+}
+
 define('API_TOKEN',    (string)($__secret['api_token'] ?? 'CHANGE_ME')); // optional now (login uses sessions); kept for legacy/external callers
 define('PUBLIC_HTML',  realpath(dirname(__DIR__)));
 

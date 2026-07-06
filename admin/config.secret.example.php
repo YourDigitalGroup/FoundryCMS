@@ -36,6 +36,11 @@ return [
     //  Pick ONE way to send (A or B), then set the From + recipient at the end.
     //  SMTP (A) is easiest when moving a site that already had a working form —
     //  reuse the exact same credentials.
+    //
+    //  ALREADY HAVE AN OLD send.php ON THIS SITE? You can skip this whole
+    //  section — the CMS automatically reads the SMTP host/user/password and
+    //  from/to out of an existing send.php (it's parsed as text, never run).
+    //  Only fill the keys below if you WANT to override what send.php uses.
     // ════════════════════════════════════════════════════════════════════════
 
     // ── OPTION A · SMTP (Mailgun / SendGrid / any SMTP relay) ───────────────
