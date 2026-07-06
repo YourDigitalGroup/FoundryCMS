@@ -1622,7 +1622,6 @@ textarea.fb-input{resize:vertical}
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <button type="button" class="fd-btn-secondary" onclick="document.getElementById('si-favicon-file').click()"><i class="fa-solid fa-upload"></i> Upload favicon</button>
                 <button type="button" id="si-favicon-remove" class="fd-btn-secondary" style="display:none" onclick="faviconRemove()"><i class="fa-solid fa-trash-can"></i> Remove</button>
-                <button type="button" class="fd-btn-primary" onclick="faviconApplyAll()"><i class="fa-solid fa-check-double"></i> Apply to all pages</button>
                 <input type="file" id="si-favicon-file" accept="image/png,image/svg+xml,image/x-icon,.ico,image/gif,image/jpeg" style="display:none" onchange="uploadFavicon(this.files[0])">
               </div>
             </div>
@@ -1695,8 +1694,7 @@ textarea.fb-input{resize:vertical}
                 <div class="fg"><label>Google Tag Manager Container ID</label><input type="text" id="ga-id-gtm" placeholder="GTM-XXXXXXX"></div>
                 <div class="fg"><label>Google Ads Conversion ID <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="ga-id-ads" placeholder="AW-XXXXXXXXX"></div>
                 <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-                  <button class="fd-btn-primary" onclick="gaSaveIds()">Save IDs</button>
-                  <button class="fd-btn-secondary" onclick="gaInjectAll()" title="Insert/refresh the managed tracking snippet on every page file">Apply Tracking to All Pages</button>
+                  <button class="fd-btn-primary" onclick="gaSaveIds()" title="Save your tracking IDs and publish the snippet to every page">Save &amp; Apply to All Pages</button>
                   <button class="fd-btn-secondary" onclick="gaRemoveAll()" title="Strip the managed tracking snippet from every page file">Remove from All Pages</button>
                 </div>
                 <div id="ga-inject-status" style="font-size:12px;color:var(--muted);margin-top:10px"></div>
@@ -1718,7 +1716,7 @@ textarea.fb-input{resize:vertical}
             </div>
             <div class="ga-setup-card" style="margin-top:16px">
               <h3>3 · Custom code (header &amp; body)</h3>
-              <p>Paste any extra tracking or script snippets beyond GA4/GTM/Ads. <strong>Header</strong> code is injected into <code>&lt;head&gt;</code>; <strong>body</strong> code just before the closing <code>&lt;/body&gt;</code>. They're grouped by purpose (to line up with a consent banner) but all load today. After saving, click <strong>Apply Tracking to All Pages</strong> (card 1) to publish.</p>
+              <p>Paste any extra tracking or script snippets beyond GA4/GTM/Ads. <strong>Header</strong> code is injected into <code>&lt;head&gt;</code>; <strong>body</strong> code just before the closing <code>&lt;/body&gt;</code>. They're grouped by purpose (to line up with a consent banner) but all load today. Saving publishes them to every page automatically.</p>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
                 <div class="fg"><label>Functional — header</label><textarea id="cc-func-head" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="essential scripts (fonts, etc.)"></textarea></div>
                 <div class="fg"><label>Functional — body</label><textarea id="cc-func-body" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%"></textarea></div>
@@ -1727,7 +1725,7 @@ textarea.fb-input{resize:vertical}
                 <div class="fg"><label>Marketing — header</label><textarea id="cc-mkt-head" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="ad / remarketing pixels"></textarea></div>
                 <div class="fg"><label>Marketing — body</label><textarea id="cc-mkt-body" rows="3" style="font-family:var(--font-mono);font-size:11px;width:100%"></textarea></div>
               </div>
-              <button class="fd-btn-primary" onclick="gaSaveCustomCode()" style="margin-top:6px">Save custom code</button>
+              <button class="fd-btn-primary" onclick="gaSaveCustomCode()" style="margin-top:6px">Save &amp; Apply to All Pages</button>
             </div>
           </div>
       </div>
@@ -2202,7 +2200,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.34';
+const CMS_VERSION='1.14.35';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5051,15 +5049,15 @@ async function uploadFavicon(file){
     _site.favicon=siteBase+'/'+result.path;
     await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)});
     faviconRender();
-    toast('Favicon uploaded — click "Apply to all pages" to publish it','ok');
+    await faviconApplyAll(true);   // publish to every page in one step (no separate "Apply" click)
   }catch(e){ toast('Upload failed: '+e.message,'err'); }
 }
-function faviconRemove(){
-  if(!confirm('Clear the favicon? Click "Apply to all pages" afterward to remove it from the live pages.')) return;
+async function faviconRemove(){
+  if(!confirm('Clear the favicon from all pages?')) return;
   _site.favicon='';
-  apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}).catch(()=>{});
+  try{ await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}); }catch(e){}
   faviconRender();
-  toast('Favicon cleared — click "Apply to all pages" to update the pages','ok');
+  await faviconApplyAll(true);   // strip it from every page in one step
 }
 // Injects a managed <link rel="icon"> (idempotent — replaces any prior Fourge favicon nodes)
 function faviconInjectIntoHtml(html,url){
@@ -5075,12 +5073,12 @@ function faviconInjectIntoHtml(html,url){
   }
   return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
 }
-async function faviconApplyAll(){
-  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
+async function faviconApplyAll(silent){
+  if(!canCallApi()){ if(!silent) toast('Sign in again to apply','err'); return; }
   const url=_site.favicon||'';
   if(!Object.keys(_pages).length) await loadPages();
-  const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
-  if(!confirm((url?'Set the favicon on':'Remove the favicon from')+' all '+pages.length+' page file(s)?')) return;
+  const pages=getPageList(); if(!pages.length){ if(!silent) toast('No pages found','err'); return; }
+  if(!silent && !confirm((url?'Set the favicon on':'Remove the favicon from')+' all '+pages.length+' page file(s)?')) return;
   let done=0,failed=0;
   for(const pg of pages){
     const fp=pg.path||pg.file; if(!fp) continue;
@@ -5243,8 +5241,11 @@ async function gaSaveIds(){
   if(ads && !/^AW-[0-9]{6,}$/i.test(ads)){ toast('Ads ID should look like AW-XXXXXXXXX','err'); return; }
   if(prop && !/^[0-9]{5,}$/.test(prop)){ toast('Property ID is the numeric ID from GA4 Admin → Property Settings','err'); return; }
   a.ga4=ga4; a.gtm=gtm; a.ads=ads; a.propertyId=prop;
-  try{ await gaPersistSite(); toast('Analytics settings saved ✓','ok'); }
-  catch(e){ toast('Save failed: '+e.message,'err'); }
+  try{ await gaPersistSite(); }
+  catch(e){ toast('Save failed: '+e.message,'err'); return; }
+  // Saving now publishes in one step — apply the snippet to every page.
+  if(a.ga4||a.gtm||a.ads||gaHasCustom()) await gaInjectAll();
+  else toast('Analytics settings saved ✓','ok');
 }
 
 async function gaSaveCustomCode(){
@@ -5255,8 +5256,11 @@ async function gaSaveCustomCode(){
     anHead:v('cc-an-head'),     anBody:v('cc-an-body'),
     mktHead:v('cc-mkt-head'),   mktBody:v('cc-mkt-body')
   };
-  try{ await gaPersistSite(); toast('Custom code saved — click “Apply Tracking to All Pages” to publish','ok'); }
-  catch(e){ toast('Save failed: '+e.message,'err'); }
+  try{ await gaPersistSite(); }
+  catch(e){ toast('Save failed: '+e.message,'err'); return; }
+  // Saving now publishes in one step — apply to every page.
+  if(a.ga4||a.gtm||a.ads||gaHasCustom()) await gaInjectAll();
+  else toast('Custom code saved ✓','ok');
 }
 
 async function gaSaveCreds(){
