@@ -666,8 +666,14 @@ function cmsSendForm($body) {
     // Prefer SMTP when configured (a migrated site's existing SMTP creds work
     // as-is); otherwise fall through to the Mailgun HTTP API below.
     if (cmsSmtpEnabled()) {
-        $fromEmail = MG_FROM; $fromName = '';
-        if (preg_match('/^\s*(.*?)\s*<([^>]+)>\s*$/', MG_FROM, $mm)) { $fromName = trim($mm[1], " \"'"); $fromEmail = trim($mm[2]); }
+        // From: use the configured mg_from, but ignore the built-in example
+        // placeholder and fall back to the SMTP login — always a valid sender on
+        // the relay's own domain — so a missing or placeholder mg_from can never
+        // make the relay reject the message.
+        $fromRaw = trim((string)$mg['from']);
+        if ($fromRaw === '' || stripos($fromRaw, 'example.com') !== false) $fromRaw = SMTP_USER;
+        $fromEmail = $fromRaw; $fromName = '';
+        if (preg_match('/^\s*(.*?)\s*<([^>]+)>\s*$/', $fromRaw, $mm)) { $fromName = trim($mm[1], " \"'"); $fromEmail = trim($mm[2]); }
         if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) $fromEmail = SMTP_USER;
         $err = '';
         $sent = cmsSmtpSend([

@@ -1,87 +1,96 @@
 <?php
 /**
- * Fourge — Secret configuration (EXAMPLE / TEMPLATE)
- * --------------------------------------------------------------------------
- * Copy this file to `config.secret.php` in the same folder and fill in your
- * keys. `config.secret.php` is gitignored and must NEVER be committed.
+ * Fourge CMS — config.secret.php   (TEMPLATE / EXAMPLE)
+ * ============================================================================
+ *  WHAT THIS IS
+ *    The one private settings file for a site: database key, contact-form email
+ *    credentials, the AI key, and team onboarding. It lives beside api.php in
+ *    the /admin/ folder.
  *
- * This file holds the shared Anthropic API key used by the server-side AI
- * proxy (action=claude_proxy in api.php). It lives INSIDE the admin folder so
- * the whole folder stays portable (drop into any public_html and it works).
+ *  HOW TO USE IT (copy → rename → fill in)
+ *    1. Copy this file and rename the copy to  config.secret.php
+ *       (same folder, just drop the ".example").
+ *    2. Fill in the values you need below. Everything is OPTIONAL except
+ *       'db_secret_key'. Leave the rest commented out (//) if you don't use it.
+ *    3. Save. api.php reads this automatically, and CMS auto-updates will NEVER
+ *       overwrite it. Never commit config.secret.php — it's gitignored.
  *
- * WHY THIS IS SAFE TO KEEP IN THE WEB ROOT:
- *  1. This is a .php file. A web server EXECUTES .php files; it never serves
- *     their source. Because this file only `return`s an array and echoes
- *     nothing, a direct browser request to it produces a BLANK page — the key
- *     is never sent to the browser.
- *  2. The accompanying admin/.htaccess denies direct HTTP access to this file
- *     outright (Apache / LiteSpeed) as a second, independent layer.
- *  3. The browser never makes the Anthropic call — api.php does, server-side —
- *     so the key never appears in any network response a user could inspect.
- *
- * SET YOUR KEY BELOW. Treat config.secret.php like a password.
+ *  FORMAT: this file just returns a PHP array. Keep the  'key' => 'value',
+ *  shape — mind the quotes and the trailing comma. Lines starting with // are
+ *  ignored, so uncomment a line to turn that setting on.
+ * ============================================================================
  */
 
 return [
-    // Your Anthropic API key (starts with sk-ant-...). Optional once the
-    // Architect saves a Claude key in Settings — that DB value takes priority.
-    'anthropic_key'    => 'sk-ant-REPLACE_WITH_YOUR_KEY',
 
-    // Abuse guard: max AI calls allowed PER USER PER HOUR through the proxy.
-    // Protects your bill if a session is shared or a client mashes the button.
-    'ai_rate_per_hour' => 40,
+    // ── REQUIRED — local database encryption key ────────────────────────────
+    //   Protects anything the CMS stores encrypted (GitHub token, AI key).
+    //   Use a long random string and NEVER change it once the site is live.
+    //   Generate one by running this on the server:
+    //       php -r "echo bin2hex(random_bytes(32)).PHP_EOL;"
+    'db_secret_key' => 'PASTE_A_LONG_RANDOM_STRING_HERE',
 
-    // ── Security ──
-    // Require HTTPS for sign-in and credential/secret changes (default true).
-    // Localhost/dev is always exempt. Set to false ONLY for a deliberate
-    // plain-HTTP setup — sending passwords over HTTP exposes them in transit.
-    // 'require_https'    => true,
 
-    // ── SQLite backend (accounts + sessions + encrypted secrets) ──
-    // REQUIRED. Master key used to encrypt stored secrets (GitHub PAT, Claude
-    // key, etc.) with libsodium. Use a long random value and NEVER change it
-    // once secrets are saved, or they become unreadable.
-    // Generate one with:  php -r "echo bin2hex(random_bytes(32));"
-    'db_secret_key'    => 'REPLACE_WITH_A_LONG_RANDOM_STRING',
+    // ════════════════════════════════════════════════════════════════════════
+    //  CONTACT-FORM EMAIL
+    //  Pick ONE way to send (A or B), then set the From + recipient at the end.
+    //  SMTP (A) is easiest when moving a site that already had a working form —
+    //  reuse the exact same credentials.
+    // ════════════════════════════════════════════════════════════════════════
 
-    // Optional. Where the SQLite file lives. Defaults to admin/fourge.db, which
-    // is gitignored and denied over HTTP by admin/.htaccess. For best security,
-    // point this OUTSIDE the web root, e.g. '/home/youruser/private/fourge.db'.
-    // 'db_path'       => __DIR__ . '/fourge.db',
+    // ── OPTION A · SMTP (Mailgun / SendGrid / any SMTP relay) ───────────────
+    //
+    //   MOVING AN OLD PHPMailer "send.php"? Copy the values straight across:
+    //
+    //       OLD send.php  $CONFIG[...]        ->  THIS FILE
+    //       ---------------------------------------------------------
+    //       'smtp_host'                       ->  'smtp_host'
+    //       'smtp_port'                       ->  'smtp_port'
+    //       'smtp_username'                   ->  'smtp_username'
+    //       'smtp_password'                   ->  'smtp_password'
+    //       'from_name' + 'from_email'        ->  'mg_from'       (combined, see below)
+    //       'to_email'                        ->  'mg_notify_to'  (where mail lands)
+    //
+    // 'smtp_host'     => 'smtp.mailgun.org',        // EU region: 'smtp.eu.mailgun.org'
+    // 'smtp_port'     => 587,                        // 587 = STARTTLS (usual), 465 = SSL
+    // 'smtp_username' => 'postmaster@mg.YOURDOMAIN.com',
+    // 'smtp_password' => 'your-smtp-password',
+    // 'smtp_secure'   => 'auto',                     // auto | tls | ssl | none  ('auto' is right for 587/465)
 
-    // ── Server API token (OPTIONAL) ──
-    // The CMS authenticates with your login session, so this is only needed for
-    // legacy/external callers. Setting it here keeps it out of api.php so
-    // deploying/updating api.php never overwrites it.
+    // ── OPTION B · Mailgun HTTP API (uses the API KEY, not the SMTP password) ──
+    // 'mg_domain'     => 'mg.YOURDOMAIN.com',
+    // 'mg_api_key'    => 'key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+
+    // ── From + recipient — SET THESE (used by both A and B) ─────────────────
+    //   IMPORTANT: 'mg_from' MUST be an address on your verified mail domain, or
+    //   the mail service will REJECT the message. Format: Display Name <address>
+    // 'mg_from'       => 'Your Business <info@YOURDOMAIN.com>',
+    // 'mg_notify_to'  => 'you@YOURDOMAIN.com',       // inbox that receives submissions
+
+
+    // ── OPTIONAL — shared server API token (legacy / external callers) ──────
+    //   The CMS signs in with your account, so most sites can leave this off.
     // 'api_token'     => 'a-long-random-shared-secret',
 
-    // ── Contact forms: email delivery ──
-    // Two ways to send form submissions. Set ONE of them.
-    //
-    // (A) SMTP — works with any SMTP relay (Mailgun/SendGrid/etc.). Best for a
-    //     migrated site: paste the SMTP credentials you already have. When these
-    //     are set the CMS sends over SMTP (no API key needed).
-    // 'smtp_host'     => 'smtp.mailgun.org',   // 'smtp.eu.mailgun.org' for EU
-    // 'smtp_port'     => 587,                   // 587 = STARTTLS, 465 = implicit TLS
-    // 'smtp_username' => 'postmaster@mg.yoursite.com',
-    // 'smtp_password' => 'your-smtp-password',
-    // 'smtp_secure'   => 'auto',                // auto | tls | ssl | none (auto is fine)
-    //
-    // (B) Mailgun HTTP API — uses the Mailgun API KEY (not the SMTP password).
-    // 'mg_domain'     => 'mg.yoursite.com',
-    // 'mg_api_key'    => 'key-...',
-    //
-    // From address + where submissions land (used by BOTH methods above).
-    // 'mg_from'       => 'Your Site <postmaster@mg.yoursite.com>',
-    // 'mg_notify_to'  => 'you@yoursite.com',
 
-    // ── Team onboarding (OPTIONAL) ──
-    // Let your team self-provision accounts across client sites: a NEW email on
-    // 'onboard_domain' that signs in with 'onboard_password' gets an EDITOR
-    // account created automatically, then is forced to set a new password on
-    // first login. It NEVER overrides an existing account and never grants more
-    // than 'editor'. OFF unless 'onboard_password' is set. Keep this password
-    // ONLY here (config.secret.php) — never in api.php, which is public.
-    // 'onboard_domain'   => 'youragency.com',   // defaults to 44interactive.com
+    // ── OPTIONAL — AI features (SEO copy, content assistance) ───────────────
+    //   Anthropic API key (starts with sk-ant-). Stays server-side; never sent
+    //   to the browser.
+    // 'anthropic_key'    => 'sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    // 'ai_rate_per_hour' => 40,                       // max AI calls per user per hour
+
+
+    // ── OPTIONAL — team onboarding across your client sites ─────────────────
+    //   A NEW email on this domain that signs in with this shared password gets
+    //   an editor account (forced to set its own password on first login). It
+    //   never overrides an existing login and only ever grants "editor".
+    // 'onboard_domain'   => 'youragency.com',
     // 'onboard_password' => 'a-shared-onboarding-secret',
+
+
+    // ── OPTIONAL — allow plain HTTP (NOT recommended) ───────────────────────
+    //   Sign-in and credential changes require HTTPS by default. Only set this
+    //   to false for a deliberate local/no-TLS setup.
+    // 'require_https'    => true,
+
 ];
