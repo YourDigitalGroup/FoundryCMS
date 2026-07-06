@@ -112,7 +112,8 @@ html,body{height:100%;font-family:var(--font-sans);font-size:14px;color:var(--te
 .top-bar{height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:12px;flex-shrink:0}
 .tb-logo{display:flex;align-items:center;gap:7px;text-decoration:none;flex-shrink:0;cursor:pointer}
 .tb-logo-name{font-size:17px;font-weight:700;color:var(--text);letter-spacing:-.02em}
-.tb-ws{display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--ember-soft);border-radius:var(--r-full);font-size:12px;font-weight:600;color:var(--ember);cursor:pointer;white-space:nowrap}
+.tb-ws{display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--ember-soft);border-radius:var(--r-full);font-size:12px;font-weight:600;color:var(--ember);cursor:pointer;white-space:nowrap;text-decoration:none}
+.tb-ws:hover{background:var(--ember);color:#fff}
 .tb-ws-av{width:18px;height:18px;border-radius:50%;background:var(--ember);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:white;flex-shrink:0}
 .tb-search{flex:1;max-width:400px;position:relative;display:flex;align-items:center}
 .tb-search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;z-index:1}
@@ -300,6 +301,14 @@ body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 input:checked+.tog-sl{background:var(--ember)}input:checked+.tog-sl:before{transform:translateX(14px)}
 .pl-row{display:flex;align-items:center;gap:10px;padding:10px 13px;border:1px solid var(--border);margin-bottom:5px;background:var(--surface);border-radius:var(--r);box-shadow:var(--sh)}.pl-row:hover{border-color:var(--ember)}
 .pl-n{font-size:13px;font-weight:600;color:var(--text);flex:1}.pl-s{font-size:11px;color:var(--muted);margin-top:1px}
+.pl-addon{padding:16px}
+.pl-addon-top{display:flex;gap:11px;align-items:flex-start;margin-bottom:14px}
+.pl-badge{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--surface-3);color:var(--muted)}
+.pl-badge.on{background:rgba(34,197,94,.18);color:#16a34a}
+.pl-addon-body .fg{margin-bottom:10px}
+.pl-addon-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px}
+.pl-addon-link{font-size:12px;color:var(--muted);text-decoration:none}.pl-addon-link:hover{color:var(--ember)}
+.pl-sec-label{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin:20px 0 8px}
 .seo-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}.seo-dot.g{background:var(--green)}.seo-dot.y{background:var(--ember)}.seo-dot.r{background:var(--red)}
 .score-ring{display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:50%;border:4px solid;font-size:18px;font-weight:700}
 .score-ring.A{border-color:var(--green);color:var(--green)}.score-ring.B{border-color:var(--ember);color:var(--ember)}.score-ring.C{border-color:var(--red);color:var(--red)}
@@ -1092,16 +1101,9 @@ textarea.fb-input{resize:vertical}
     <button class="tb-collapse" id="sb-toggle" onclick="toggleSidebar()" title="Collapse / expand the menu" aria-label="Toggle sidebar">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
     </button>
-    <div class="tb-ws" id="tb-ws-btn">
-      <div class="tb-ws-av" id="tb-ws-av">NM</div>
+    <a class="tb-ws" id="tb-ws-btn" href="#" onclick="openSiteLink(event)" title="Open the live site in a new tab">
       <span id="tb-ws-name" style="font-size:13px;font-weight:600">Workspace</span>
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-    </div>
-    <div class="tb-search">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input type="text" placeholder="Search pages, posts, media…">
-      <kbd>⌘K</kbd>
-    </div>
+    </a>
     <div class="tb-spacer"></div>
     <button class="tb-new-btn" onclick="navTo('pages');openNewPageModal()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New page</button>
     <div class="tb-user-wrap" id="tb-user-wrap">
@@ -1869,13 +1871,6 @@ textarea.fb-input{resize:vertical}
             <h2 style="font-size:20px;font-weight:800;color:var(--text);letter-spacing:-.025em;margin-bottom:4px">New Repository</h2>
             <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Create a GitHub repo from the Fourge template and push all core files.</p>
             <div class="si-sec">
-              <h2>reCAPTCHA (Forms)</h2>
-              <div class="desc">Stop spam bots from filling out your forms. Turn on Google’s free “I’m not a robot” check, then paste the two keys Google gives you (create them at <code>google.com/recaptcha/admin</code>). Once it’s on, every form on your site is protected.</div>
-              <div class="fg"><label>Site Key (public)</label><input type="text" id="s-rc-site" placeholder="6Lc…"></div>
-              <div class="fg"><label>Secret Key (server-side)</label><input type="password" id="s-rc-secret" placeholder="6Lc… (kept on server)"></div>
-              <button class="fd-btn-primary" onclick="saveRecaptcha()">Save reCAPTCHA Keys</button>
-            </div>
-            <div class="si-sec">
               <div class="fr"><div class="fg"><label>Repo Name</label><input type="text" id="nr-name" placeholder="client-site-name"></div><div class="fg"><label>Site Name</label><input type="text" id="nr-sitename" placeholder="Acme Corp"></div></div>
               <div class="fg"><label>Website URL (optional)</label><input type="text" id="nr-url" placeholder="https://acmecorp.com"></div>
               <div class="fg"><label>GitHub Org / Username</label><input type="text" id="nr-org" placeholder="YourDigitalGroup"></div>
@@ -2200,7 +2195,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.38';
+const CMS_VERSION='1.14.39';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2308,6 +2303,7 @@ async function ghRead(path,repoOverride){const{repo,branch}=ghCfg();const r=repo
 async function ghWrite(path,content,sha,msg){const{repo,branch}=ghCfg();const body={message:msg,content:btoa(unescape(encodeURIComponent(content))),branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message||'GitHub write failed');}return res.json();}
 async function ghBin(path,buf,sha,msg){const{repo,branch}=ghCfg();const b64=btoa(String.fromCharCode(...new Uint8Array(buf)));const body={message:msg,content:b64,branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message);}return res.json();}
 async function ghSHA(path){const{repo,branch}=ghCfg();const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path+'?ref='+branch,{headers:ghH()});if(!res.ok)return null;const d=await res.json();return d.sha||null;}
+async function ghDelete(path,msg){const{repo,branch}=ghCfg();const sha=await ghSHA(path);if(!sha)return null;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'DELETE',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify({message:msg||'Fourge: delete',sha,branch})});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||'GitHub delete failed');}return res.json();}
 async function checkGH(){
   const dot=document.getElementById('gh-dot'),lbl=document.getElementById('gh-lbl');
   const{repo,pat}=ghCfg();
@@ -3056,6 +3052,18 @@ async function syncFormOnPages(form){
     try{
       const d=await apiCall('read_file',{path:fp}); let html=d.content||'';
       if(!html || html.indexOf(idAttr)<0) continue;   // this page doesn't have the form
+      // Drop any run of <style> blocks glued directly in front of this form. Older
+      // saves prepended a fresh block every time (renderFormHtml emits the form's CSS
+      // just before <form>), so the form's CSS accumulated and removals "stuck".
+      // Stripping them here — then re-inserting the freshly rendered form below —
+      // makes the form's Custom CSS box the single source of truth for its styling.
+      const idRe=String(form.id).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      // Each <style>…</style> unit is ATOMIC ((?!</style>) stops the body crossing
+      // its own closing tag), so this can only ever remove style blocks WHITESPACE-
+      // glued directly to the form — never the head runtime CSS or any page markup
+      // that happens to sit above it. Getting this wrong would delete everything
+      // between an earlier <style> and the form.
+      html=html.replace(new RegExp('(?:<style\\b[^>]*>(?:(?!<\\/style>)[\\s\\S])*?<\\/style>\\s*)+(?=<form\\b[^>]*data-form-id="'+idRe+'")','gi'),'');
       let replaced=false;
       html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ if(m.indexOf(idAttr)>=0){ replaced=true; return rendered; } return m; });
       if(!replaced) continue;
@@ -5599,10 +5607,47 @@ const PLUG_PRESETS=[
 function renderPlugins(){
   const body=document.getElementById('plugins-body');if(!body)return;
   const active=_inject.filter(p=>p.active!==false);
-  body.innerHTML=`<div class="info-b" style="margin-bottom:14px">Active code injections are added to every page when published. ${active.length} active. <strong>Google Analytics has moved</strong> — set up GA4, Tag Manager, and Ads in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a>.</div>`+PLUG_PRESETS.map((preset,i)=>{
+  const presets=PLUG_PRESETS.map((preset,i)=>{
     const existing=_inject.find(p=>p.name===preset.name);
     const isOn=existing?.active!==false&&!!existing;
     return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)}</div></div><label class="tog"><input type="checkbox" ${isOn?'checked':''} onchange="togglePlugin('${esc(preset.name)}',this.checked,${i})"><span class="tog-sl"></span></label></div>`;}).join('');
+  body.innerHTML=recaptchaAddonHtml()
+    +`<div class="pl-sec-label">Code injections</div>`
+    +`<div class="info-b" style="margin-bottom:14px">Active code injections are added to every page when published. ${active.length} active. <strong>Google Analytics has moved</strong> — set up GA4, Tag Manager, and Ads in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a>.</div>`
+    +presets;
+}
+// The reCAPTCHA add-on lives here in Plugins (its home) instead of buried in Site
+// Foundry. Keys are stored server-side in site.json (saveRecaptcha → saveSiteInfo);
+// api.php verifies submissions; renderFormHtml injects the widget into every form
+// while enabled. This card is just the on/off + key-configuration surface.
+function recaptchaAddonHtml(){
+  const rc=(_site&&_site.recaptcha)||{};
+  const on=!!rc.enabled, siteKey=rc.siteKey||'', hasSecret=!!rc.hasSecret;
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#1C3AA9"></rect><circle cx="12" cy="12" r="2.6" fill="#fff"></circle><path d="M12 5.5V8l2.4-1.4A5.8 5.8 0 006.5 9.4l1.5.9A4.1 4.1 0 0112 5.5z" fill="#fff"></path><path d="M18.2 12.6a5.8 5.8 0 01-9 4l-.9 1.5a7.5 7.5 0 0011.4-5.5h-1.5z" fill="#fff"></path></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">Google reCAPTCHA <span class="pl-badge${on?' on':''}">${on?'Active':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">Blocks spam-bot form submissions with Google’s free “I’m not a robot” check. Enter your two keys once — every form on the site is protected. Create keys at <code>google.com/recaptcha/admin</code> (pick reCAPTCHA v2, “I’m not a robot”).</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <div class="fg"><label>Site Key (public)</label><input type="text" id="s-rc-site" placeholder="6Lc…" value="${esc(siteKey)}"></div>
+      <div class="fg"><label>Secret Key (kept on the server)</label><input type="password" id="s-rc-secret" placeholder="${hasSecret?'Secret saved on server':'6Lc… (kept on server)'}"></div>
+      <div class="pl-addon-actions">
+        <button class="fd-btn-primary" onclick="saveRecaptcha()">Save reCAPTCHA</button>
+        ${on?'<button class="fd-btn-ghost" onclick="disableRecaptcha()">Turn off</button>':''}
+        <a href="https://www.google.com/recaptcha/admin" target="_blank" rel="noopener" class="pl-addon-link">Get your keys ↗</a>
+      </div>
+    </div>
+  </div>`;
+}
+async function disableRecaptcha(){
+  if(!_site.recaptcha||!_site.recaptcha.enabled){ toast('reCAPTCHA is already off'); return; }
+  _site.recaptcha.enabled=false;
+  try{ await saveSiteInfo(); toast('reCAPTCHA turned off','ok'); renderPlugins(); }
+  catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 async function togglePlugin(name,on,idx){
   const preset=PLUG_PRESETS[idx];const existing=_inject.findIndex(p=>p.name===name);
@@ -5621,8 +5666,7 @@ function loadSettings(){
   // The Markup (Claude) key still lives in the encrypted DB, surfaced via get_secrets.
   const clEl=document.getElementById('s-claude');if(clEl){clEl.value='';clEl.placeholder=(_secretStatus&&_secretStatus.claude_key)?'Key saved on server':'sk-ant-…';}
   const whoami=document.getElementById('s-pw-whoami');if(whoami)whoami.textContent=getSessionUser().username||'';
-  const rcSite=document.getElementById('s-rc-site');if(rcSite)rcSite.value=(_site&&_site.recaptcha&&_site.recaptcha.siteKey)||'';
-  const rcSec=document.getElementById('s-rc-secret');if(rcSec){rcSec.value='';rcSec.placeholder=(_site&&_site.recaptcha&&_site.recaptcha.hasSecret)?'Secret saved on server':'6Lc… (kept on server)';}
+  // reCAPTCHA config now lives in the Plugins module (its add-on card), not here.
   const vd=document.getElementById('s-ver-display');if(vd)vd.value='v'+CMS_VERSION;
 }
 
@@ -5636,8 +5680,9 @@ async function saveRecaptcha(){
   _site.recaptcha.enabled=!!siteKey;
   try{
     await saveSiteInfo();
-    toast('reCAPTCHA keys saved ✓','ok');
+    toast(siteKey?'reCAPTCHA saved — forms are now protected ✓':'reCAPTCHA keys cleared','ok');
     const rcSec=document.getElementById('s-rc-secret');if(rcSec){rcSec.value='';rcSec.placeholder='Secret saved on server';}
+    if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();  // refresh the add-on card (badge/state)
   }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 async function saveRepoOverride(){
@@ -9259,6 +9304,49 @@ function initPermissionToggles(){
 }
 
 
+// Record a page revision: a ledger entry (who/when/which page) plus a full HTML
+// snapshot, so any past version can be viewed and redeployed from Revisions.
+// Writes to the server (fast; primary read source for the Revisions UI) AND
+// mirrors into GitHub (data/revisions.json + data/rev_<id>.html) so the history
+// lives in the repo — the backup of record, since these sites have no external
+// daily backups. Capped at 100 entries; older snapshots are pruned from BOTH
+// stores. Entirely best-effort: any failure here must never fail the save.
+async function logRevision(pg, filePath, html){
+  try{
+    const me=getSessionUser();
+    const who=(me.displayName||((me.firstName||'')+' '+(me.lastName||'')).trim()||me.username||'Unknown');
+    let revs=[];
+    try{ const rd=await apiCall('read_file',{path:'data/revisions.json'}); revs=JSON.parse(rd.content||'[]'); }catch{}
+    const rid='rev_'+Date.now();
+    revs.unshift({
+      id:rid,
+      page:_curPage,
+      pageTitle:pg.label||pg.title||_curPage,
+      path:filePath,
+      user:who,
+      username:me.username||'',
+      timestamp:new Date().toISOString(),
+      size:html.length,
+      preview:html.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,160)
+    });
+    let dropped=[];
+    if(revs.length>100){ dropped=revs.slice(100); revs=revs.slice(0,100); }
+    const revIndex=JSON.stringify(revs,null,2);
+    // Server copy (primary source for the Revisions list / view / restore).
+    await apiCall('write_file',{path:'data/revisions.json',content:revIndex});
+    await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html});
+    dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html'}).catch(()=>{}); });
+    // GitHub mirror (durable version history in the repo). Non-blocking so a
+    // GitHub hiccup or rate-limit can never fail the page save.
+    const{repo,pat}=ghCfg();
+    if(repo&&pat){
+      ghWrite('data/rev_'+rid+'.html',html,null,'Fourge: revision snapshot '+rid).catch(e=>console.warn('GitHub revision snapshot failed:',e.message));
+      ghSHA('data/revisions.json').then(sha=>ghWrite('data/revisions.json',revIndex,sha,'Fourge: revision index')).catch(e=>console.warn('GitHub revision index failed:',e.message));
+      dropped.forEach(x=>{ ghDelete('data/rev_'+x.id+'.html','Fourge: prune old revision '+x.id).catch(()=>{}); });
+    }
+  }catch(e){ console.warn('Revision log failed:',e.message); }
+}
+
 async function veSavePage(){
   const pg=_pages[_curPage];
   if(!pg){ toast('No page loaded','err'); return; }
@@ -9276,32 +9364,10 @@ async function veSavePage(){
   try{
     const filePath=pg.path||pg.file;
 
-    // 0. Log a revision: a ledger entry (who / when / which page) PLUS a full
-    //    snapshot of the version being saved, so any past version can be viewed
-    //    and redeployed. Best-effort — never blocks the save. Capped at 100
-    //    entries; snapshots beyond the cap are deleted so storage stays bounded.
-    try{
-      const me=getSessionUser();
-      const who=(me.displayName||((me.firstName||'')+' '+(me.lastName||'')).trim()||me.username||'Unknown');
-      let revs=[];
-      try{ const rd=await apiCall('read_file',{path:'data/revisions.json'}); revs=JSON.parse(rd.content||'[]'); }catch{}
-      const rid='rev_'+Date.now();
-      revs.unshift({
-        id:rid,
-        page:_curPage,
-        pageTitle:pg.label||pg.title||_curPage,
-        path:filePath,
-        user:who,
-        username:me.username||'',
-        timestamp:new Date().toISOString(),
-        size:html.length,
-        preview:html.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,160)
-      });
-      if(revs.length>100){ const dropped=revs.slice(100); revs=revs.slice(0,100); dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html'}).catch(()=>{}); }); }
-      await apiCall('write_file',{path:'data/revisions.json',content:JSON.stringify(revs,null,2)});
-      // Snapshot the version we're about to publish, so "Restore" redeploys it exactly.
-      await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html});
-    }catch(e){ console.warn('Revision log failed:',e.message); }
+    // 0. Log a revision (see logRevision): a ledger entry + full snapshot of this
+    //    version, saved to the server AND mirrored into GitHub so the version
+    //    history lives in the repo — our backup of record. Never blocks the save.
+    await logRevision(pg, filePath, html);
 
     // 1. Save to server
     const{url,token}=getApiCfg();
@@ -9370,6 +9436,20 @@ function veOpenPreview(){
   const path=(pg.path||pg.file||'').replace(/^\/+/,'');
   if(base) window.open(base+'/'+path,'_blank');
   else toast('Set website URL in Design → General','err');
+}
+
+// Top-bar site link: opens the live site's home page in a new tab — or, when a
+// page is open in the editor, that exact page (same target as the Preview
+// button). Opened synchronously in the click so the pop-up isn't blocked.
+function openSiteLink(e){
+  if(e && e.preventDefault) e.preventDefault();
+  const base=normSiteBase();
+  if(!base){ toast('Set your website URL in Design → General','err'); return; }
+  const editing=document.getElementById('p-pages')?.classList.contains('on');
+  const pg=(editing && _curPage && _pages) ? _pages[_curPage] : null;
+  let url=base;
+  if(pg){ const path=(pg.path||pg.file||'').replace(/^\/+/,''); if(path) url=base+'/'+path; }
+  window.open(url,'_blank');
 }
 
 // ── CLEAN PAGES (one-time maintenance) ──────────────────────────
