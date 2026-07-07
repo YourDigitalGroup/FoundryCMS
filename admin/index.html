@@ -2016,6 +2016,24 @@ textarea.fb-input{resize:vertical}
     <div class="mb" id="form-convert-body" style="overflow-y:auto"></div>
   </div>
 </div>
+<div class="mw" id="m-rev-view">
+  <div class="modal" style="width:1040px;max-width:96vw;height:88vh;max-height:88vh;display:flex;flex-direction:column">
+    <div class="mh"><h2 id="rev-view-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">Revision</h2>
+      <div style="display:flex;align-items:center;gap:8px">
+        <a id="rev-view-newtab" href="#" target="_blank" rel="noopener" class="fd-btn-ghost" style="font-size:12px;display:none">Open in new tab ↗</a>
+        <button class="ib" onclick="closeM('m-rev-view')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+    </div>
+    <div class="mb" style="flex:1;min-height:0;display:flex;padding:0;overflow:hidden"><iframe id="rev-view-frame" title="Revision preview" style="width:100%;height:100%;border:0;background:#fff"></iframe></div>
+  </div>
+</div>
+<div class="mw" id="m-uiconfirm">
+  <div class="modal" style="width:420px">
+    <div class="mh"><h2 id="uiconfirm-title">Please confirm</h2><button class="ib" onclick="uiConfirmResolve(false)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb"><p id="uiconfirm-msg" style="font-size:14px;color:var(--text);line-height:1.55;margin:0"></p></div>
+    <div class="mf"><button class="fd-btn-secondary" onclick="uiConfirmResolve(false)">Cancel</button><button class="fd-btn-primary" id="uiconfirm-ok" onclick="uiConfirmResolve(true)">Confirm</button></div>
+  </div>
+</div>
 <div class="mw" id="m-adduser">
   <div class="modal" style="width:480px">
     <div class="mh"><h2>Add User</h2><button class="ib" onclick="closeM('m-adduser')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -2195,7 +2213,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.39';
+const CMS_VERSION='1.14.40';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2228,6 +2246,21 @@ function dzOver(e){e.preventDefault();e.currentTarget.classList.add('ov');}
 function dzLeave(){document.querySelectorAll('.dz').forEach(d=>d.classList.remove('ov'));}
 function openM(id){const m=document.getElementById(id);if(m)m.classList.add('on');}
 function closeM(id){const m=document.getElementById(id);if(m)m.classList.remove('on');}
+// In-app confirm modal — a drop-in replacement for window.confirm() that works
+// even where native dialogs are suppressed (embedded/in-app browsers, iframes,
+// strict popup blockers). Returns a Promise<boolean>.
+let _uiConfirmCb=null;
+function uiConfirm(msg, okLabel, title){
+  return new Promise(resolve=>{
+    if(!document.getElementById('m-uiconfirm')){ resolve(window.confirm(msg||'Are you sure?')); return; } // fallback
+    _uiConfirmCb=resolve;
+    const t=document.getElementById('uiconfirm-title'); if(t) t.textContent=title||'Please confirm';
+    const m=document.getElementById('uiconfirm-msg'); if(m) m.textContent=msg||'Are you sure?';
+    const b=document.getElementById('uiconfirm-ok'); if(b) b.textContent=okLabel||'Confirm';
+    openM('m-uiconfirm');
+  });
+}
+function uiConfirmResolve(val){ closeM('m-uiconfirm'); const cb=_uiConfirmCb; _uiConfirmCb=null; if(cb) cb(!!val); }
 function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');p.parentElement.querySelectorAll('.tab-panel').forEach(t=>t.classList.remove('on'));const el=document.getElementById(panelId);if(el)el.classList.add('on');}
 function switchPropsTab(){}
 const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','users':'p-users'};
@@ -9112,37 +9145,51 @@ async function loadRevisions(){
 }
 
 async function restoreRevision(revId, path, pageId){
-  if(!confirm('Restore this version? The current page file will be overwritten.')) return;
+  // In-app confirm — native confirm() is suppressed in some embedded/iframe browsers.
+  if(!(await uiConfirm('Restore this version? The current '+(path||'page')+' will be overwritten with this saved snapshot.','Restore this version','Restore page version'))) return;
   try{
-    // Load revision file (stored as rev_<id>_<page>.html)
     const revPath = 'data/rev_'+revId+'.html';
     const d = await apiCall('read_file',{path:revPath});
-    if(!d.content) throw new Error('Revision file not found');
+    if(!d || !d.content) throw new Error('Snapshot file is missing ('+revPath+') — it may have been pruned.');
     await apiCall('write_file',{path:path,content:d.content});
-    // Also clear cache for this page
-    delete _veHtml[pageId]; delete _veOrigHtml[pageId];
-    toast('Page restored ✓ — reload the editor to see changes','ok');
+    if(typeof _veHtml!=='undefined'){ delete _veHtml[pageId]; delete _veOrigHtml[pageId]; }  // drop editor cache for this page
+    toast('Page restored ✓ — reload the editor to see the change','ok');
   }catch(e){
     toast('Restore failed: '+e.message,'err');
   }
 }
 
-// Open a saved revision in a new tab. Injects a <base> so the snapshot's
-// relative CSS/images resolve against the live site.
+// Show a saved revision INSIDE the CMS (a modal iframe) rather than a pop-up
+// window — pop-ups get blocked or silently no-op'd in embedded/in-app browsers,
+// which is why "View" appeared to do nothing. A <base> is injected so the
+// snapshot's relative CSS/images resolve against the live site, a best-effort
+// "Open in new tab" blob link is offered as a bonus, and ANY failure is shown IN
+// the modal instead of failing silently.
 async function viewRevision(revId){
-  // Open the tab SYNCHRONOUSLY, inside the click, so the browser treats it as a
-  // user-initiated popup. Opening it after the await (below) gets silently blocked.
-  const w = window.open('', '_blank');
-  if(!w){ toast('Allow pop-ups to view the revision','err'); return; }
-  try{ w.document.write('<!doctype html><meta charset="utf-8"><title>Loading revision…</title><body style="font:15px system-ui;padding:40px;color:#555">Loading revision…</body>'); }catch(e){}
+  const frame=document.getElementById('rev-view-frame');
+  const titleEl=document.getElementById('rev-view-title');
+  const newtab=document.getElementById('rev-view-newtab');
+  if(!frame){                                    // modal missing (older shell) → last-resort pop-up
+    try{ const w=window.open('','_blank'); if(w){ const d=await apiCall('read_file',{path:'data/rev_'+revId+'.html'}); w.document.write((d&&d.content)||'Snapshot not found'); w.document.close(); return; } }catch(e){}
+    toast('Could not open the revision','err'); return;
+  }
+  if(titleEl) titleEl.textContent='Loading revision…';
+  if(newtab) newtab.style.display='none';
+  frame.srcdoc='<!doctype html><body style="font:15px system-ui;padding:40px;color:#666">Loading…</body>';
+  openM('m-rev-view');
   try{
-    const d = await apiCall('read_file',{path:'data/rev_'+revId+'.html'});
-    if(!d.content) throw new Error('Snapshot not found');
-    let html = d.content;
-    const base = autoSiteBase() || normSiteBase();
-    if(base && !/<base\b/i.test(html)) html = html.replace(/<head([^>]*)>/i,'<head$1><base href="'+base+'/">');
-    w.document.open(); w.document.write(html); w.document.close();
-  }catch(e){ try{ w.close(); }catch(_){}; toast('Could not open revision: '+e.message,'err'); }
+    const d=await apiCall('read_file',{path:'data/rev_'+revId+'.html'});
+    if(!d || !d.content) throw new Error('Snapshot file is missing (data/rev_'+revId+'.html) — it may have been pruned.');
+    let html=d.content;
+    const base=autoSiteBase()||normSiteBase();
+    if(base && !/<base\b/i.test(html)) html=html.replace(/<head([^>]*)>/i,'<head$1><base href="'+base+'/">');
+    if(titleEl) titleEl.textContent='Revision · '+revId;
+    frame.srcdoc=html;
+    if(newtab){ try{ const url=URL.createObjectURL(new Blob([html],{type:'text/html'})); newtab.href=url; newtab.style.display=''; }catch(e){} }
+  }catch(e){
+    if(titleEl) titleEl.textContent='Revision — could not load';
+    frame.srcdoc='<!doctype html><body style="font:15px/1.6 system-ui;padding:40px;color:#b91c1c">Could not open this revision:<br><br><strong>'+esc(String(e.message||e))+'</strong></body>';
+  }
 }
 
 
