@@ -1914,7 +1914,7 @@ textarea.fb-input{resize:vertical}
       <!-- ══════════════════════════════════════════════════════
            REVISIONS
       ═══════════════════════════════════════════════════════ -->
-      <div class="panel admin-only" id="p-revisions">
+      <div class="panel" id="p-revisions">
         <div style="max-width:880px">
           <h1 style="font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin-bottom:4px">Revisions</h1>
           <p style="font-size:13px;color:var(--muted);margin-bottom:24px">Every page save is logged here, with who made the change. <strong>View</strong> opens that version; <strong>Restore</strong> redeploys it to the live page.</p>
@@ -9080,6 +9080,10 @@ async function loadRevisions(){
       list.innerHTML='<div style="color:var(--muted);font-size:13px;padding:20px 0">No revisions yet. Save a page to start tracking changes.</div>';
       return;
     }
+    // JSON-encode a value for an inline onclick attribute: turn the JSON's double
+    // quotes into &quot; so they don't collide with the double-quoted onclick="…"
+    // (a raw " truncates the handler, so the click throws and nothing happens).
+    const oc=v=>JSON.stringify(v).replace(/"/g,'&quot;');
     list.innerHTML = revs.map(r=>{
       const dt = new Date(r.timestamp);
       const friendly = dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
@@ -9093,8 +9097,8 @@ async function loadRevisions(){
         +'<div style="font-size:11px;color:var(--muted);font-family:var(--font-mono);margin-top:2px">'+esc(r.path||'')+'</div>'
         +'</div>'
         +'<div style="display:flex;gap:8px;flex-shrink:0">'
-        +'<button class="fd-btn-ghost" style="font-size:12px" onclick="viewRevision('+JSON.stringify(r.id)+')">View</button>'
-        +'<button class="fd-btn-secondary" style="font-size:12px" onclick="restoreRevision('+JSON.stringify(r.id)+','+JSON.stringify(r.path)+','+JSON.stringify(r.page)+')">Restore</button>'
+        +'<button class="fd-btn-ghost" style="font-size:12px" onclick="viewRevision('+oc(r.id)+')">View</button>'
+        +'<button class="fd-btn-secondary" style="font-size:12px" onclick="restoreRevision('+oc(r.id)+','+oc(r.path)+','+oc(r.page)+')">Restore</button>'
         +'</div>'
         +'</div>';
     }).join('');
