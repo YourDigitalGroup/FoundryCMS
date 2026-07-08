@@ -51,9 +51,12 @@ function fourgeLegacySendConfig($root) {
     return [];
 }
 // Only when config.secret.php configures no mail of its own — explicit config always wins.
+// Record where the mail credentials ultimately came from so the "Send test email"
+// diagnostic can show it (config.secret.php vs the legacy send.php vs none).
+$GLOBALS['__mail_source'] = (!empty($__secret['smtp_host']) || !empty($__secret['mg_api_key'])) ? 'config.secret.php' : 'none';
 if (empty($__secret['smtp_host']) && empty($__secret['mg_api_key'])) {
     $__legacy = fourgeLegacySendConfig(dirname(__DIR__));
-    if ($__legacy) $__secret = array_merge($__legacy, $__secret);
+    if ($__legacy) { $__secret = array_merge($__legacy, $__secret); $GLOBALS['__mail_source'] = 'send.php'; }
 }
 
 define('API_TOKEN',    (string)($__secret['api_token'] ?? 'CHANGE_ME')); // optional now (login uses sessions); kept for legacy/external callers
@@ -174,7 +177,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
 $PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','send_test_email'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -228,6 +231,7 @@ try {
         case 'set_secret':      ob_end_clean(); fourgeApiSetSecret($authUser, $body); break;
         case 'ghl_test':        ob_end_clean(); fourgeApiGhlTest($authUser, $body); break;
         case 'ghl_dashboard':   ob_end_clean(); fourgeApiGhlDashboard($authUser, $body); break;
+        case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
@@ -835,6 +839,20 @@ function cmsSmtpSend($opt, &$err) {
     return true;
 }
 
+// Resolve the SMTP envelope-From the same way for the live form and the test
+// diagnostic: use the configured mg_from, but ignore the built-in example
+// placeholder and fall back to the SMTP login — always a valid sender on the
+// relay's own domain — so a missing or placeholder mg_from can never make the
+// relay reject the message. Returns [email, displayName].
+function cmsSmtpFrom($mgFrom) {
+    $fromRaw = trim((string)$mgFrom);
+    if ($fromRaw === '' || stripos($fromRaw, 'example.com') !== false) $fromRaw = SMTP_USER;
+    $fromEmail = $fromRaw; $fromName = '';
+    if (preg_match('/^\s*(.*?)\s*<([^>]+)>\s*$/', $fromRaw, $mm)) { $fromName = trim($mm[1], " \"'"); $fromEmail = trim($mm[2]); }
+    if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) $fromEmail = SMTP_USER;
+    return [$fromEmail, $fromName];
+}
+
 function cmsSendForm($body) {
     $mg      = cmsMailgun();
     $fields  = $body['fields']  ?? [];
@@ -885,15 +903,7 @@ function cmsSendForm($body) {
     // Prefer SMTP when configured (a migrated site's existing SMTP creds work
     // as-is); otherwise fall through to the Mailgun HTTP API below.
     if (cmsSmtpEnabled()) {
-        // From: use the configured mg_from, but ignore the built-in example
-        // placeholder and fall back to the SMTP login — always a valid sender on
-        // the relay's own domain — so a missing or placeholder mg_from can never
-        // make the relay reject the message.
-        $fromRaw = trim((string)$mg['from']);
-        if ($fromRaw === '' || stripos($fromRaw, 'example.com') !== false) $fromRaw = SMTP_USER;
-        $fromEmail = $fromRaw; $fromName = '';
-        if (preg_match('/^\s*(.*?)\s*<([^>]+)>\s*$/', $fromRaw, $mm)) { $fromName = trim($mm[1], " \"'"); $fromEmail = trim($mm[2]); }
-        if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) $fromEmail = SMTP_USER;
+        list($fromEmail, $fromName) = cmsSmtpFrom($mg['from']);
         $err = '';
         $sent = cmsSmtpSend([
             'host' => SMTP_HOST, 'port' => SMTP_PORT, 'secure' => SMTP_SECURE, 'user' => SMTP_USER, 'pass' => SMTP_PASS,
@@ -922,6 +932,90 @@ function cmsSendForm($body) {
     if ($curlErr) { http_response_code(500); echo json_encode(['error' => 'Mail failed: '.$curlErr]); return; }
     if ($code === 200) { echo json_encode(['ok' => true]); }
     else { $d = json_decode($result, true); http_response_code(500); echo json_encode(['error' => 'Mailgun '.$code.': '.($d['message']??$result)]); }
+}
+
+// Send a diagnostic test email down the SAME path a real form submission uses
+// (SMTP when configured, otherwise the Mailgun HTTP API) and report back exactly
+// what happened — method, host, From, config source, and the precise failure
+// stage from cmsSmtpSend (e.g. "login rejected: 535 …", "MAIL FROM: 550 …",
+// "connect failed"). Populates $info with the resolved config for the UI.
+// Returns [bool success, string humanMessage].
+function cmsSendTestEmail($to, &$info) {
+    $mg   = cmsMailgun();
+    $info = [
+        'to'     => $to,
+        'source' => $GLOBALS['__mail_source'] ?? 'config.secret.php',
+        'method' => 'none',
+    ];
+    $subject = 'Fourge CMS test email';
+    $text = "This is a test email sent from your Fourge CMS mail settings.\n"
+          . "If you received it, outbound email from your site is working.\n\n"
+          . 'Sent: ' . date('Y-m-d H:i:s');
+    $html = '<!DOCTYPE html><html><body style="font-family:Inter,Arial,sans-serif;color:#1A1917;max-width:560px;margin:0 auto;padding:24px">'
+          . '<h2 style="font-size:18px;margin:0 0 8px">Fourge CMS test email ✓</h2>'
+          . '<p style="color:#555;font-size:14px">If you\'re reading this, your site\'s outbound email is working — form notifications will be delivered.</p>'
+          . '<p style="font-size:11px;color:#A09882;margin-top:16px">Sent via Fourge CMS · ' . date('Y-m-d H:i') . '</p>'
+          . '</body></html>';
+
+    // Prefer SMTP when configured — mirrors cmsSendForm's method choice exactly.
+    if (cmsSmtpEnabled()) {
+        list($fromEmail, $fromName) = cmsSmtpFrom($mg['from']);
+        $secure = SMTP_SECURE;
+        if ($secure === 'auto') $secure = (SMTP_PORT === 465) ? 'auto → ssl (implicit TLS)' : 'auto → STARTTLS';
+        $info['method'] = 'SMTP';
+        $info['host']   = SMTP_HOST . ':' . SMTP_PORT;
+        $info['secure'] = $secure;
+        $info['user']   = SMTP_USER;
+        $info['from']   = ($fromName !== '' ? $fromName . ' <' . $fromEmail . '>' : $fromEmail);
+        $err = '';
+        $sent = cmsSmtpSend([
+            'host' => SMTP_HOST, 'port' => SMTP_PORT, 'secure' => SMTP_SECURE, 'user' => SMTP_USER, 'pass' => SMTP_PASS,
+            'from' => $fromEmail, 'fromName' => $fromName, 'to' => $to, 'toName' => '',
+            'replyTo' => '', 'replyName' => '', 'subject' => $subject, 'html' => $html, 'text' => $text,
+        ], $err);
+        if ($sent) return [true, 'Test email sent over SMTP to ' . $to . '. Check that inbox (and the spam folder).'];
+        return [false, 'SMTP send failed at stage — ' . $err];
+    }
+
+    // Otherwise the Mailgun HTTP API (only if a real key + domain are configured).
+    if ($mg['key'] !== '' && $mg['domain'] !== '' && stripos($mg['domain'], 'example.com') === false) {
+        $info['method'] = 'Mailgun API';
+        $info['host']   = 'api.mailgun.net (' . $mg['domain'] . ')';
+        $info['from']   = $mg['from'];
+        $ch = curl_init('https://api.mailgun.net/v3/' . $mg['domain'] . '/messages');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_USERPWD        => 'api:' . $mg['key'],
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => ['from'=>$mg['from'],'to'=>$to,'subject'=>$subject,'text'=>$text,'html'=>$html],
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_TIMEOUT        => 15,
+        ]);
+        $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $ce = curl_error($ch); curl_close($ch);
+        if ($ce) return [false, 'Mailgun connection error: ' . $ce];
+        if ($code === 200) return [true, 'Test email sent over the Mailgun API to ' . $to . '. Check that inbox (and the spam folder).'];
+        $d = json_decode($res, true);
+        return [false, 'Mailgun rejected the message (' . $code . '): ' . ($d['message'] ?? $res)];
+    }
+
+    return [false, 'No mail method is configured. Add SMTP settings (in send.php or config.secret.php) or a Mailgun API key.'];
+}
+
+// Admin diagnostic endpoint: run cmsSendTestEmail and return the structured
+// result to the CMS so mail failures are self-explaining instead of a generic
+// "could not be sent". Level 2+ (admin) — surfaces host/From but never secrets.
+function fourgeApiSendTestEmail($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
+    $mg = cmsMailgun();
+    $to = trim((string)($body['to'] ?? ''));
+    if ($to === '') $to = trim((string)($me['email'] ?? ''));
+    if ($to === '') $to = trim((string)$mg['notify']);
+    if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
+        echo json_encode(['ok' => false, 'error' => 'Enter a valid recipient email address to send the test to.']); return;
+    }
+    $info = [];
+    list($ok, $msg) = cmsSendTestEmail($to, $info);
+    echo json_encode(array_merge(['ok' => $ok, 'message' => $msg], $info));
 }
 
 // ── GOOGLE ANALYTICS (GA4 Data API proxy) ───────────────────────────────────

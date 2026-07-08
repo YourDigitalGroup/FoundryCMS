@@ -2238,7 +2238,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.45';
+const CMS_VERSION='1.14.46';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5681,6 +5681,7 @@ function renderPlugins(){
     return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)}</div></div><label class="tog"><input type="checkbox" ${isOn?'checked':''} onchange="togglePlugin('${esc(preset.name)}',this.checked,${i})"><span class="tog-sl"></span></label></div>`;}).join('');
   body.innerHTML=recaptchaAddonHtml()
     +ghlAddonHtml()
+    +mailAddonHtml()
     +`<div class="pl-sec-label">Code injections</div>`
     +`<div class="info-b" style="margin-bottom:14px">Active code injections are added to every page when published. ${active.length} active. <strong>Google Analytics has moved</strong> — set up GA4, Tag Manager, and Ads in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a>.</div>`
     +presets;
@@ -5792,6 +5793,66 @@ async function testGhl(){
     const d=await apiCall('ghl_test',{token,locationId});
     toast(d.message||(d.ok?'Connected ✓':'Connection failed'), d.ok?'ok':'err');
   }catch(e){ toast('Test failed: '+e.message,'err'); }
+}
+
+// ── EMAIL DELIVERY diagnostic (Plugins → admin+) ────────────────────────────
+// Sends a test email through the SAME server path a real form submission uses
+// (api.php → cmsSendTestEmail: SMTP when configured, else the Mailgun API) and
+// shows exactly what happened — method, host, From, config source, and the
+// precise SMTP failure stage — so "form isn't emailing" stops being a mystery.
+function mailAddonHtml(){
+  if(accessLevel(getSessionUser())<2) return '';   // admin / super-admin only
+  const to=(_site&&(_site.notifyEmail||_site.email))||(getSessionUser().email)||'';
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#C2410C"></rect><path d="M6 8.5h12v7H6z" fill="none" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"></path><path d="M6.3 9l5.7 4 5.7-4" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n">Email delivery</div>
+        <div class="pl-s" style="margin-top:3px">Send a test email through the same path your website forms use. If a form saves an entry but never arrives by email, this pinpoints where it breaks — a rejected password, a blocked port, a bad From address — instead of a generic “could not be sent”.</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <div class="fg"><label>Send test to</label><input type="email" id="s-mail-to" placeholder="you@example.com" value="${esc(to)}"></div>
+      <div class="pl-addon-actions">
+        <button class="fd-btn-primary" id="s-mail-btn" onclick="sendTestEmail()">Send test email</button>
+      </div>
+      <div id="s-mail-result" style="margin-top:14px"></div>
+    </div>
+  </div>`;
+}
+async function sendTestEmail(){
+  const to=document.getElementById('s-mail-to')?.value.trim()||'';
+  const box=document.getElementById('s-mail-result');
+  const btn=document.getElementById('s-mail-btn');
+  if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  if(box) box.innerHTML='<div style="color:var(--muted);font-size:13px">Sending test email…</div>';
+  try{
+    const d=await apiCall('send_test_email',{to});
+    if(box) box.innerHTML=renderMailResult(d);
+    toast(d&&d.ok?'Test email sent ✓':'Send failed — see details below', d&&d.ok?'ok':'err');
+  }catch(e){
+    if(box) box.innerHTML='<div class="warn-b" style="margin:0">'+esc(e.message||'Could not run the test.')+'</div>';
+    toast('Test failed: '+e.message,'err');
+  }finally{ if(btn){ btn.disabled=false; btn.textContent='Send test email'; } }
+}
+function renderMailResult(d){
+  if(!d) return '<div class="warn-b" style="margin:0">No response from the server.</div>';
+  const ok=!!d.ok;
+  const srcLabel={ 'send.php':'send.php (legacy)', 'config.secret.php':'config.secret.php', 'none':'none configured' };
+  const rows=[];
+  if(d.method&&d.method!=='none') rows.push(['Method',d.method]);
+  if(d.source) rows.push(['Config source', srcLabel[d.source]||d.source]);
+  if(d.host)   rows.push(['Server',d.host]);
+  if(d.secure) rows.push(['Encryption',d.secure]);
+  if(d.user)   rows.push(['Login',d.user]);
+  if(d.from)   rows.push(['From',d.from]);
+  if(d.to)     rows.push(['To',d.to]);
+  const kv=rows.map(r=>`<tr><td style="padding:3px 14px 3px 0;color:var(--muted);white-space:nowrap;vertical-align:top">${esc(r[0])}</td><td style="padding:3px 0;color:var(--text);word-break:break-word">${esc(r[1])}</td></tr>`).join('');
+  const color=ok?'var(--green)':'var(--red)';
+  const bg=ok?'rgba(22,163,74,.10)':'rgba(225,72,59,.10)';
+  const banner=`<div style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;font-size:13px;font-weight:600;margin-bottom:${kv?'12px':'0'};background:${bg};color:${color}"><span>${ok?'✓':'✕'}</span><span style="word-break:break-word">${esc(d.message||d.error||(ok?'Sent':'Failed'))}</span></div>`;
+  return banner+(kv?`<table style="font-size:12.5px;border-collapse:collapse;width:100%">${kv}</table>`:'');
 }
 
 // ── LEAD GENERATION dashboard (GHL) ── viewable by everyone when the integration
