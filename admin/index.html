@@ -2213,7 +2213,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.41';
+const CMS_VERSION='1.14.42';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5651,6 +5651,7 @@ function renderPlugins(){
     const isOn=existing?.active!==false&&!!existing;
     return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)}</div></div><label class="tog"><input type="checkbox" ${isOn?'checked':''} onchange="togglePlugin('${esc(preset.name)}',this.checked,${i})"><span class="tog-sl"></span></label></div>`;}).join('');
   body.innerHTML=recaptchaAddonHtml()
+    +ghlAddonHtml()
     +`<div class="pl-sec-label">Code injections</div>`
     +`<div class="info-b" style="margin-bottom:14px">Active code injections are added to every page when published. ${active.length} active. <strong>Google Analytics has moved</strong> — set up GA4, Tag Manager, and Ads in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a>.</div>`
     +presets;
@@ -5699,6 +5700,69 @@ function recaptchaAddonHtml(){
 }
 // Show the v3 score-threshold control only when v3 is selected.
 function rcToggleV3(v){ const row=document.getElementById('s-rc-threshold-row'); if(row) row.style.display=(v==='v3')?'':'none'; }
+
+// ── GOHIGHLEVEL add-on (Plugins module → Super-Admin only) ──────────────────
+// Phase 1: push each form submission into GHL as a lead. The Private Integration
+// Token is stored ENCRYPTED server-side (set_secret → 'ghl_token', never returned
+// to the browser); enabled + locationId live in site.json. The server does the
+// push (api.php → cmsGhlPushLead) so the token never touches the page.
+function ghlAddonHtml(){
+  const g=(_site&&_site.ghl)||{};
+  const on=!!g.enabled, loc=g.locationId||'';
+  const hasToken=!!(_secretStatus&&_secretStatus.ghl_token);
+  const hint='font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5';
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#155EEF"></rect><path d="M7 15.5V9.5L12 7l5 2.5v6L12 18z" fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"></path><circle cx="12" cy="12" r="1.7" fill="#fff"></circle></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">GoHighLevel <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into GoHighLevel as a lead — no GHL form needed. In your GHL sub-account, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID.</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label class="tog"><input type="checkbox" id="s-ghl-enabled" ${on?'checked':''}><span class="tog-sl"></span></label>
+        <span style="font-size:13px;color:var(--text)">Send new form leads into GoHighLevel</span>
+      </div>
+      <div class="fg"><label>Private Integration Token</label><input type="password" id="s-ghl-token" placeholder="${hasToken?'Token saved on server':'pit-… (kept on the server)'}"></div>
+      <div class="fg"><label>Location ID</label><input type="text" id="s-ghl-location" placeholder="your GHL sub-account / location ID" value="${esc(loc)}">
+        <div style="${hint}">Find it in GHL under Settings → Business Profile (or the last path segment of your sub-account URL).</div>
+      </div>
+      <div class="pl-addon-actions">
+        <button class="fd-btn-primary" onclick="saveGhl()">Save</button>
+        <button class="fd-btn-ghost" onclick="testGhl()">Test connection</button>
+        <a href="https://marketplace.gohighlevel.com/docs/Authorization/PrivateIntegrationsToken/" target="_blank" rel="noopener" class="pl-addon-link">How to get a token ↗</a>
+      </div>
+    </div>
+  </div>`;
+}
+async function saveGhl(){
+  const enabled=!!document.getElementById('s-ghl-enabled')?.checked;
+  const token=document.getElementById('s-ghl-token')?.value.trim()||'';
+  const locationId=document.getElementById('s-ghl-location')?.value.trim()||'';
+  const hadToken=!!(_secretStatus&&_secretStatus.ghl_token);
+  try{
+    if(token){ await apiCall('set_secret',{name:'ghl_token',value:token}); if(_secretStatus) _secretStatus.ghl_token=true; }
+    if(!_site.ghl) _site.ghl={};
+    _site.ghl.enabled=enabled;
+    _site.ghl.locationId=locationId;
+    await saveSiteInfo();
+    if(enabled && !token && !hadToken) toast('Saved — add a token to start sending leads','ok');
+    else toast(enabled?'GoHighLevel connected — new leads will flow in ✓':'GoHighLevel settings saved','ok');
+    const t=document.getElementById('s-ghl-token'); if(t){ t.value=''; if(token) t.placeholder='Token saved on server'; }
+    if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+async function testGhl(){
+  const token=document.getElementById('s-ghl-token')?.value.trim()||'';
+  const locationId=document.getElementById('s-ghl-location')?.value.trim()||'';
+  toast('Testing GoHighLevel…');
+  try{
+    const d=await apiCall('ghl_test',{token,locationId});
+    toast(d.message||(d.ok?'Connected ✓':'Connection failed'), d.ok?'ok':'err');
+  }catch(e){ toast('Test failed: '+e.message,'err'); }
+}
 async function disableRecaptcha(){
   if(!_site.recaptcha||!_site.recaptcha.enabled){ toast('reCAPTCHA is already off'); return; }
   _site.recaptcha.enabled=false;
