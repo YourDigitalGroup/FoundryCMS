@@ -233,30 +233,62 @@ function fourgeDeleteSession($pdo, $token) {
     if ($token) $pdo->prepare("DELETE FROM sessions WHERE token=?")->execute([$token]);
 }
 
-// ── SECRET ENCRYPTION (libsodium) ────────────────────────────────────────────
-function fourgeKey() {
+// ── SECRET ENCRYPTION ────────────────────────────────────────────────────────
+// Prefers libsodium (secretbox); falls back to OpenSSL AES-256-GCM on hosts that
+// don't have the sodium extension (common on shared hosting). Blobs are tagged so
+// either can be read back: OpenSSL blobs are prefixed "osl:", sodium blobs keep
+// their original prefix-free format — so secrets written on a sodium host still
+// decrypt after an engine update, and vice-versa.
+function fourgePassphrase() {
     $cfg = fourgeConfig();
     $k = (string)($cfg['db_secret_key'] ?? '');
     if (strlen($k) < 16) {
         throw new Exception('db_secret_key is missing or too short in admin/config.secret.php (use a long random value).');
     }
-    // Derive a fixed 32-byte key from the configured passphrase.
-    return sodium_crypto_generichash($k, '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+    return $k;
+}
+function fourgeHasSodium() {
+    return function_exists('sodium_crypto_secretbox') && function_exists('sodium_crypto_generichash');
+}
+// Back-compat: some callers used fourgeKey() directly.
+function fourgeKey() {
+    return sodium_crypto_generichash(fourgePassphrase(), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
 }
 
 function fourgeEncrypt($plain) {
-    $key = fourgeKey();
-    $nonce = random_bytes(SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
-    $cipher = sodium_crypto_secretbox((string)$plain, $nonce, $key);
-    return base64_encode($nonce . $cipher);
+    $pass = fourgePassphrase();
+    if (fourgeHasSodium()) {
+        $key = sodium_crypto_generichash($pass, '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+        $nonce = random_bytes(SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+        return base64_encode($nonce . sodium_crypto_secretbox((string)$plain, $nonce, $key));
+    }
+    // Fallback: AES-256-GCM via OpenSSL (authenticated, like secretbox).
+    if (!function_exists('openssl_encrypt')) {
+        throw new Exception('This server has neither the libsodium nor the OpenSSL PHP extension enabled — enable one to store encrypted settings.');
+    }
+    $key = hash('sha256', $pass, true);
+    $iv = random_bytes(12); $tag = '';
+    $cipher = openssl_encrypt((string)$plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, '', 16);
+    if ($cipher === false) throw new Exception('Encryption failed (OpenSSL AES-256-GCM unavailable).');
+    return 'osl:' . base64_encode($iv . $tag . $cipher);
 }
 
 function fourgeDecrypt($enc) {
-    $raw = base64_decode((string)$enc, true);
+    $enc = (string)$enc;
+    if (strncmp($enc, 'osl:', 4) === 0) {                       // OpenSSL AES-256-GCM blob
+        $raw = base64_decode(substr($enc, 4), true);
+        if ($raw === false || strlen($raw) < 28) return null;   // 12 iv + 16 tag (+ 0-len cipher ok)
+        $iv = substr($raw, 0, 12); $tag = substr($raw, 12, 16); $cipher = substr($raw, 28);
+        $plain = openssl_decrypt($cipher, 'aes-256-gcm', hash('sha256', fourgePassphrase(), true), OPENSSL_RAW_DATA, $iv, $tag);
+        return $plain === false ? null : $plain;
+    }
+    if (!fourgeHasSodium()) return null;                        // legacy sodium blob but no sodium here
+    $raw = base64_decode($enc, true);
     if ($raw === false || strlen($raw) <= SODIUM_CRYPTO_SECRETBOX_NONCEBYTES) return null;
     $nonce = substr($raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
     $cipher = substr($raw, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
-    $plain = sodium_crypto_secretbox_open($cipher, $nonce, fourgeKey());
+    $key = sodium_crypto_generichash(fourgePassphrase(), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+    $plain = sodium_crypto_secretbox_open($cipher, $nonce, $key);
     return $plain === false ? null : $plain;
 }
 
