@@ -549,7 +549,18 @@ function cmsRecaptchaSecret() {
     return '';
 }
 
-function cmsVerifyRecaptcha($secret, $token) {
+// The v3 score threshold from data/site.json (default 0.5). v2 ignores it.
+function cmsRecaptchaThreshold() {
+    try {
+        $file = __DIR__ . '/../data/site.json';
+        if (!file_exists($file)) return 0.5;
+        $site = json_decode(file_get_contents($file), true);
+        $t = $site['recaptcha']['threshold'] ?? 0.5;
+        return is_numeric($t) ? (float)$t : 0.5;
+    } catch (Exception $e) { return 0.5; }
+}
+
+function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
     $ch = curl_init('https://www.google.com/recaptcha/api/siteverify');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -562,7 +573,11 @@ function cmsVerifyRecaptcha($secret, $token) {
     curl_close($ch);
     if (!$res) return false;
     $data = json_decode($res, true);
-    return !empty($data['success']);
+    if (empty($data['success'])) return false;
+    // reCAPTCHA v3 returns a 0.0–1.0 score; enforce the configured threshold.
+    // v2 (checkbox) returns no score, so a successful verification is enough.
+    if (isset($data['score'])) return ((float)$data['score']) >= (float)$threshold;
+    return true;
 }
 
 // Resolve Mailgun config from the encrypted DB secrets first (server-side,
@@ -670,7 +685,7 @@ function cmsSendForm($body) {
     // reCAPTCHA verification (only enforced if a secret is configured in site.json)
     $rcSecret = cmsRecaptchaSecret();
     if ($rcSecret) {
-        if (!$rcToken || !cmsVerifyRecaptcha($rcSecret, $rcToken)) {
+        if (!$rcToken || !cmsVerifyRecaptcha($rcSecret, $rcToken, cmsRecaptchaThreshold())) {
             http_response_code(400);
             echo json_encode(['error' => 'reCAPTCHA verification failed. Please try again.']); return;
         }
