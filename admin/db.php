@@ -276,6 +276,10 @@ function fourgeSecretPolicy() {
         'mg_api_key'    => 3,
         'mg_from'       => 3,
         'mg_notify_to'  => 3,
+        // GoHighLevel Private Integration Token — Super Admin and above. Stored
+        // encrypted (server-side only) and never returned to the browser; the
+        // server uses it to push form leads into GHL.
+        'ghl_token'     => 3,
     ];
 }
 

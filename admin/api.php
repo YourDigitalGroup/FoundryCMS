@@ -169,7 +169,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
 $PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -221,6 +221,7 @@ try {
         case 'change_password': ob_end_clean(); fourgeApiChangePassword($authUser, $body); break;
         case 'get_secrets':     ob_end_clean(); fourgeApiGetSecrets($authUser); break;
         case 'set_secret':      ob_end_clean(); fourgeApiSetSecret($authUser, $body); break;
+        case 'ghl_test':        ob_end_clean(); fourgeApiGhlTest($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
@@ -549,7 +550,18 @@ function cmsRecaptchaSecret() {
     return '';
 }
 
-function cmsVerifyRecaptcha($secret, $token) {
+// The v3 score threshold from data/site.json (default 0.5). v2 ignores it.
+function cmsRecaptchaThreshold() {
+    try {
+        $file = __DIR__ . '/../data/site.json';
+        if (!file_exists($file)) return 0.5;
+        $site = json_decode(file_get_contents($file), true);
+        $t = $site['recaptcha']['threshold'] ?? 0.5;
+        return is_numeric($t) ? (float)$t : 0.5;
+    } catch (Exception $e) { return 0.5; }
+}
+
+function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
     $ch = curl_init('https://www.google.com/recaptcha/api/siteverify');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -562,7 +574,122 @@ function cmsVerifyRecaptcha($secret, $token) {
     curl_close($ch);
     if (!$res) return false;
     $data = json_decode($res, true);
-    return !empty($data['success']);
+    if (empty($data['success'])) return false;
+    // reCAPTCHA v3 returns a 0.0–1.0 score; enforce the configured threshold.
+    // v2 (checkbox) returns no score, so a successful verification is enough.
+    if (isset($data['score'])) return ((float)$data['score']) >= (float)$threshold;
+    return true;
+}
+
+// ── GOHIGHLEVEL (GHL) LEAD PUSH ─────────────────────────────────────────────
+// Pushes a website form submission into GoHighLevel as a contact (lead) via the
+// v2 API, using a Private Integration Token stored encrypted server-side — so no
+// GHL form is needed and the token never reaches the browser. Config lives in
+// data/site.json { ghl: { enabled, locationId } } + the encrypted 'ghl_token'.
+define('GHL_API_BASE', 'https://services.leadconnectorhq.com');
+define('GHL_API_VERSION', '2021-07-28');
+
+// Returns ['token'=>, 'locationId'=>] when GHL is enabled + fully configured, else null.
+function cmsGhlConfig() {
+    try {
+        $file = __DIR__ . '/../data/site.json';
+        if (!is_file($file)) return null;
+        $site = json_decode(file_get_contents($file), true);
+        $ghl  = $site['ghl'] ?? null;
+        if (!is_array($ghl) || empty($ghl['enabled'])) return null;
+        $loc  = trim((string)($ghl['locationId'] ?? ''));
+        if ($loc === '') return null;
+        $token = '';
+        try { $token = (string)fourgeGetSecret(fourgeDb(), 'ghl_token'); } catch (Throwable $e) { $token = ''; }
+        if ($token === '') return null;
+        return ['token' => $token, 'locationId' => $loc];
+    } catch (Throwable $e) { return null; }
+}
+
+// PURE (no network): map a submission (assoc fieldName=>value) to a GHL contact
+// payload + a human-readable note body. Detects email/phone/name heuristically.
+function cmsGhlMapContact($fields, $locationId, $formName, $siteUrl) {
+    $humanize = function ($k) {
+        $k = preg_replace('/-[a-z0-9]{2,6}$/i', '', (string)$k);   // drop the "-ab12" id suffix
+        $k = trim(preg_replace('/\s+/', ' ', preg_replace('/[_\-]+/', ' ', $k)));
+        return $k === '' ? 'Field' : ucwords($k);
+    };
+    $email = ''; $phone = ''; $first = ''; $last = ''; $full = ''; $noteLines = [];
+    foreach ((array)$fields as $k => $v) {
+        if (is_array($v)) $v = implode(', ', $v);
+        $v = trim((string)$v);
+        if ($v === '') continue;
+        $key = strtolower((string)$k);
+        $noteLines[] = $humanize($k) . ': ' . $v;
+        if ($email === '' && (strpos($key, 'email') !== false || filter_var($v, FILTER_VALIDATE_EMAIL))) { $email = $v; continue; }
+        if ($phone === '' && (preg_match('/phone|tel|mobile|cell/', $key) || preg_match('/^[\+\(]?[\d][\d\s().\-]{6,}$/', $v))) { $phone = $v; continue; }
+        if (preg_match('/first/', $key)) { $first = $v; continue; }
+        if (preg_match('/last|surname/', $key)) { $last = $v; continue; }
+        if ($full === '' && strpos($key, 'name') !== false && strpos($key, 'user') === false && strpos($key, 'file') === false) { $full = $v; }
+    }
+    if ($first === '' && $full !== '') { $p = preg_split('/\s+/', $full, 2); $first = $p[0]; $last = $p[1] ?? ''; }
+    $tags = array_values(array_filter(['Website Lead', $formName ? ('Form: ' . $formName) : '']));
+    $contact = ['locationId' => $locationId, 'tags' => $tags, 'source' => 'Website form' . ($formName ? " ({$formName})" : '')];
+    if ($first !== '') $contact['firstName'] = $first;
+    if ($last  !== '') $contact['lastName']  = $last;
+    if ($first === '' && $last === '' && $full !== '') $contact['name'] = $full;
+    if ($email !== '') $contact['email'] = $email;
+    if ($phone !== '') $contact['phone'] = $phone;
+    $note = 'New website form submission' . ($formName ? " — {$formName}" : '') . "\n\n" . implode("\n", $noteLines);
+    if ($siteUrl) $note .= "\n\nPage: " . $siteUrl;
+    return ['contact' => $contact, 'note' => $note, 'hasContactInfo' => ($email !== '' || $phone !== '')];
+}
+
+// Push a submission to GHL. Best-effort; returns true when the contact upserts.
+function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl) {
+    $map = cmsGhlMapContact($fields, $locationId, $formName, $siteUrl);
+    if (!$map['hasContactInfo']) return false;   // no email/phone → nothing GHL can dedupe or act on
+    $headers = ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Content-Type: application/json', 'Accept: application/json'];
+    $ch = curl_init(GHL_API_BASE . '/contacts/upsert');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($map['contact']), CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 12,
+    ]);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    if ($code < 200 || $code >= 300 || !$res) return false;
+    $d = json_decode($res, true);
+    $contactId = $d['contact']['id'] ?? ($d['id'] ?? '');
+    if ($contactId && $map['note']) {   // attach the full submission as a note (best-effort)
+        $ch2 = curl_init(GHL_API_BASE . '/contacts/' . rawurlencode($contactId) . '/notes');
+        curl_setopt_array($ch2, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_POSTFIELDS => json_encode(['body' => $map['note']]), CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 10,
+        ]);
+        curl_exec($ch2); curl_close($ch2);
+    }
+    return true;
+}
+
+// Validate token + location with a lightweight read. Returns [bool ok, string message].
+function cmsGhlTest($token, $locationId) {
+    $ch = curl_init(GHL_API_BASE . '/contacts/?locationId=' . rawurlencode($locationId) . '&limit=1');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Accept: application/json'],
+        CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 12,
+    ]);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    if ($err)        return [false, 'Could not reach GoHighLevel: ' . $err];
+    if ($code === 200) return [true, 'Connected to GoHighLevel — leads will flow in.'];
+    if ($code === 401) return [false, 'Token rejected (401) — double-check the Private Integration Token.'];
+    if ($code === 403) return [false, 'Access denied (403) — the token likely needs the Contacts scope, or the Location ID is wrong.'];
+    if ($code === 404) return [false, 'Not found (404) — check the Location ID.'];
+    return [false, 'GoHighLevel returned HTTP ' . $code];
+}
+
+function fourgeApiGhlTest($me, $body) {
+    if (fourgeLevel($me) < 3) { http_response_code(403); echo json_encode(['error' => 'Super Admin access required']); return; }
+    $token = trim((string)($body['token'] ?? ''));
+    if ($token === '') { try { $token = (string)fourgeGetSecret(fourgeDb(), 'ghl_token'); } catch (Throwable $e) {} }
+    $loc = trim((string)($body['locationId'] ?? ''));
+    if ($token === '' || $loc === '') { echo json_encode(['ok' => false, 'message' => 'Enter the token and Location ID first.']); return; }
+    list($ok, $msg) = cmsGhlTest($token, $loc);
+    echo json_encode(['ok' => $ok, 'message' => $msg]);
 }
 
 // Resolve Mailgun config from the encrypted DB secrets first (server-side,
@@ -670,7 +797,7 @@ function cmsSendForm($body) {
     // reCAPTCHA verification (only enforced if a secret is configured in site.json)
     $rcSecret = cmsRecaptchaSecret();
     if ($rcSecret) {
-        if (!$rcToken || !cmsVerifyRecaptcha($rcSecret, $rcToken)) {
+        if (!$rcToken || !cmsVerifyRecaptcha($rcSecret, $rcToken, cmsRecaptchaThreshold())) {
             http_response_code(400);
             echo json_encode(['error' => 'reCAPTCHA verification failed. Please try again.']); return;
         }
@@ -678,6 +805,10 @@ function cmsSendForm($body) {
 
     // Store the submission in data/entries.json (best-effort, non-fatal)
     cmsStoreEntry($formId, $fields, $siteUrl);
+
+    // Push into GoHighLevel as a lead (best-effort; never blocks the form or email)
+    $ghl = cmsGhlConfig();
+    if ($ghl) { try { cmsGhlPushLead($ghl['token'], $ghl['locationId'], $fields, $subject, $siteUrl); } catch (Throwable $e) { /* non-fatal */ } }
 
     if (!$toEmail) {
         // Entry already stored; report success even without email config

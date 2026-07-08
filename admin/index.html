@@ -2213,7 +2213,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.40';
+const CMS_VERSION='1.14.42';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3382,8 +3382,12 @@ function renderFormHtml(form){
       +pf.map(renderField).join('')+'</div>';
   });
 
-  const rcKey=(_site&&_site.recaptcha&&_site.recaptcha.enabled&&_site.recaptcha.siteKey)||'';
-  const rcHtml=rcKey?'<div class="ff-field"><div class="g-recaptcha" data-sitekey="'+esc(rcKey)+'"></div></div>':'';
+  const rc=(_site&&_site.recaptcha)||{};
+  const rcKey=(rc.enabled&&rc.siteKey)||'';
+  const rcV3=rc.version==='v3';
+  // v2 renders the "I'm not a robot" checkbox inline; v3 is invisible (Google
+  // injects its own floating badge) and the token is fetched at submit time.
+  const rcHtml=(rcKey&&!rcV3)?'<div class="ff-field"><div class="g-recaptcha" data-sitekey="'+esc(rcKey)+'"></div></div>':'';
   const submitLabel=esc((form.settings&&form.settings.submitLabel)||'Submit');
   let navBtns='';
   if(multi){
@@ -3402,14 +3406,14 @@ function renderFormHtml(form){
       +(hdrTitle?'<h2 class="ff-form-title">'+esc(hdrTitle)+'</h2>':'')
       +(hdrDesc?'<p class="ff-form-desc">'+esc(hdrDesc).replace(/\n/g,'<br>')+'</p>':'')
       +'</div>':'';
-  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'" data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
+  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'"'+(rcKey&&rcV3?' data-rc-v3="'+esc(rcKey)+'"':'')+' data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
     +hdr
     +pagesHtml
     +rcHtml
     +'<div class="ff-msg" style="display:none"></div>'
     +navBtns
     +'</form>'
-    +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js" async defer></scr'+'ipt>':'');
+    +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js'+(rcV3?'?render='+encodeURIComponent(rcKey):'')+'" async defer></scr'+'ipt>':'');
 }
 
 // Turn a form's simple style settings into ONE scoped <style> block. Scoped by the
@@ -3490,7 +3494,9 @@ function formsRuntimeAssets(){
     +'document.addEventListener("click",function(e){var b=e.target.closest(".ff-prev,.ff-next");if(b){var f=b.closest(".foundry-form");if(f)ffPage(f,parseInt(b.getAttribute("data-dir")));}});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
     +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
-    +'var rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";'
+    +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3");'
+    +'if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});});}catch(e){}}'
+    +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
     +'btn.disabled=true;btn.textContent="Sending…";'
     +'try{var res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});'
     +'var d=await res.json();if(d.error)throw new Error(d.error);'
@@ -4395,7 +4401,7 @@ function ffRenderForm(form){
   pages.forEach(function(pf,p){ph+='<div class=\"ff-page\" data-page=\"'+p+'\"'+(p>0?' style=\"display:none\"':'')+'>'+pf.map(fld).join('')+'</div>';});
   var sl=esc((form.settings&&form.settings.submitLabel)||'Submit');
   var nav=multi?('<div class=\"ff-nav\"><button type=\"button\" class=\"ff-prev\" data-dir=\"-1\" style=\"display:none\">← Previous</button><button type=\"button\" class=\"ff-next\" data-dir=\"1\">Next →</button><button type=\"submit\" class=\"ff-submit\" style=\"display:none\">'+sl+'</button></div>'):('<button type=\"submit\" class=\"ff-submit\">'+sl+'</button>');
-  var rc=_rcSiteKey?'<div class=\"ff-field\"><div class=\"g-recaptcha\" data-sitekey=\"'+_rcSiteKey+'\"></div></div>':'';
+  var rc=(_rcSiteKey&&!_rcV3)?'<div class=\"ff-field\"><div class=\"g-recaptcha\" data-sitekey=\"'+_rcSiteKey+'\"></div></div>':'';
   var st=(form.settings&&form.settings.style)||{};
   function ffCol(v){v=(''+v).trim();return (v&&/^[#a-zA-Z0-9(),.% ]+$/.test(v))?v:'';}
   var R='#'+fid, rs=[];
@@ -4409,16 +4415,16 @@ function ffRenderForm(form){
   var hs=form.settings||{}, ht=(hs.headerTitle||'').toString().trim(), hd=(hs.headerDesc||'').toString().trim();
   var hdr=(ht||hd)?('<div class=\"ff-header\">'+(ht?'<h2 class=\"ff-form-title\">'+esc(ht)+'</h2>':'')+(hd?'<p class=\"ff-form-desc\">'+esc(hd).replace(/\\n/g,'<br>')+'</p>':'')+'</div>'):'';
   var fst=stl+((((form.settings&&form.settings.css)||'').toString().trim())?('<style>'+form.settings.css+'</style>'):'');
-  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\" data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
+  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok='';var rcV3=form.getAttribute('data-rc-v3');if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});});}catch(e){}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
-var _blogForms=[];var _rcSiteKey='';
+var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
-try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled)_rcSiteKey=sj.recaptcha.siteKey||'';}}catch(e){}
-if(_rcSiteKey){var s=document.createElement('script');s.src='https://www.google.com/recaptcha/api.js';s.async=true;s.defer=true;document.head.appendChild(s);}}
+try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}}}catch(e){}
+if(_rcSiteKey){var s=document.createElement('script');s.src='https://www.google.com/recaptcha/api.js'+(_rcV3?'?render='+encodeURIComponent(_rcSiteKey):'');s.async=true;s.defer=true;document.head.appendChild(s);}}
 function renderShortcodes(html){
   return html.replace(new RegExp('\\\\[form id=([\\\\w-]+)\\\\]','g'),function(m,id){
     var form=_blogForms.find(function(f){return f.id===id;});
@@ -5645,6 +5651,7 @@ function renderPlugins(){
     const isOn=existing?.active!==false&&!!existing;
     return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)}</div></div><label class="tog"><input type="checkbox" ${isOn?'checked':''} onchange="togglePlugin('${esc(preset.name)}',this.checked,${i})"><span class="tog-sl"></span></label></div>`;}).join('');
   body.innerHTML=recaptchaAddonHtml()
+    +ghlAddonHtml()
     +`<div class="pl-sec-label">Code injections</div>`
     +`<div class="info-b" style="margin-bottom:14px">Active code injections are added to every page when published. ${active.length} active. <strong>Google Analytics has moved</strong> — set up GA4, Tag Manager, and Ads in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a>.</div>`
     +presets;
@@ -5656,16 +5663,31 @@ function renderPlugins(){
 function recaptchaAddonHtml(){
   const rc=(_site&&_site.recaptcha)||{};
   const on=!!rc.enabled, siteKey=rc.siteKey||'', hasSecret=!!rc.hasSecret;
+  const ver=(rc.version==='v3')?'v3':'v2';
+  const thr=(rc.threshold!=null&&rc.threshold!=='')?rc.threshold:0.5;
+  const hint='font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5';
   const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#1C3AA9"></rect><circle cx="12" cy="12" r="2.6" fill="#fff"></circle><path d="M12 5.5V8l2.4-1.4A5.8 5.8 0 006.5 9.4l1.5.9A4.1 4.1 0 0112 5.5z" fill="#fff"></path><path d="M18.2 12.6a5.8 5.8 0 01-9 4l-.9 1.5a7.5 7.5 0 0011.4-5.5h-1.5z" fill="#fff"></path></svg>';
   return `<div class="si-sec pl-addon">
     <div class="pl-addon-top">
       <span class="pl-logo">${logo}</span>
       <div style="flex:1;min-width:0">
         <div class="pl-n" style="display:flex;align-items:center;gap:8px">Google reCAPTCHA <span class="pl-badge${on?' on':''}">${on?'Active':'Off'}</span></div>
-        <div class="pl-s" style="margin-top:3px">Blocks spam-bot form submissions with Google’s free “I’m not a robot” check. Enter your two keys once — every form on the site is protected. Create keys at <code>google.com/recaptcha/admin</code> (pick reCAPTCHA v2, “I’m not a robot”).</div>
+        <div class="pl-s" style="margin-top:3px">Blocks spam-bot form submissions with Google’s free check. Enter your two keys once — every form on the site is protected. Create keys at <code>google.com/recaptcha/admin</code>.</div>
       </div>
     </div>
     <div class="pl-addon-body">
+      <div class="fg"><label>Version</label>
+        <select id="s-rc-version" onchange="rcToggleV3(this.value)">
+          <option value="v2"${ver==='v2'?' selected':''}>v2 — “I’m not a robot” checkbox</option>
+          <option value="v3"${ver==='v3'?' selected':''}>v3 — Invisible, score-based (shows a badge)</option>
+        </select>
+        <div style="${hint}">v2 shows a checkbox on each form. v3 is invisible, shows a small “protected by reCAPTCHA” badge in the corner, and scores each submission — <strong>v3 needs its own keys</strong> (choose reCAPTCHA v3 when registering at google.com/recaptcha/admin).</div>
+      </div>
+      <div class="fg" id="s-rc-threshold-row" style="${ver==='v3'?'':'display:none'}">
+        <label>Block threshold (v3) — <span id="s-rc-threshold-val">${esc(String(thr))}</span></label>
+        <input type="range" id="s-rc-threshold" min="0" max="1" step="0.1" value="${esc(String(thr))}" oninput="var v=document.getElementById('s-rc-threshold-val');if(v)v.textContent=this.value">
+        <div style="${hint}">Submissions scoring below this are blocked (0 = very lenient, 1 = very strict). 0.5 is Google’s recommended starting point.</div>
+      </div>
       <div class="fg"><label>Site Key (public)</label><input type="text" id="s-rc-site" placeholder="6Lc…" value="${esc(siteKey)}"></div>
       <div class="fg"><label>Secret Key (kept on the server)</label><input type="password" id="s-rc-secret" placeholder="${hasSecret?'Secret saved on server':'6Lc… (kept on server)'}"></div>
       <div class="pl-addon-actions">
@@ -5675,6 +5697,71 @@ function recaptchaAddonHtml(){
       </div>
     </div>
   </div>`;
+}
+// Show the v3 score-threshold control only when v3 is selected.
+function rcToggleV3(v){ const row=document.getElementById('s-rc-threshold-row'); if(row) row.style.display=(v==='v3')?'':'none'; }
+
+// ── GOHIGHLEVEL add-on (Plugins module → Super-Admin only) ──────────────────
+// Phase 1: push each form submission into GHL as a lead. The Private Integration
+// Token is stored ENCRYPTED server-side (set_secret → 'ghl_token', never returned
+// to the browser); enabled + locationId live in site.json. The server does the
+// push (api.php → cmsGhlPushLead) so the token never touches the page.
+function ghlAddonHtml(){
+  const g=(_site&&_site.ghl)||{};
+  const on=!!g.enabled, loc=g.locationId||'';
+  const hasToken=!!(_secretStatus&&_secretStatus.ghl_token);
+  const hint='font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5';
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#155EEF"></rect><path d="M7 15.5V9.5L12 7l5 2.5v6L12 18z" fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"></path><circle cx="12" cy="12" r="1.7" fill="#fff"></circle></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">GoHighLevel <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into GoHighLevel as a lead — no GHL form needed. In your GHL sub-account, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID.</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label class="tog"><input type="checkbox" id="s-ghl-enabled" ${on?'checked':''}><span class="tog-sl"></span></label>
+        <span style="font-size:13px;color:var(--text)">Send new form leads into GoHighLevel</span>
+      </div>
+      <div class="fg"><label>Private Integration Token</label><input type="password" id="s-ghl-token" placeholder="${hasToken?'Token saved on server':'pit-… (kept on the server)'}"></div>
+      <div class="fg"><label>Location ID</label><input type="text" id="s-ghl-location" placeholder="your GHL sub-account / location ID" value="${esc(loc)}">
+        <div style="${hint}">Find it in GHL under Settings → Business Profile (or the last path segment of your sub-account URL).</div>
+      </div>
+      <div class="pl-addon-actions">
+        <button class="fd-btn-primary" onclick="saveGhl()">Save</button>
+        <button class="fd-btn-ghost" onclick="testGhl()">Test connection</button>
+        <a href="https://marketplace.gohighlevel.com/docs/Authorization/PrivateIntegrationsToken/" target="_blank" rel="noopener" class="pl-addon-link">How to get a token ↗</a>
+      </div>
+    </div>
+  </div>`;
+}
+async function saveGhl(){
+  const enabled=!!document.getElementById('s-ghl-enabled')?.checked;
+  const token=document.getElementById('s-ghl-token')?.value.trim()||'';
+  const locationId=document.getElementById('s-ghl-location')?.value.trim()||'';
+  const hadToken=!!(_secretStatus&&_secretStatus.ghl_token);
+  try{
+    if(token){ await apiCall('set_secret',{name:'ghl_token',value:token}); if(_secretStatus) _secretStatus.ghl_token=true; }
+    if(!_site.ghl) _site.ghl={};
+    _site.ghl.enabled=enabled;
+    _site.ghl.locationId=locationId;
+    await saveSiteInfo();
+    if(enabled && !token && !hadToken) toast('Saved — add a token to start sending leads','ok');
+    else toast(enabled?'GoHighLevel connected — new leads will flow in ✓':'GoHighLevel settings saved','ok');
+    const t=document.getElementById('s-ghl-token'); if(t){ t.value=''; if(token) t.placeholder='Token saved on server'; }
+    if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+async function testGhl(){
+  const token=document.getElementById('s-ghl-token')?.value.trim()||'';
+  const locationId=document.getElementById('s-ghl-location')?.value.trim()||'';
+  toast('Testing GoHighLevel…');
+  try{
+    const d=await apiCall('ghl_test',{token,locationId});
+    toast(d.message||(d.ok?'Connected ✓':'Connection failed'), d.ok?'ok':'err');
+  }catch(e){ toast('Test failed: '+e.message,'err'); }
 }
 async function disableRecaptcha(){
   if(!_site.recaptcha||!_site.recaptcha.enabled){ toast('reCAPTCHA is already off'); return; }
@@ -5706,11 +5793,16 @@ function loadSettings(){
 async function saveRecaptcha(){
   const siteKey=document.getElementById('s-rc-site')?.value.trim()||'';
   const secret=document.getElementById('s-rc-secret')?.value.trim()||'';
+  const version=(document.getElementById('s-rc-version')?.value==='v3')?'v3':'v2';
+  const thrRaw=parseFloat(document.getElementById('s-rc-threshold')?.value);
+  const threshold=isFinite(thrRaw)?Math.max(0,Math.min(1,thrRaw)):0.5;
   if(!_site.recaptcha) _site.recaptcha={};
   _site.recaptcha.siteKey=siteKey;
   if(secret) _site.recaptcha.secret=secret;          // stored in site.json (server-side file)
   _site.recaptcha.hasSecret=!!(secret||_site.recaptcha.secret);
   _site.recaptcha.enabled=!!siteKey;
+  _site.recaptcha.version=version;
+  _site.recaptcha.threshold=threshold;               // server enforces this for v3 scores
   try{
     await saveSiteInfo();
     toast(siteKey?'reCAPTCHA saved — forms are now protected ✓':'reCAPTCHA keys cleared','ok');
