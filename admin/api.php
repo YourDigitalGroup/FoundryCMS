@@ -65,6 +65,11 @@ define('MG_API_KEY',   (string)($__secret['mg_api_key']   ?? ''));
 define('MG_FROM',      (string)($__secret['mg_from']      ?? 'Fourge CMS <postmaster@mg.example.com>'));
 define('MG_NOTIFY_TO', (string)($__secret['mg_notify_to'] ?? ''));
 
+// GoHighLevel (Lead Generation) — must be defined BEFORE the request dispatch
+// below, since define() runs top-to-bottom (functions are hoisted; constants are not).
+define('GHL_API_BASE',    'https://services.leadconnectorhq.com');
+define('GHL_API_VERSION', '2021-07-28');
+
 // Contact-form email via SMTP (Mailgun/SendGrid/any relay). When these are set,
 // the form handler sends over SMTP instead of the Mailgun HTTP API — so a
 // migrated site's EXISTING SMTP credentials work as-is, no API key needed. Kept
@@ -587,8 +592,8 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
 // v2 API, using a Private Integration Token stored encrypted server-side — so no
 // GHL form is needed and the token never reaches the browser. Config lives in
 // data/site.json { ghl: { enabled, locationId } } + the encrypted 'ghl_token'.
-define('GHL_API_BASE', 'https://services.leadconnectorhq.com');
-define('GHL_API_VERSION', '2021-07-28');
+// (GHL_API_BASE / GHL_API_VERSION are define()d at the top of this file, BEFORE
+// the request dispatch, so they exist by the time these functions run.)
 
 // Returns ['token'=>, 'locationId'=>] when GHL is enabled + fully configured, else null.
 function cmsGhlConfig() {
