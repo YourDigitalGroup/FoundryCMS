@@ -169,7 +169,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
 $PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -222,6 +222,7 @@ try {
         case 'get_secrets':     ob_end_clean(); fourgeApiGetSecrets($authUser); break;
         case 'set_secret':      ob_end_clean(); fourgeApiSetSecret($authUser, $body); break;
         case 'ghl_test':        ob_end_clean(); fourgeApiGhlTest($authUser, $body); break;
+        case 'ghl_dashboard':   ob_end_clean(); fourgeApiGhlDashboard($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
@@ -690,6 +691,50 @@ function fourgeApiGhlTest($me, $body) {
     if ($token === '' || $loc === '') { echo json_encode(['ok' => false, 'message' => 'Enter the token and Location ID first.']); return; }
     list($ok, $msg) = cmsGhlTest($token, $loc);
     echo json_encode(['ok' => $ok, 'message' => $msg]);
+}
+
+// Fetch recent leads + conversations for the Lead Generation dashboard. Normalizes
+// GHL's fields defensively so a shape change degrades gracefully rather than breaking.
+function cmsGhlDashboard($token, $locationId) {
+    $hdr = ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Accept: application/json'];
+    $get = function ($url) use ($hdr) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $hdr, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15]);
+        $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+        if ($code < 200 || $code >= 300 || !$res) return null;
+        return json_decode($res, true);
+    };
+    $out = ['contacts' => [], 'conversations' => [], 'total' => 0, 'error' => ''];
+    $cd = $get(GHL_API_BASE . '/contacts/?locationId=' . rawurlencode($locationId) . '&limit=25');
+    if ($cd === null) { $out['error'] = 'Could not load leads from GoHighLevel — check the connection in Plugins.'; return $out; }
+    foreach (($cd['contacts'] ?? []) as $c) {
+        $name = trim(($c['firstName'] ?? '') . ' ' . ($c['lastName'] ?? ''));
+        if ($name === '') $name = $c['contactName'] ?? ($c['name'] ?? '');
+        $out['contacts'][] = [
+            'id' => $c['id'] ?? '', 'name' => $name, 'email' => $c['email'] ?? '', 'phone' => $c['phone'] ?? '',
+            'source' => $c['source'] ?? '', 'tags' => $c['tags'] ?? [], 'date' => $c['dateAdded'] ?? ($c['dateUpdated'] ?? ''),
+        ];
+    }
+    $out['total'] = $cd['meta']['total'] ?? ($cd['total'] ?? count($out['contacts']));
+    $vd = $get(GHL_API_BASE . '/conversations/search?locationId=' . rawurlencode($locationId) . '&limit=25');   // best-effort
+    if (is_array($vd)) {
+        foreach (($vd['conversations'] ?? []) as $v) {
+            $out['conversations'][] = [
+                'id' => $v['id'] ?? '', 'name' => $v['fullName'] ?? ($v['contactName'] ?? ($v['email'] ?? '')),
+                'last' => $v['lastMessageBody'] ?? ($v['lastMessage'] ?? ''), 'type' => $v['lastMessageType'] ?? ($v['type'] ?? ''),
+                'date' => $v['lastMessageDate'] ?? ($v['dateUpdated'] ?? ''),
+            ];
+        }
+    }
+    return $out;
+}
+
+// Dashboard data — any signed-in user may view, but only when GHL is enabled.
+function fourgeApiGhlDashboard($me, $body) {
+    $cfg = cmsGhlConfig();
+    if (!$cfg) { echo json_encode(['ok' => false, 'error' => 'GoHighLevel isn\'t set up yet.']); return; }
+    $d = cmsGhlDashboard($cfg['token'], $cfg['locationId']);
+    echo json_encode(['ok' => empty($d['error']), 'contacts' => $d['contacts'], 'conversations' => $d['conversations'], 'total' => $d['total'], 'error' => $d['error']]);
 }
 
 // Resolve Mailgun config from the encrypted DB secrets first (server-side,

@@ -309,6 +309,13 @@ input:checked+.tog-sl{background:var(--ember)}input:checked+.tog-sl:before{trans
 .pl-addon-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px}
 .pl-addon-link{font-size:12px;color:var(--muted);text-decoration:none}.pl-addon-link:hover{color:var(--ember)}
 .pl-sec-label{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin:20px 0 8px}
+.lg-stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);padding:16px 20px;min-width:130px}
+.lg-stat-v{font-size:26px;font-weight:800;color:var(--text);letter-spacing:-.02em;line-height:1}
+.lg-stat-l{font-size:12px;color:var(--muted);margin-top:5px}
+.lg-table{width:100%;border-collapse:collapse;font-size:13px}
+.lg-table th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)}
+.lg-table td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:top}
+.lg-table tr:hover td{background:var(--surface-2)}
 .seo-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}.seo-dot.g{background:var(--green)}.seo-dot.y{background:var(--ember)}.seo-dot.r{background:var(--red)}
 .score-ring{display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:50%;border:4px solid;font-size:18px;font-weight:700}
 .score-ring.A{border-color:var(--green);color:var(--green)}.score-ring.B{border-color:var(--ember);color:var(--ember)}.score-ring.C{border-color:var(--red);color:var(--red)}
@@ -1156,6 +1163,9 @@ textarea.fb-input{resize:vertical}
         <div class="ni" onclick="navTo('analytics')" id="ni-analytics">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Analytics
         </div>
+        <div class="ni" onclick="navTo('leadgen')" id="ni-leadgen" style="display:none" title="Lead Generation">
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#E8731C"></rect><rect x="6" y="7.2" width="12" height="2.7" rx="1.35" fill="#fff"></rect><rect x="8" y="11.15" width="8" height="2.7" rx="1.35" fill="#fff"></rect><rect x="10" y="15.1" width="4" height="2.7" rx="1.35" fill="#fff"></rect></svg> Lead Generation
+        </div>
         <div class="sb-sec">CONFIGURE</div>
         <div class="ni" onclick="navTo('site')" id="ni-site">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 22c1 0 1.5-.5 1.5-1.5V18c0-1 .5-1.5 1.5-1.5h2.5c2 0 3.5-1.5 3.5-3.5C21 7 17 3 12 3a9 9 0 100 18z"/></svg> Design
@@ -1650,6 +1660,21 @@ textarea.fb-input{resize:vertical}
       <div class="panel" id="p-inject">
         <div class="ta"><button class="fd-btn-primary" onclick="saveInjections()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg> Save &amp; Publish</button></div>
         <div id="plugins-body"></div>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════
+           LEAD GENERATION — GoHighLevel dashboard (shown only when connected)
+      ═══════════════════════════════════════════════════════ -->
+      <div class="panel" id="p-leadgen">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px">
+          <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#E8731C"></rect><rect x="6" y="7.2" width="12" height="2.7" rx="1.35" fill="#fff"></rect><rect x="8" y="11.15" width="8" height="2.7" rx="1.35" fill="#fff"></rect><rect x="10" y="15.1" width="4" height="2.7" rx="1.35" fill="#fff"></rect></svg>
+          <div>
+            <h1 style="font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin:0">Lead Generation</h1>
+            <p style="font-size:13px;color:var(--muted);margin:2px 0 0">Leads and conversations pulled live from GoHighLevel.</p>
+          </div>
+          <button class="fd-btn-ghost" style="margin-left:auto;font-size:12px" onclick="loadLeadGen()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh</button>
+        </div>
+        <div id="leadgen-body" style="margin-top:20px"></div>
       </div>
 
       <!-- ══════════════════════════════════════════════════════
@@ -2213,7 +2238,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.42';
+const CMS_VERSION='1.14.43';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2263,7 +2288,7 @@ function uiConfirm(msg, okLabel, title){
 function uiConfirmResolve(val){ closeM('m-uiconfirm'); const cb=_uiConfirmCb; _uiConfirmCb=null; if(cb) cb(!!val); }
 function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');p.parentElement.querySelectorAll('.tab-panel').forEach(t=>t.classList.remove('on'));const el=document.getElementById(panelId);if(el)el.classList.add('on');}
 function switchPropsTab(){}
-const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','users':'p-users'};
+const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','users':'p-users'};
 function navTo(name){goPanel(NAV_MAP[name]||('p-'+name));}
 function goPanel(id){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
@@ -2278,10 +2303,10 @@ function goPanel(id){
   if(id==='p-pages') document.body.classList.add('sb-collapsed');
   else document.body.classList.toggle('sb-collapsed', (()=>{try{return localStorage.getItem('fourge_sb_collapsed')==='1';}catch(e){return false;}})());
   const bc=document.getElementById('tb-breadcrumb');
-  if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
+  if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-leadgen':'Lead Generation','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
-  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject')initPlugins();else if(id==='p-analytics')initAnalytics();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-users')initUsers();
+  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject')initPlugins();else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-users')initUsers();
 }
 
 // ── COLLAPSIBLE SIDE MENUS ──────────────────────────────────────
@@ -2523,6 +2548,10 @@ function applyRole(){
     const el=document.getElementById(id);
     if(el) el.style.display=show?'':'none';
   });
+  // Lead Generation (GHL dashboard) — visible to EVERYONE, but only when the
+  // integration is switched on (a paid add-on the agency enables per site).
+  const lg=document.getElementById('ni-leadgen');
+  if(lg) lg.style.display=(_site&&_site.ghl&&_site.ghl.enabled)?'':'none';
 }
 
 // Build module toggle grid HTML for a given role + current permissions
@@ -5716,8 +5745,8 @@ function ghlAddonHtml(){
     <div class="pl-addon-top">
       <span class="pl-logo">${logo}</span>
       <div style="flex:1;min-width:0">
-        <div class="pl-n" style="display:flex;align-items:center;gap:8px">GoHighLevel <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
-        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into GoHighLevel as a lead — no GHL form needed. In your GHL sub-account, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID.</div>
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">Lead Generation <span style="font-weight:500;color:var(--muted);font-size:12px">· GoHighLevel</span> <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into GoHighLevel as a lead — no GHL form needed. When on, a <strong>Lead Generation</strong> dashboard appears in the left menu (visible to your whole team). In your GHL sub-account, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID.</div>
       </div>
     </div>
     <div class="pl-addon-body">
@@ -5751,6 +5780,7 @@ async function saveGhl(){
     if(enabled && !token && !hadToken) toast('Saved — add a token to start sending leads','ok');
     else toast(enabled?'GoHighLevel connected — new leads will flow in ✓':'GoHighLevel settings saved','ok');
     const t=document.getElementById('s-ghl-token'); if(t){ t.value=''; if(token) t.placeholder='Token saved on server'; }
+    applyRole();   // show/hide the Lead Generation nav tab based on the new enabled state
     if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
   }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
@@ -5762,6 +5792,61 @@ async function testGhl(){
     const d=await apiCall('ghl_test',{token,locationId});
     toast(d.message||(d.ok?'Connected ✓':'Connection failed'), d.ok?'ok':'err');
   }catch(e){ toast('Test failed: '+e.message,'err'); }
+}
+
+// ── LEAD GENERATION dashboard (GHL) ── viewable by everyone when the integration
+// is on. The server (ghl_dashboard) holds the token and returns normalized leads +
+// conversations; nothing sensitive reaches the browser.
+let _leadGenData=null;
+async function loadLeadGen(){
+  const body=document.getElementById('leadgen-body'); if(!body) return;
+  if(!(_site&&_site.ghl&&_site.ghl.enabled)){
+    body.innerHTML='<div class="info-b">GoHighLevel isn\'t connected yet. A Super-Admin can set it up in <a href="#" onclick="navTo(\'injections\');return false" style="color:var(--ember);font-weight:600">Plugins → GoHighLevel</a>.</div>';
+    return;
+  }
+  body.innerHTML='<div style="color:var(--muted);font-size:13px;padding:24px 0">Loading leads from GoHighLevel…</div>';
+  try{
+    const d=await apiCall('ghl_dashboard');
+    if(!d || d.ok===false){ body.innerHTML='<div class="info-b">'+esc((d&&d.error)||'Could not load GoHighLevel data.')+'</div>'; return; }
+    _leadGenData=d; body.innerHTML=renderLeadGen(d);
+  }catch(e){ body.innerHTML='<div class="info-b">Could not reach GoHighLevel: '+esc(e.message)+'</div>'; }
+}
+function renderLeadGen(d){
+  const contacts=d.contacts||[], convos=d.conversations||[];
+  const fmt=s=>{ if(!s) return ''; const t=new Date(s); return isNaN(t)?'':t.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
+  let h='<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:22px">'
+    +'<div class="lg-stat"><div class="lg-stat-v">'+(d.total!=null?d.total:contacts.length)+'</div><div class="lg-stat-l">Total leads</div></div>'
+    +'<div class="lg-stat"><div class="lg-stat-v">'+contacts.length+'</div><div class="lg-stat-l">Recent leads</div></div>'
+    +'<div class="lg-stat"><div class="lg-stat-v">'+convos.length+'</div><div class="lg-stat-l">Recent conversations</div></div>'
+    +'</div>';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0 10px"><h2 style="font-size:15px;font-weight:700;color:var(--text);margin:0">Recent leads</h2>'
+    +(contacts.length?'<button class="fd-btn-ghost" style="font-size:12px" onclick="leadGenCsv(\'contacts\')">Download CSV</button>':'')+'</div>';
+  if(!contacts.length) h+='<div class="info-b">No leads yet. New website form submissions will show up here automatically.</div>';
+  else{
+    h+='<div style="overflow-x:auto"><table class="lg-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Source</th><th>Added</th></tr></thead><tbody>';
+    contacts.forEach(c=>{ h+='<tr><td>'+esc(c.name||'—')+'</td><td>'+esc(c.email||'')+'</td><td>'+esc(c.phone||'')+'</td><td>'+esc(c.source||'')+'</td><td>'+esc(fmt(c.date))+'</td></tr>'; });
+    h+='</tbody></table></div>';
+  }
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:28px 0 10px"><h2 style="font-size:15px;font-weight:700;color:var(--text);margin:0">Recent conversations</h2>'
+    +(convos.length?'<button class="fd-btn-ghost" style="font-size:12px" onclick="leadGenCsv(\'conversations\')">Download CSV</button>':'')+'</div>';
+  if(!convos.length) h+='<div class="info-b">No recent conversations.</div>';
+  else{
+    h+='<div style="overflow-x:auto"><table class="lg-table"><thead><tr><th>Contact</th><th>Last message</th><th>Channel</th><th>When</th></tr></thead><tbody>';
+    convos.forEach(v=>{ h+='<tr><td>'+esc(v.name||'—')+'</td><td>'+esc(String(v.last||'').slice(0,90))+'</td><td>'+esc(v.type||'')+'</td><td>'+esc(fmt(v.date))+'</td></tr>'; });
+    h+='</tbody></table></div>';
+  }
+  return h;
+}
+function leadGenCsv(kind){
+  const d=_leadGenData; if(!d) return;
+  let rows=[], name='';
+  if(kind==='conversations'){ name='ghl-conversations'; rows.push(['Contact','Last message','Channel','When']);
+    (d.conversations||[]).forEach(v=>rows.push([v.name||'',v.last||'',v.type||'',v.date||''])); }
+  else{ name='ghl-leads'; rows.push(['Name','Email','Phone','Source','Tags','Added']);
+    (d.contacts||[]).forEach(c=>rows.push([c.name||'',c.email||'',c.phone||'',c.source||'',(c.tags||[]).join(' | '),c.date||''])); }
+  const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a'); a.href=url; a.download=name+'.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 async function disableRecaptcha(){
   if(!_site.recaptcha||!_site.recaptcha.enabled){ toast('reCAPTCHA is already off'); return; }
