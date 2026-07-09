@@ -796,6 +796,13 @@ textarea.fb-input{resize:vertical}
 .tlp-src-row span{flex:1;font-weight:500}
 .tlp-src-file{font-family:var(--font-mono);font-size:11px;color:var(--muted);background:var(--surface-3);padding:2px 7px;border-radius:4px}
 .tlp-loading{padding:20px;text-align:center;color:var(--muted);font-size:14px}
+.tlp-gen-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.tlp-gen-row:last-child{border-bottom:none}
+.tlp-gen-t{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tlp-gen-row .tlp-src-file{display:inline-block;margin-top:3px}
+.tlp-gen-actions{display:flex;gap:6px;flex-shrink:0}
+.tlp-gen-actions .fd-btn-ghost{font-size:12px;padding:5px 10px}
+.tlp-gen-del{color:var(--red)}
 /* Architect-only blocks (GitHub + secret keys) stay hidden until applyRole() confirms the Architect account */
 .architect-only{display:none}
 .tlp-card{border:1px solid var(--border);border-radius:11px;padding:16px;margin-bottom:12px;background:var(--surface)}
@@ -1404,6 +1411,11 @@ textarea.fb-input{resize:vertical}
           </div>
           <button class="fd-btn-primary" onclick="generateTLPs()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z"/></svg> Generate City Pages</button>
           <div id="tlp-preview-area"></div>
+          <div class="pe-side-card" id="tlp-generated-card" style="margin-top:20px">
+            <div class="pe-side-title">Generated Pages <span id="tlp-gen-count" style="font-weight:600;color:var(--muted)"></span></div>
+            <div style="font-size:11px;color:var(--muted);margin:2px 0 12px">Your city landing pages live here — kept out of the main Pages list so it stays clean. They're still indexed and in your sitemap. Edit, view, or delete them below.</div>
+            <div id="tlp-generated-list"></div>
+          </div>
         </div>
       </div>
 
@@ -2192,7 +2204,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.53';
+const CMS_VERSION='1.14.54';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2387,7 +2399,7 @@ async function loadDash(){
   const greet=(hr<12?'Good morning':hr<17?'Good afternoon':'Good evening')+(firstName?', '+capitalize(firstName):'')+'.'
   const greetEl=document.getElementById('dash-greeting');if(greetEl)greetEl.textContent=greet;
   updateUserDisplay();
-  try{await loadPages();const pg=getPageList();const stP=document.getElementById('st-pages');if(stP)stP.textContent=pg.length;const niP=document.getElementById('ni-pg-count');if(niP)niP.textContent=pg.length;
+  try{await loadPages();const pg=getVisiblePages();const stP=document.getElementById('st-pages');if(stP)stP.textContent=pg.length;const niP=document.getElementById('ni-pg-count');if(niP)niP.textContent=pg.length;
     const tbody=document.getElementById('dash-pages-body');
     if(tbody){if(!pg.length){
         tbody.innerHTML='<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No pages yet. Use Site Foundry to import.</div>';
@@ -3613,14 +3625,58 @@ let _tlpPreviews=[];   // generated previews awaiting approval
 
 function initTLP(){
   renderTLPSourceList();
+  renderTLPGenerated();
   const out=document.getElementById('tlp-preview-area');
   if(out) out.innerHTML='';
+}
+
+// The generated-pages manager lives here (not in the main Pages list). Lists every
+// TLP page with Edit (open in the page editor), View (open the live page), and Delete.
+function renderTLPGenerated(){
+  const wrap=document.getElementById('tlp-generated-list'); if(!wrap) return;
+  const tlps=getTlpPages();
+  const cnt=document.getElementById('tlp-gen-count'); if(cnt) cnt.textContent=tlps.length?('· '+tlps.length):'';
+  if(!tlps.length){ wrap.innerHTML='<p style="color:var(--muted);font-size:13px;margin:0">No city pages yet. Generate some above and they\'ll be managed here.</p>'; return; }
+  wrap.innerHTML=tlps.map(function(p){
+    const pg=_pages[p.id]||{};
+    const loc=[pg.city,pg.state].filter(Boolean).join(', ');
+    return '<div class="tlp-gen-row">'
+      +'<div style="flex:1;min-width:0"><div class="tlp-gen-t">'+esc(decodeHtml(p.label||p.id))+(loc?' <span style="font-weight:500;color:var(--muted);font-size:11px">· '+esc(loc)+'</span>':'')+'</div>'
+      +'<code class="tlp-src-file">'+esc(p.file||'')+'</code></div>'
+      +'<div class="tlp-gen-actions">'
+      +'<button class="fd-btn-ghost" onclick="tlpEditPage(\''+esc(p.id)+'\')">Edit</button>'
+      +'<button class="fd-btn-ghost" onclick="tlpViewPage(\''+esc(p.id)+'\')">View</button>'
+      +'<button class="fd-btn-ghost tlp-gen-del" onclick="tlpDeletePage(\''+esc(p.id)+'\')">Delete</button>'
+      +'</div></div>';
+  }).join('');
+}
+function tlpEditPage(id){ if(!_pages[id]) return; veSelectPage(id); navTo('pages'); }
+function tlpViewPage(id){
+  const pg=_pages[id]; if(!pg) return;
+  const base=(_site&&_site.website||'').replace(/\/$/,'');
+  const path=cleanUrlPath(pg.file||pg.path||'');
+  window.open((base?base+'/':'/')+path,'_blank','noopener');
+}
+async function tlpDeletePage(id){
+  const pg=_pages[id]; if(!pg) return;
+  const fp=pg.path||pg.file;
+  if(!(await uiConfirm('This permanently deletes '+fp+' from the server and removes it from your sitemap. This can’t be undone.','Delete page','Delete city page?'))) return;
+  if(!canCallApi()){ toast('Sign in again to delete','err'); return; }
+  try{
+    await apiCall('delete_file',{path:fp});
+    delete _pages[id]; delete _veHtml[id]; delete _veOrigHtml[id];
+    await savePagesJson();
+    await updateSitemap();
+    if(_curPage===id) _curPage='';
+    renderTLPGenerated();
+    toast('City page deleted','ok');
+  }catch(e){ toast('Delete failed: '+e.message,'err'); }
 }
 
 function renderTLPSourceList(){
   const wrap=document.getElementById('tlp-source-list');
   if(!wrap)return;
-  const pages=getPageList();
+  const pages=getVisiblePages();   // don't offer a generated TLP as a source to localize
   if(!pages.length){ wrap.innerHTML='<p style="color:var(--muted);font-size:13px">No pages found. Create or import pages first.</p>'; return; }
   wrap.innerHTML=pages.map(p=>
     '<label class="tlp-src-row"><input type="checkbox" class="tlp-src-chk" value="'+esc(p.id)+'"> '
@@ -6501,6 +6557,12 @@ function getPageList(){
     path: _pages[id]?.path||null,
   }));
 }
+// Pages shown in the everyday management lists (Pages editor + dashboard).
+// Targeted Landing Pages are excluded here and managed in the TLP module instead,
+// so they don't clutter the list. SEO, sitemap, and apply-to-all sweeps keep
+// using getPageList() so TLPs stay real, indexed, published pages.
+function getVisiblePages(){ return getPageList().filter(p=>!(_pages[p.id]&&_pages[p.id].tlp)); }
+function getTlpPages(){ return getPageList().filter(p=>_pages[p.id]&&_pages[p.id].tlp); }
 
 // Derive a stable page id from a relative path. MUST match the Site Foundry
 // import scheme so a scanned file and its imported counterpart share one entry
@@ -6643,11 +6705,14 @@ function savePagesBackup(){
 // ── INIT ────────────────────────────────────────────────────────
 async function initPages(){
   await loadPages();
-  const pages=getPageList();
+  const all=getPageList(), visible=getVisiblePages();
+  // Honor a page chosen before navigating in (e.g. Edit from the dashboard or the
+  // TLP module); otherwise open home / the first non-TLP page.
+  const preferred=(_curPage&&_pages[_curPage])?_curPage:null;
   renderVePageList();
   veApplyDeviceSize(); // size the 16:9 desktop viewport before content loads
-  if(pages.length){
-    const autoId=_pages['home']?'home':pages[0].id;
+  if(all.length){
+    const autoId=preferred||(_pages['home']?'home':((visible[0]||all[0]).id));
     _curPage=autoId;
     renderVePageList();
     veLoadPage(autoId);
@@ -6658,7 +6723,9 @@ async function initPages(){
 
 // ── PAGE LIST ───────────────────────────────────────────────────
 function renderVePageList(){
-  const pages=getPageList();
+  // Hide Targeted Landing Pages from the sidebar — except the one currently open,
+  // so you can still see what you're editing if you opened it from the TLP module.
+  const pages=getPageList().filter(p=>!(_pages[p.id]&&_pages[p.id].tlp)||p.id===_curPage);
   const el=document.getElementById('ve-page-items');
   if(!el)return;
   if(!pages.length){
@@ -6683,7 +6750,7 @@ function renderVePageList(){
 }
 // Keep the sidebar "Pages" badge (and dashboard stat) in sync with the live count.
 function updatePageCount(){
-  const n=getPageList().length;
+  const n=getVisiblePages().length;
   const niP=document.getElementById('ni-pg-count'); if(niP) niP.textContent=n;
   const stP=document.getElementById('st-pages'); if(stP) stP.textContent=n;
 }
@@ -7008,7 +7075,7 @@ async function deletePageNow(){
     delete _pages[pid]; delete _veHtml[pid]; delete _veOrigHtml[pid];
     await savePagesJson();
     closeM('m-pagesettings');
-    if(_curPage===pid){ const rest=getPageList(); _curPage=rest[0]?rest[0].id:''; }
+    if(_curPage===pid){ const rest=getVisiblePages(); _curPage=rest[0]?rest[0].id:''; }
     renderVePageList();
     if(_curPage) veLoadPage(_curPage); else veShowEmpty('No pages. Upload .html files and they appear here.');
     toast('Page deleted','ok');
