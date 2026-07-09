@@ -2238,7 +2238,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.46';
+const CMS_VERSION='1.14.47';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4850,7 +4850,7 @@ function renderSEO(pid){
     +'<div class="fg"><label>Meta Description <span style="font-weight:400;color:var(--muted)">(120–160)</span></label><textarea rows="3" maxlength="200" oninput="updateSEO(\''+pid+'\',\'description\',this.value)">'+esc(s.description||'')+'</textarea><small id="seo-desc-count">'+(s.description||'').length+'/160</small></div>'
     +'<div class="fr"><div class="fg"><label>Preferred web address <span style="font-weight:400;color:var(--muted)">(leave blank to set automatically)</span></label><input type="text" value="'+esc(s.canonical||'')+'" oninput="updateSEO(\''+pid+'\',\'canonical\',this.value)" placeholder="Set automatically from your website address"></div>'
     +'<div class="fg"><label>Page type</label><select onchange="updateSEO(\''+pid+'\',\'schemaType\',this.value)">'+opt(['WebPage','Article','Service','LocalBusiness','AboutPage','ContactPage','FAQPage','none'],s.schemaType||'WebPage')+'</select></div></div>'
-    +'<div class="fr"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.noindex?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'noindex\',this.checked)"> Hide this page from search results</label>'
+    +'<div class="fr" style="margin-bottom:20px"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.noindex?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'noindex\',this.checked)"> Hide this page from search results</label>'
     +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.nofollow?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'nofollow\',this.checked)"> Don’t follow links on this page</label></div>'
     +'<div class="si-sec"><h2 style="font-size:13px">Social sharing preview</h2>'
     +'<div class="fg"><label>Social title <span style="font-weight:400;color:var(--muted)">(blank = SEO title)</span></label><input type="text" value="'+esc(s.ogTitle||'')+'" oninput="updateSEO(\''+pid+'\',\'ogTitle\',this.value)"></div>'
