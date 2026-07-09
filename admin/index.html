@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fourge</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2046.02%2046.02%22%3E%3Cg%20transform%3D%22translate%280%208.83%29%22%20fill%3D%22%23DB3516%22%3E%3Cpath%20d%3D%22M20.28%200%20L20.28%2019.43%20L13.43%2022.89%20L13.43%2028.37%20L43.32%2028.37%20L43.32%2022.89%20L36.47%2019.43%20L36.47%2011.57%20L46.02%206.74%20L46.02%200%20Z%22%2F%3E%3Cpath%20d%3D%22M17.58%2013.11%20L17.58%202.31%20L0%202.31%20C3.98%209.74%2010.61%2013.1%2017.58%2013.1%20Z%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -848,9 +849,8 @@ textarea.fb-input{resize:vertical}
   .lc-rp-headline{--fxd:.12s}
 
   /* Loader mark forging in */
-  #fx-loader .fxl-mark rect{animation:fxBar .55s cubic-bezier(.22,.9,.26,1) both}
-  #fx-loader .fxl-mark rect.b2{animation-delay:.1s}
-  #fx-loader .fxl-mark rect.b3{animation-delay:.2s}
+  #fx-loader .fxl-mark path{animation:fxBar .55s cubic-bezier(.22,.9,.26,1) both}
+  #fx-loader .fxl-mark path:nth-child(2){animation-delay:.12s}
   @keyframes fxBar{from{transform:translateY(12px);opacity:0}}
 
   /* Living grain */
@@ -930,30 +930,11 @@ textarea.fb-input{resize:vertical}
   [data-fxslot="1"]:hover .fxspark,.fx-logo:hover .fxspark{animation:fxSpark 1.15s ease-out infinite;animation-delay:var(--fxd,0s)}
   @keyframes fxSpark{0%{opacity:0;transform:translateY(0) scale(1)}20%{opacity:.45}100%{opacity:0;transform:translateY(-9px) scale(.4)}}
 
-  /* Logo hover: ember blocks melt into a living flame, recast on leave */
+  /* Logo hover: the anvil takes a strike and throws forge sparks */
   .fx-logo{position:relative}
-  .fx-logo .fxm-blocks rect{transform-box:fill-box;transform-origin:50% 100%;transition:transform .5s cubic-bezier(.65,0,.35,1) .1s,opacity .35s ease .1s,fill .35s ease .1s}
-  .fx-logo .fxm-flame{transform-box:fill-box;transform-origin:50% 100%}
-  .fx-logo .fxm-flame path{transform-box:fill-box;transform-origin:50% 100%;opacity:0;transform:translateY(7px) scale(.25);transition:opacity .28s ease,transform .42s cubic-bezier(.65,0,.35,1)}
-  .fx-logo:hover .fxm-blocks rect{transition:transform .42s cubic-bezier(.65,0,.35,1),opacity .3s ease,fill .3s ease}
-  .fx-logo:hover .fxm-b1{transform:translate(6px,0) scaleY(.14);fill:#E97B3F}
-  .fx-logo:hover .fxm-b2{transform:translate(-6px,16px) scale(.2);opacity:0}
-  .fx-logo:hover .fxm-b3{transform:translate(-5px,10px) scale(.2);opacity:0}
-  .fx-logo:hover .fxm-flame path{opacity:1;transform:none}
-  .fx-logo:hover .fxm-f1{transition-delay:.14s;animation:fxStretch 3.7s ease-in-out .9s infinite}
-  .fx-logo:hover .fxm-f2{transition-delay:.22s;animation:fxStretch 2.6s ease-in-out 1.15s infinite reverse}
-  .fx-logo:hover .fxm-f3{transition-delay:.3s;animation:fxFlameCore .7s ease-in-out 1s infinite}
-  .fx-logo:hover .fxm-flame{animation:fxSway 2.9s ease-in-out .55s infinite}
-  @keyframes fxSway{
-    0%{transform:skewX(0deg) skewY(0deg) scaleY(1)}
-    20%{transform:skewX(2.4deg) skewY(.8deg) scaleY(1.03)}
-    40%{transform:skewX(-2.6deg) skewY(-.4deg) scaleY(.98)}
-    60%{transform:skewX(1.8deg) skewY(.6deg) scaleY(1.06)}
-    80%{transform:skewX(-1.4deg) skewY(0deg) scaleY(1.01)}
-    100%{transform:skewX(0deg) skewY(0deg) scaleY(1)}
-  }
-  @keyframes fxStretch{0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.12) scaleX(.96)}}
-  @keyframes fxFlameCore{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-1.6px) scale(.88,1.05)}}
+  .fx-logo .fxm-anvil{transform-box:fill-box;transform-origin:50% 100%;transition:transform .45s cubic-bezier(.34,1.56,.64,1)}
+  .fx-logo:hover .fxm-anvil{animation:fxAnvilStrike .5s cubic-bezier(.34,1.56,.64,1)}
+  @keyframes fxAnvilStrike{0%{transform:translateY(0) scaleY(1)}28%{transform:translateY(1.5px) scaleY(.92)}60%{transform:translateY(0) scaleY(1.04)}100%{transform:translateY(0) scaleY(1)}}
 }
 </style>
 <script>
@@ -970,10 +951,8 @@ textarea.fb-input{resize:vertical}
 <div id="fx-grain" aria-hidden="true"></div>
 <div id="fx-loader" aria-hidden="true">
   <div class="fxl-inner">
-    <svg class="fxl-mark" width="46" height="46" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <rect class="b1" x="5" y="4" width="8" height="24" rx="2" fill="#C8531E"></rect>
-      <rect class="b2" x="16" y="4" width="11" height="8" rx="2" fill="#C8531E" opacity="0.75"></rect>
-      <rect class="b3" x="16" y="15" width="8" height="8" rx="2" fill="#C8531E" opacity="0.5"></rect>
+    <svg class="fxl-mark" width="65" height="40" viewBox="0 0 46.02 28.37" fill="#DB3516" aria-hidden="true">
+      <g class="fxm-anvil"><path d="M20.28 0 L20.28 19.43 L13.43 22.89 L13.43 28.37 L43.32 28.37 L43.32 22.89 L36.47 19.43 L36.47 11.57 L46.02 6.74 L46.02 0 Z"></path><path d="M17.58 13.11 L17.58 2.31 L0 2.31 C3.98 9.74 10.61 13.1 17.58 13.1 Z"></path></g>
     </svg>
     <div class="fxl-word" aria-label="Fourge"><span class="fxw"><span class="fxc" style="--fxi:0">F</span></span><span class="fxw"><span class="fxc" style="--fxi:1">o</span></span><span class="fxw"><span class="fxc" style="--fxi:2">u</span></span><span class="fxw"><span class="fxc" style="--fxi:3">r</span></span><span class="fxw"><span class="fxc" style="--fxi:4">g</span></span><span class="fxw"><span class="fxc" style="--fxi:5">e</span></span></div>
     <div class="fxl-bar"><i id="fxl-bar-fill"></i></div>
@@ -981,10 +960,8 @@ textarea.fb-input{resize:vertical}
   </div>
 </div>
 <div id="fx-wipe" aria-hidden="true">
-  <svg width="40" height="40" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-    <rect x="5" y="4" width="8" height="24" rx="2" fill="#C8531E"></rect>
-    <rect x="16" y="4" width="11" height="8" rx="2" fill="#C8531E" opacity="0.75"></rect>
-    <rect x="16" y="15" width="8" height="8" rx="2" fill="#C8531E" opacity="0.5"></rect>
+  <svg width="55" height="34" viewBox="0 0 46.02 28.37" fill="#DB3516" aria-hidden="true">
+    <path d="M20.28 0 L20.28 19.43 L13.43 22.89 L13.43 28.37 L43.32 28.37 L43.32 22.89 L36.47 19.43 L36.47 11.57 L46.02 6.74 L46.02 0 Z"></path><path d="M17.58 13.11 L17.58 2.31 L0 2.31 C3.98 9.74 10.61 13.1 17.58 13.1 Z"></path>
   </svg>
 </div>
 
@@ -1004,18 +981,8 @@ textarea.fb-input{resize:vertical}
   <div class="lc-left">
     <div class="lc-logo fx-logo">
       <span class="fxspark" style="left:4px;--fxd:0s"></span><span class="fxspark" style="left:14px;--fxd:.26s;background:#F2B26B"></span><span class="fxspark" style="left:22px;--fxd:.52s"></span>
-      <svg width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-        <g class="fxm-blocks">
-          <rect class="fxm-b1" x="5" y="4" width="8" height="24" rx="2" fill="#C8531E"></rect>
-          <rect class="fxm-b2" x="16" y="4" width="11" height="8" rx="2" fill="#C8531E" opacity="0.75"></rect>
-          <rect class="fxm-b3" x="16" y="15" width="8" height="8" rx="2" fill="#C8531E" opacity="0.5"></rect>
-        </g>
-        <g class="fxm-flame">
-          <path class="fxm-f1" d="M16 3 C12 10 7 13 7 20 a9 9 0 0 0 18 0 C25 13 20 10 16 3 Z" fill="#C8531E"></path>
-          <path class="fxm-f2" d="M16 10 C13.5 15 11 17 11 21.5 a5 5 0 0 0 10 0 C21 17 18.5 15 16 10 Z" fill="#E97B3F"></path>
-          <path class="fxm-f3" d="M16 17 C14.8 19.5 13.5 21 13.5 23.5 a2.5 2.5 0 0 0 5 0 C18.5 21 17.2 19.5 16 17 Z" fill="#F2B26B"></path>
-        </g>
-      </svg>
+      <svg width="42" height="26" viewBox="0 0 46.02 28.37" fill="#DB3516" aria-hidden="true">
+        <g class="fxm-anvil"><path d="M20.28 0 L20.28 19.43 L13.43 22.89 L13.43 28.37 L43.32 28.37 L43.32 22.89 L36.47 19.43 L36.47 11.57 L46.02 6.74 L46.02 0 Z"></path><path d="M17.58 13.11 L17.58 2.31 L0 2.31 C3.98 9.74 10.61 13.1 17.58 13.1 Z"></path></g>
       </svg>
       <span class="lc-logo-name" id="lc-name">Fourge</span>
     </div>
@@ -1092,18 +1059,7 @@ textarea.fb-input{resize:vertical}
   <div class="top-bar">
     <a class="tb-logo fx-logo" href="#" onclick="navTo('dash');return false">
       <span class="fxspark" style="left:3px;--fxd:0s"></span><span class="fxspark" style="left:11px;--fxd:.26s;background:#F2B26B"></span><span class="fxspark" style="left:17px;--fxd:.52s"></span>
-      <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-        <g class="fxm-blocks">
-          <rect class="fxm-b1" x="5" y="4" width="8" height="24" rx="2" fill="#C8531E"></rect>
-          <rect class="fxm-b2" x="16" y="4" width="11" height="8" rx="2" fill="#C8531E" opacity="0.75"></rect>
-          <rect class="fxm-b3" x="16" y="15" width="8" height="8" rx="2" fill="#C8531E" opacity="0.5"></rect>
-        </g>
-        <g class="fxm-flame">
-          <path class="fxm-f1" d="M16 3 C12 10 7 13 7 20 a9 9 0 0 0 18 0 C25 13 20 10 16 3 Z" fill="#C8531E"></path>
-          <path class="fxm-f2" d="M16 10 C13.5 15 11 17 11 21.5 a5 5 0 0 0 10 0 C21 17 18.5 15 16 10 Z" fill="#E97B3F"></path>
-          <path class="fxm-f3" d="M16 17 C14.8 19.5 13.5 21 13.5 23.5 a2.5 2.5 0 0 0 5 0 C18.5 21 17.2 19.5 16 17 Z" fill="#F2B26B"></path>
-        </g>
-      </svg> <span class="tb-logo-name">Fourge</span>
+      <svg width="32" height="20" viewBox="0 0 46.02 28.37" fill="#DB3516" aria-hidden="true"><g class="fxm-anvil"><path d="M20.28 0 L20.28 19.43 L13.43 22.89 L13.43 28.37 L43.32 28.37 L43.32 22.89 L36.47 19.43 L36.47 11.57 L46.02 6.74 L46.02 0 Z"></path><path d="M17.58 13.11 L17.58 2.31 L0 2.31 C3.98 9.74 10.61 13.1 17.58 13.1 Z"></path></g></svg> <span class="tb-logo-name">Fourge</span>
     </a>
     <button class="tb-collapse" id="sb-toggle" onclick="toggleSidebar()" title="Collapse / expand the menu" aria-label="Toggle sidebar">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
@@ -2238,7 +2194,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.47';
+const CMS_VERSION='1.14.48';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
