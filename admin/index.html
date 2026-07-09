@@ -81,7 +81,7 @@ html,body{height:100%;font-family:var(--font-sans);font-size:14px;color:var(--te
 .lc input[type=text]:focus,.lc input[type=password]:focus{border-color:var(--ember);background:var(--surface);box-shadow:0 0 0 3px var(--ember-glow)}
 .lc input::placeholder{color:var(--muted-2);font-size:13px}
 /* Larger login fields + password reveal toggle */
-.lc-form-area input[type=text],.lc-form-area input[type=password],.lc-form-area input[type=email]{padding:14px 16px;font-size:15px}
+.lc-form-area input[type=text],.lc-form-area input[type=password],.lc-form-area input[type=email]{padding:14px 16px;font-size:15px;width:100%}
 .lc-pw-wrap{position:relative;margin-bottom:14px}
 .lc-pw-wrap input[type=password],.lc-pw-wrap input[type=text]{padding-right:46px;margin-bottom:0}
 .lc-pw-eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:none;border:none;padding:0;color:var(--muted);cursor:pointer}
@@ -96,11 +96,6 @@ html,body{height:100%;font-family:var(--font-sans);font-size:14px;color:var(--te
 .lc-rp-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);background-size:32px 32px;pointer-events:none}
 .lc-rp-inner{position:relative;flex:1;display:flex;flex-direction:column;padding:40px 44px 32px}
 .lc-rp-headline{font-size:72px;font-weight:800;color:var(--dark-fg);line-height:.98;letter-spacing:-.04em;margin-bottom:auto}
-.lc-rp-cards{display:flex;flex-direction:column;gap:10px;margin-left:auto;position:absolute;right:44px;top:80px;width:44%}
-.lc-rp-card{background:rgba(255,255,255,.06);border-radius:12px;height:64px}
-.lc-rp-card:nth-child(1){height:72px}
-.lc-rp-card:nth-child(2){height:64px;margin-left:16px}
-.lc-rp-card:nth-child(3){height:56px;margin-left:8px}
 .lc-rp-footer{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding-top:24px;border-top:1px solid var(--dark-border)}
 .lc-rp-footer-col-label{font-family:var(--font-mono);font-size:9px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--dark-fg2);margin-bottom:4px}
 .lc-rp-footer-col-val{font-size:14px;font-weight:600;color:var(--dark-fg)}
@@ -902,14 +897,7 @@ textarea.fb-input{resize:vertical}
   #login-screen.fx-in .lc-form-area>*:nth-child(12){animation-delay:.5s}
   #login-screen.fx-in .lc-form-area>*:nth-child(13){animation-delay:.54s}
   #login-screen.fx-in .lc-form-area>*:nth-child(n+14){animation-delay:.58s}
-  #login-screen.fx-in .lc-rp-cards{animation:fxPanelUp .7s .25s cubic-bezier(.22,.9,.26,1) both}
   #login-screen.fx-in .lc-rp-footer{animation:fxPanelUp .6s .4s cubic-bezier(.22,.9,.26,1) both}
-
-  /* Login cards: slow idle drift */
-  .lc-rp-card{animation:fxFloat 6.5s ease-in-out infinite alternate}
-  .lc-rp-card:nth-child(2){animation-delay:1.1s;animation-duration:7.5s}
-  .lc-rp-card:nth-child(3){animation-delay:2.2s;animation-duration:8.5s}
-  @keyframes fxFloat{from{transform:translateY(0)}to{transform:translateY(-9px)}}
 
   /* Micro-interactions */
   .stat-c{transition:transform .22s ease,box-shadow .22s ease}
@@ -1016,12 +1004,6 @@ textarea.fb-input{resize:vertical}
     <div class="lc-rp-grid"></div>
     <div class="lc-rp-inner">
          <div class="lc-rp-headline">Pour<br>the<br>foundation.</div>
-      <!-- Floating content-card shapes -->
-      <div class="lc-rp-cards">
-        <div class="lc-rp-card"></div>
-        <div class="lc-rp-card"></div>
-        <div class="lc-rp-card"></div>
-      </div>
       <!-- Footer bar -->
       <div class="lc-rp-footer">
         <div>
@@ -1118,7 +1100,7 @@ textarea.fb-input{resize:vertical}
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Analytics
         </div>
         <div class="ni" onclick="navTo('leadgen')" id="ni-leadgen" style="display:none" title="Lead Generation">
-          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#E8731C"></rect><rect x="6" y="7.2" width="12" height="2.7" rx="1.35" fill="#fff"></rect><rect x="8" y="11.15" width="8" height="2.7" rx="1.35" fill="#fff"></rect><rect x="10" y="15.1" width="4" height="2.7" rx="1.35" fill="#fff"></rect></svg> Lead Generation
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#DB3516"></rect><rect x="6" y="7.2" width="12" height="2.7" rx="1.35" fill="#fff"></rect><rect x="8" y="11.15" width="8" height="2.7" rx="1.35" fill="#fff"></rect><rect x="10" y="15.1" width="4" height="2.7" rx="1.35" fill="#fff"></rect></svg> Lead Generation
         </div>
         <div class="sb-sec">CONFIGURE</div>
         <div class="ni" onclick="navTo('site')" id="ni-site">
@@ -1617,14 +1599,14 @@ textarea.fb-input{resize:vertical}
       </div>
 
       <!-- ══════════════════════════════════════════════════════
-           LEAD GENERATION — GoHighLevel dashboard (shown only when connected)
+           LEAD GENERATION dashboard (shown only when connected)
       ═══════════════════════════════════════════════════════ -->
       <div class="panel" id="p-leadgen">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px">
-          <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#E8731C"></rect><rect x="6" y="7.2" width="12" height="2.7" rx="1.35" fill="#fff"></rect><rect x="8" y="11.15" width="8" height="2.7" rx="1.35" fill="#fff"></rect><rect x="10" y="15.1" width="4" height="2.7" rx="1.35" fill="#fff"></rect></svg>
+          <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#DB3516"></rect><rect x="6" y="7.2" width="12" height="2.7" rx="1.35" fill="#fff"></rect><rect x="8" y="11.15" width="8" height="2.7" rx="1.35" fill="#fff"></rect><rect x="10" y="15.1" width="4" height="2.7" rx="1.35" fill="#fff"></rect></svg>
           <div>
             <h1 style="font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin:0">Lead Generation</h1>
-            <p style="font-size:13px;color:var(--muted);margin:2px 0 0">Leads and conversations pulled live from GoHighLevel.</p>
+            <p style="font-size:13px;color:var(--muted);margin:2px 0 0">Leads and conversations, updated live.</p>
           </div>
           <button class="fd-btn-ghost" style="margin-left:auto;font-size:12px" onclick="loadLeadGen()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh</button>
         </div>
@@ -2192,7 +2174,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.50';
+const CMS_VERSION='1.14.51';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5700,18 +5682,18 @@ function ghlAddonHtml(){
     <div class="pl-addon-top">
       <span class="pl-logo">${logo}</span>
       <div style="flex:1;min-width:0">
-        <div class="pl-n" style="display:flex;align-items:center;gap:8px">Lead Generation <span style="font-weight:500;color:var(--muted);font-size:12px">· GoHighLevel</span> <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
-        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into GoHighLevel as a lead — no GHL form needed. When on, a <strong>Lead Generation</strong> dashboard appears in the left menu (visible to your whole team). In your GHL sub-account, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID.</div>
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">Lead Generation <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into your CRM as a lead — no separate form needed. When on, a <strong>Lead Generation</strong> dashboard appears in the left menu (visible to your whole team). In your CRM, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID.</div>
       </div>
     </div>
     <div class="pl-addon-body">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
         <label class="tog"><input type="checkbox" id="s-ghl-enabled" ${on?'checked':''}><span class="tog-sl"></span></label>
-        <span style="font-size:13px;color:var(--text)">Send new form leads into GoHighLevel</span>
+        <span style="font-size:13px;color:var(--text)">Send new form leads into your CRM</span>
       </div>
       <div class="fg"><label>Private Integration Token</label><input type="password" id="s-ghl-token" placeholder="${hasToken?'Token saved on server':'pit-… (kept on the server)'}"></div>
-      <div class="fg"><label>Location ID</label><input type="text" id="s-ghl-location" placeholder="your GHL sub-account / location ID" value="${esc(loc)}">
-        <div style="${hint}">Find it in GHL under Settings → Business Profile (or the last path segment of your sub-account URL).</div>
+      <div class="fg"><label>Location ID</label><input type="text" id="s-ghl-location" placeholder="your CRM location ID" value="${esc(loc)}">
+        <div style="${hint}">Find it in your CRM under Settings → Business Profile (or the last path segment of your sub-account URL).</div>
       </div>
       <div class="pl-addon-actions">
         <button class="fd-btn-primary" onclick="saveGhl()">Save</button>
@@ -5733,7 +5715,7 @@ async function saveGhl(){
     _site.ghl.locationId=locationId;
     await saveSiteInfo();
     if(enabled && !token && !hadToken) toast('Saved — add a token to start sending leads','ok');
-    else toast(enabled?'GoHighLevel connected — new leads will flow in ✓':'GoHighLevel settings saved','ok');
+    else toast(enabled?'Lead connection saved — new leads will flow in ✓':'Settings saved','ok');
     const t=document.getElementById('s-ghl-token'); if(t){ t.value=''; if(token) t.placeholder='Token saved on server'; }
     applyRole();   // show/hide the Lead Generation nav tab based on the new enabled state
     if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
@@ -5742,7 +5724,7 @@ async function saveGhl(){
 async function testGhl(){
   const token=document.getElementById('s-ghl-token')?.value.trim()||'';
   const locationId=document.getElementById('s-ghl-location')?.value.trim()||'';
-  toast('Testing GoHighLevel…');
+  toast('Testing connection…');
   try{
     const d=await apiCall('ghl_test',{token,locationId});
     toast(d.message||(d.ok?'Connected ✓':'Connection failed'), d.ok?'ok':'err');
@@ -5816,15 +5798,15 @@ let _leadGenData=null;
 async function loadLeadGen(){
   const body=document.getElementById('leadgen-body'); if(!body) return;
   if(!(_site&&_site.ghl&&_site.ghl.enabled)){
-    body.innerHTML='<div class="info-b">GoHighLevel isn\'t connected yet. A Super-Admin can set it up in <a href="#" onclick="navTo(\'injections\');return false" style="color:var(--ember);font-weight:600">Plugins → GoHighLevel</a>.</div>';
+    body.innerHTML='<div class="info-b">Lead Generation isn\'t connected yet. A Super-Admin can set it up under <a href="#" onclick="navTo(\'injections\');return false" style="color:var(--ember);font-weight:600">Plugins</a>.</div>';
     return;
   }
-  body.innerHTML='<div style="color:var(--muted);font-size:13px;padding:24px 0">Loading leads from GoHighLevel…</div>';
+  body.innerHTML='<div style="color:var(--muted);font-size:13px;padding:24px 0">Loading your leads…</div>';
   try{
     const d=await apiCall('ghl_dashboard');
-    if(!d || d.ok===false){ body.innerHTML='<div class="info-b">'+esc((d&&d.error)||'Could not load GoHighLevel data.')+'</div>'; return; }
+    if(!d || d.ok===false){ body.innerHTML='<div class="info-b">'+esc((d&&d.error)||'Could not load your leads.')+'</div>'; return; }
     _leadGenData=d; body.innerHTML=renderLeadGen(d);
-  }catch(e){ body.innerHTML='<div class="info-b">Could not reach GoHighLevel: '+esc(e.message)+'</div>'; }
+  }catch(e){ body.innerHTML='<div class="info-b">Could not reach the lead connection: '+esc(e.message)+'</div>'; }
 }
 function renderLeadGen(d){
   const contacts=d.contacts||[], convos=d.conversations||[];

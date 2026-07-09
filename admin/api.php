@@ -684,12 +684,12 @@ function cmsGhlTest($token, $locationId) {
         CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 12,
     ]);
     $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
-    if ($err)        return [false, 'Could not reach GoHighLevel: ' . $err];
-    if ($code === 200) return [true, 'Connected to GoHighLevel — leads will flow in.'];
+    if ($err)        return [false, 'Could not reach the lead connection: ' . $err];
+    if ($code === 200) return [true, 'Connected — leads will flow in.'];
     if ($code === 401) return [false, 'Token rejected (401) — double-check the Private Integration Token.'];
     if ($code === 403) return [false, 'Access denied (403) — the token likely needs the Contacts scope, or the Location ID is wrong.'];
     if ($code === 404) return [false, 'Not found (404) — check the Location ID.'];
-    return [false, 'GoHighLevel returned HTTP ' . $code];
+    return [false, 'The lead connection returned HTTP ' . $code];
 }
 
 function fourgeApiGhlTest($me, $body) {
@@ -715,7 +715,7 @@ function cmsGhlDashboard($token, $locationId) {
     };
     $out = ['contacts' => [], 'conversations' => [], 'total' => 0, 'error' => ''];
     $cd = $get(GHL_API_BASE . '/contacts/?locationId=' . rawurlencode($locationId) . '&limit=25');
-    if ($cd === null) { $out['error'] = 'Could not load leads from GoHighLevel — check the connection in Plugins.'; return $out; }
+    if ($cd === null) { $out['error'] = 'Could not load leads — check the connection in Plugins.'; return $out; }
     foreach (($cd['contacts'] ?? []) as $c) {
         $name = trim(($c['firstName'] ?? '') . ' ' . ($c['lastName'] ?? ''));
         if ($name === '') $name = $c['contactName'] ?? ($c['name'] ?? '');
@@ -741,7 +741,7 @@ function cmsGhlDashboard($token, $locationId) {
 // Dashboard data — any signed-in user may view, but only when GHL is enabled.
 function fourgeApiGhlDashboard($me, $body) {
     $cfg = cmsGhlConfig();
-    if (!$cfg) { echo json_encode(['ok' => false, 'error' => 'GoHighLevel isn\'t set up yet.']); return; }
+    if (!$cfg) { echo json_encode(['ok' => false, 'error' => 'Lead Generation isn\'t set up yet.']); return; }
     $d = cmsGhlDashboard($cfg['token'], $cfg['locationId']);
     echo json_encode(['ok' => empty($d['error']), 'contacts' => $d['contacts'], 'conversations' => $d['conversations'], 'total' => $d['total'], 'error' => $d['error']]);
 }
