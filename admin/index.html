@@ -324,6 +324,8 @@ input:checked+.tog-sl{background:var(--ember)}input:checked+.tog-sl:before{trans
 .lg-msg.out{align-self:flex-end;background:var(--ember);color:#fff;border-bottom-right-radius:4px}
 .lg-msg-t{font-size:10px;color:var(--muted);margin-top:3px}
 .lg-msg.out .lg-msg-t{color:rgba(255,255,255,.8);text-align:right}
+.lg-msg .lg-msg-img{display:block;max-width:100%;width:auto;max-height:260px;border-radius:8px;margin-top:4px;cursor:zoom-in}
+.lg-msg a{color:inherit}
 .lg-chat-foot{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);align-items:flex-end;flex-shrink:0}
 .lg-chat-foot textarea{flex:1;resize:none;min-height:38px;max-height:120px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r);font-family:var(--font-sans);font-size:14px;background:var(--surface-3);color:var(--text);outline:none}
 .lg-chat-foot textarea:focus{border-color:var(--ember)}
@@ -2190,7 +2192,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.52';
+const CMS_VERSION='1.14.53';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5847,7 +5849,7 @@ function renderLeadGen(d){
   if(!convos.length) h+='<div class="info-b">No recent conversations.</div>';
   else{
     h+='<div style="overflow-x:auto"><table class="lg-table"><thead><tr><th>Contact</th><th>Last message</th><th>Channel</th><th>When</th></tr></thead><tbody>';
-    convos.forEach(v=>{ h+='<tr class="lg-convo-row" onclick="openConversation('+JSON.stringify(v.id).replace(/"/g,'&quot;')+')" title="Open conversation"><td>'+esc(v.name||'—')+'</td><td>'+esc(String(v.last||'').slice(0,90))+'</td><td>'+esc(v.type||'')+'</td><td>'+esc(fmt(v.date))+'</td></tr>'; });
+    convos.forEach(v=>{ h+='<tr class="lg-convo-row" onclick="openConversation('+JSON.stringify(v.id).replace(/"/g,'&quot;')+')" title="Open conversation"><td>'+esc(v.name||'—')+'</td><td>'+esc(lgPreview(v.last||'').slice(0,90))+'</td><td>'+esc(v.type||'')+'</td><td>'+esc(fmt(v.date))+'</td></tr>'; });
     h+='</tbody></table></div>';
   }
   return h;
@@ -5868,6 +5870,32 @@ function leadGenCsv(kind){
 // Click a conversation to open its message thread in a modal, then reply. The
 // server (ghl_messages / ghl_send) holds the token and talks to the lead system;
 // the thread polls every few seconds so a live chat updates on its own.
+// The lead system embeds media as URLs — often wrapped in [brackets] — inside
+// the message body. Turn image URLs into inline images, other URLs into links,
+// and escape the rest. The URL match stops before whitespace and ] ) < > " '
+// so a trailing bracket is never glued onto the URL, and a surrounding [ ] pair
+// is consumed so bracketed media URLs don't linger as text.
+function lgIsImg(u){ return /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(u); }
+function lgRenderBody(body, attachments){
+  let text=String(body==null?'':body);
+  const imgs=[], links=[];
+  text=text.replace(/\[\s*(https?:\/\/[^\s\]<>"')]+)\s*\]|(https?:\/\/[^\s\]<>"')]+)/gi,function(_m,b1,b2){
+    const u=b1||b2;
+    if(lgIsImg(u)){ if(imgs.indexOf(u)<0) imgs.push(u); return ''; }
+    links.push(u); return '%%FGLNK'+(links.length-1)+'%%';
+  });
+  (attachments||[]).forEach(function(a){ const u=String(a||''); if(u&&lgIsImg(u)&&imgs.indexOf(u)<0) imgs.push(u); });
+  text=text.replace(/\[\s*\]/g,'').replace(/\(\s*\)/g,'').replace(/[ \t]+\n/g,'\n').trim();
+  let html=esc(text);
+  links.forEach(function(u,i){ html=html.replace('%%FGLNK'+i+'%%','<a href="'+esc(u)+'" target="_blank" rel="noopener" style="text-decoration:underline">'+esc(u)+'</a>'); });
+  let out=(html.trim()?'<div>'+html+'</div>':'');
+  imgs.forEach(function(u){ out+='<a href="'+esc(u)+'" target="_blank" rel="noopener"><img class="lg-msg-img" src="'+esc(u)+'" loading="lazy" alt=""></a>'; });
+  return out;
+}
+// One-line preview for the dashboard table: collapse any image URL to a label.
+function lgPreview(s){
+  return String(s==null?'':s).replace(/\[\s*(https?:\/\/[^\s\]<>"')]+)\s*\]|(https?:\/\/[^\s\]<>"')]+)/gi,function(_m,b1,b2){ const u=b1||b2; return lgIsImg(u)?'🖼 Image':u; }).trim();
+}
 let _lgChat=null;   // {id, contactId, type, name, timer}
 function openConversation(id){
   const d=_leadGenData; if(!d) return;
@@ -5902,7 +5930,7 @@ async function loadThread(showLoading){
     if(!_lgChat||!document.getElementById('lg-chat-body')) return;   // closed while loading
     const msgs=(d&&d.messages)||[];
     const fmt=s=>{ if(!s)return''; const t=new Date(s); return isNaN(t)?'':t.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); };
-    const rows=msgs.map(m=>{ const b=String(m.body||'').trim(); if(!b) return ''; return '<div class="lg-msg '+(m.inbound?'in':'out')+'">'+esc(b)+'<div class="lg-msg-t">'+esc(fmt(m.date))+'</div></div>'; }).filter(Boolean).join('');
+    const rows=msgs.map(m=>{ const inner=lgRenderBody(m.body, m.attachments); if(!inner) return ''; return '<div class="lg-msg '+(m.inbound?'in':'out')+'">'+inner+'<div class="lg-msg-t">'+esc(fmt(m.date))+'</div></div>'; }).filter(Boolean).join('');
     const atBottom = body.scrollHeight-body.scrollTop-body.clientHeight < 40;
     body.innerHTML = rows || '<div class="lg-chat-empty">No messages yet. Send the first one below.</div>';
     if(showLoading||atBottom) body.scrollTop=body.scrollHeight;

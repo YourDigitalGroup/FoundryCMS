@@ -789,12 +789,14 @@ function cmsGhlParseMessages($j) {
     foreach ($rawList as $m) {
         if (!is_array($m)) continue;
         $dir = strtolower((string)($m['direction'] ?? ''));
+        $att = (isset($m['attachments']) && is_array($m['attachments'])) ? array_values(array_filter(array_map('strval', $m['attachments']), 'strlen')) : [];
         $msgs[] = [
             'id'      => $m['id'] ?? '',
             'body'    => (string)($m['body'] ?? ($m['message'] ?? '')),
             'inbound' => ($dir === 'inbound'),
             'type'    => $m['messageType'] ?? ($m['type'] ?? ''),
             'date'    => $m['dateAdded'] ?? ($m['dateUpdated'] ?? ''),
+            'attachments' => $att,
         ];
     }
     usort($msgs, function ($a, $b) { return strcmp((string)$a['date'], (string)$b['date']); });   // oldest → newest
