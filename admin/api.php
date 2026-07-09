@@ -177,7 +177,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
 $PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','send_test_email'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','send_test_email'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -231,6 +231,8 @@ try {
         case 'set_secret':      ob_end_clean(); fourgeApiSetSecret($authUser, $body); break;
         case 'ghl_test':        ob_end_clean(); fourgeApiGhlTest($authUser, $body); break;
         case 'ghl_dashboard':   ob_end_clean(); fourgeApiGhlDashboard($authUser, $body); break;
+        case 'ghl_messages':    ob_end_clean(); fourgeApiGhlMessages($authUser, $body); break;
+        case 'ghl_send':        ob_end_clean(); fourgeApiGhlSend($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
@@ -732,6 +734,7 @@ function cmsGhlDashboard($token, $locationId) {
                 'id' => $v['id'] ?? '', 'name' => $v['fullName'] ?? ($v['contactName'] ?? ($v['email'] ?? '')),
                 'last' => $v['lastMessageBody'] ?? ($v['lastMessage'] ?? ''), 'type' => $v['lastMessageType'] ?? ($v['type'] ?? ''),
                 'date' => $v['lastMessageDate'] ?? ($v['dateUpdated'] ?? ''),
+                'contactId' => $v['contactId'] ?? '',
             ];
         }
     }
@@ -744,6 +747,98 @@ function fourgeApiGhlDashboard($me, $body) {
     if (!$cfg) { echo json_encode(['ok' => false, 'error' => 'Lead Generation isn\'t set up yet.']); return; }
     $d = cmsGhlDashboard($cfg['token'], $cfg['locationId']);
     echo json_encode(['ok' => empty($d['error']), 'contacts' => $d['contacts'], 'conversations' => $d['conversations'], 'total' => $d['total'], 'error' => $d['error']]);
+}
+
+// Map a conversation's raw channel/type to the send-message API's `type` enum.
+function cmsGhlSendType($raw) {
+    $t = strtoupper((string)$raw);
+    if (strpos($t, 'LIVE') !== false || strpos($t, 'CHAT') !== false || strpos($t, 'WEBCHAT') !== false) return 'Live_Chat';
+    if (strpos($t, 'EMAIL') !== false) return 'Email';
+    if (strpos($t, 'WHATSAPP') !== false) return 'WhatsApp';
+    if (strpos($t, 'INSTAGRAM') !== false || strpos($t, '_IG') !== false) return 'IG';
+    if (strpos($t, 'FACEBOOK') !== false || strpos($t, '_FB') !== false || strpos($t, 'MESSENGER') !== false) return 'FB';
+    return 'SMS';   // safe default for phone-based threads
+}
+
+// Fetch the message thread for one conversation, normalized into a flat list
+// (oldest-first) the chat UI can render. GHL nests messages one level deep and
+// returns newest-first, both handled here.
+function cmsGhlMessages($token, $conversationId) {
+    $hdr = ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Accept: application/json'];
+    $ch = curl_init(GHL_API_BASE . '/conversations/' . rawurlencode($conversationId) . '/messages?limit=100');
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $hdr, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15]);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    if ($err) return [null, 'Could not reach the lead connection: ' . $err];
+    $j = json_decode($res, true);
+    if ($code < 200 || $code >= 300) {
+        $m = is_array($j) ? ($j['message'] ?? ($j['msg'] ?? '')) : '';
+        if (is_array($m)) $m = implode('; ', $m);
+        return [null, 'The lead connection returned HTTP ' . $code . ($m ? ': ' . $m : '')];
+    }
+    return [cmsGhlParseMessages($j), ''];
+}
+
+// PURE (no network): normalize a GHL messages response into a flat, oldest-first
+// list. Handles the nested { messages: { messages: [...] } } and flat
+// { messages: [...] } shapes, and GHL's newest-first ordering.
+function cmsGhlParseMessages($j) {
+    $rawList = [];
+    if (isset($j['messages']['messages']) && is_array($j['messages']['messages'])) $rawList = $j['messages']['messages'];
+    elseif (isset($j['messages']) && is_array($j['messages'])) $rawList = $j['messages'];
+    $msgs = [];
+    foreach ($rawList as $m) {
+        if (!is_array($m)) continue;
+        $dir = strtolower((string)($m['direction'] ?? ''));
+        $msgs[] = [
+            'id'      => $m['id'] ?? '',
+            'body'    => (string)($m['body'] ?? ($m['message'] ?? '')),
+            'inbound' => ($dir === 'inbound'),
+            'type'    => $m['messageType'] ?? ($m['type'] ?? ''),
+            'date'    => $m['dateAdded'] ?? ($m['dateUpdated'] ?? ''),
+        ];
+    }
+    usort($msgs, function ($a, $b) { return strcmp((string)$a['date'], (string)$b['date']); });   // oldest → newest
+    return $msgs;
+}
+
+// Send an outbound reply. Best-effort; returns GHL's error verbatim so a
+// channel/permission problem is visible in the UI. Sends to the contact on the
+// conversation's channel (GHL routes it into the existing thread).
+function cmsGhlSendMessage($token, $contactId, $rawType, $text) {
+    $type = cmsGhlSendType($rawType);
+    $payload = json_encode(['type' => $type, 'contactId' => $contactId, 'message' => $text]);
+    $hdr = ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Content-Type: application/json', 'Accept: application/json'];
+    $ch = curl_init(GHL_API_BASE . '/conversations/messages');
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_POSTFIELDS => $payload, CURLOPT_HTTPHEADER => $hdr, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15]);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    if ($err) return [false, 'Could not reach the lead connection: ' . $err, $type];
+    if ($code >= 200 && $code < 300) return [true, '', $type];
+    $j = json_decode($res, true);
+    $m = is_array($j) ? ($j['message'] ?? ($j['msg'] ?? '')) : '';
+    if (is_array($m)) $m = implode('; ', $m);
+    return [false, 'Message not sent (' . $code . ')' . ($m ? ': ' . $m : ''), $type];
+}
+
+// Conversation thread + reply — any signed-in user (the module is team-facing),
+// but only when Lead Generation is enabled. The token stays on the server.
+function fourgeApiGhlMessages($me, $body) {
+    $cfg = cmsGhlConfig();
+    if (!$cfg) { echo json_encode(['ok' => false, 'error' => 'Lead Generation isn\'t set up yet.']); return; }
+    $cid = trim((string)($body['conversationId'] ?? ''));
+    if ($cid === '') { echo json_encode(['ok' => false, 'error' => 'Missing conversation id.']); return; }
+    list($msgs, $err) = cmsGhlMessages($cfg['token'], $cid);
+    if ($msgs === null) { echo json_encode(['ok' => false, 'error' => $err]); return; }
+    echo json_encode(['ok' => true, 'messages' => $msgs]);
+}
+
+function fourgeApiGhlSend($me, $body) {
+    $cfg = cmsGhlConfig();
+    if (!$cfg) { echo json_encode(['ok' => false, 'error' => 'Lead Generation isn\'t set up yet.']); return; }
+    $contactId = trim((string)($body['contactId'] ?? ''));
+    $text      = trim((string)($body['message'] ?? ''));
+    if ($contactId === '' || $text === '') { echo json_encode(['ok' => false, 'error' => 'Nothing to send.']); return; }
+    list($ok, $err, $type) = cmsGhlSendMessage($cfg['token'], $contactId, (string)($body['type'] ?? ''), $text);
+    echo json_encode(['ok' => $ok, 'error' => $err, 'channel' => $type]);
 }
 
 // Resolve Mailgun config from the encrypted DB secrets first (server-side,

@@ -312,6 +312,22 @@ input:checked+.tog-sl{background:var(--ember)}input:checked+.tog-sl:before{trans
 .lg-table th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)}
 .lg-table td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:top}
 .lg-table tr:hover td{background:var(--surface-2)}
+.lg-convo-row{cursor:pointer}.lg-convo-row td:first-child{font-weight:600}
+.lg-chat-ov{position:fixed;inset:0;z-index:12000;background:rgba(20,18,13,.55);display:flex;align-items:center;justify-content:center;padding:24px}
+.lg-chat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--sh-lg);width:100%;max-width:520px;height:min(80vh,680px);display:flex;flex-direction:column;overflow:hidden}
+.lg-chat-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+.lg-chat-head .n{font-weight:700;font-size:14px;color:var(--text)}
+.lg-chat-head .c{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.lg-chat-body{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px;background:var(--surface-2)}
+.lg-msg{max-width:78%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
+.lg-msg.in{align-self:flex-start;background:var(--surface-3);color:var(--text);border-bottom-left-radius:4px}
+.lg-msg.out{align-self:flex-end;background:var(--ember);color:#fff;border-bottom-right-radius:4px}
+.lg-msg-t{font-size:10px;color:var(--muted);margin-top:3px}
+.lg-msg.out .lg-msg-t{color:rgba(255,255,255,.8);text-align:right}
+.lg-chat-foot{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);align-items:flex-end;flex-shrink:0}
+.lg-chat-foot textarea{flex:1;resize:none;min-height:38px;max-height:120px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r);font-family:var(--font-sans);font-size:14px;background:var(--surface-3);color:var(--text);outline:none}
+.lg-chat-foot textarea:focus{border-color:var(--ember)}
+.lg-chat-empty{color:var(--muted);font-size:13px;text-align:center;margin:auto;padding:20px}
 .seo-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}.seo-dot.g{background:var(--green)}.seo-dot.y{background:var(--ember)}.seo-dot.r{background:var(--red)}
 .score-ring{display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:50%;border:4px solid;font-size:18px;font-weight:700}
 .score-ring.A{border-color:var(--green);color:var(--green)}.score-ring.B{border-color:var(--ember);color:var(--ember)}.score-ring.C{border-color:var(--red);color:var(--red)}
@@ -2174,7 +2190,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.51';
+const CMS_VERSION='1.14.52';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2227,6 +2243,7 @@ function switchPropsTab(){}
 const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','users':'p-users'};
 function navTo(name){goPanel(NAV_MAP[name]||('p-'+name));}
 function goPanel(id){
+  closeConversation();   // dismiss any open Lead Generation chat when switching modules
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
   const p=document.getElementById(id);if(p){p.classList.add('on');if(window.fxPanelIn)window.fxPanelIn(p);}
   document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
@@ -5824,12 +5841,13 @@ function renderLeadGen(d){
     contacts.forEach(c=>{ h+='<tr><td>'+esc(c.name||'—')+'</td><td>'+esc(c.email||'')+'</td><td>'+esc(c.phone||'')+'</td><td>'+esc(c.source||'')+'</td><td>'+esc(fmt(c.date))+'</td></tr>'; });
     h+='</tbody></table></div>';
   }
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:28px 0 10px"><h2 style="font-size:15px;font-weight:700;color:var(--text);margin:0">Recent conversations</h2>'
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:28px 0 10px"><div><h2 style="font-size:15px;font-weight:700;color:var(--text);margin:0">Recent conversations</h2>'
+    +(convos.length?'<div style="font-size:11px;color:var(--muted);margin-top:2px">Click a conversation to open the thread and reply.</div>':'')+'</div>'
     +(convos.length?'<button class="fd-btn-ghost" style="font-size:12px" onclick="leadGenCsv(\'conversations\')">Download CSV</button>':'')+'</div>';
   if(!convos.length) h+='<div class="info-b">No recent conversations.</div>';
   else{
     h+='<div style="overflow-x:auto"><table class="lg-table"><thead><tr><th>Contact</th><th>Last message</th><th>Channel</th><th>When</th></tr></thead><tbody>';
-    convos.forEach(v=>{ h+='<tr><td>'+esc(v.name||'—')+'</td><td>'+esc(String(v.last||'').slice(0,90))+'</td><td>'+esc(v.type||'')+'</td><td>'+esc(fmt(v.date))+'</td></tr>'; });
+    convos.forEach(v=>{ h+='<tr class="lg-convo-row" onclick="openConversation('+JSON.stringify(v.id).replace(/"/g,'&quot;')+')" title="Open conversation"><td>'+esc(v.name||'—')+'</td><td>'+esc(String(v.last||'').slice(0,90))+'</td><td>'+esc(v.type||'')+'</td><td>'+esc(fmt(v.date))+'</td></tr>'; });
     h+='</tbody></table></div>';
   }
   return h;
@@ -5844,6 +5862,64 @@ function leadGenCsv(kind){
   const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a'); a.href=url; a.download=name+'.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+// ── Conversation thread + live reply ─────────────────────────────────────────
+// Click a conversation to open its message thread in a modal, then reply. The
+// server (ghl_messages / ghl_send) holds the token and talks to the lead system;
+// the thread polls every few seconds so a live chat updates on its own.
+let _lgChat=null;   // {id, contactId, type, name, timer}
+function openConversation(id){
+  const d=_leadGenData; if(!d) return;
+  const v=(d.conversations||[]).find(x=>x.id===id); if(!v) return;
+  closeConversation();
+  _lgChat={id:v.id, contactId:v.contactId||'', type:v.type||'', name:v.name||'Contact', timer:null};
+  const ov=document.createElement('div'); ov.className='lg-chat-ov'; ov.id='lg-chat-ov';
+  ov.onclick=e=>{ if(e.target===ov) closeConversation(); };
+  ov.innerHTML='<div class="lg-chat" role="dialog" aria-label="Conversation">'
+    +'<div class="lg-chat-head"><div style="flex:1;min-width:0"><div class="n">'+esc(v.name||'Contact')+'</div>'
+    +(v.type?'<div class="c">'+esc(v.type)+'</div>':'')+'</div>'
+    +'<button class="ib" onclick="closeConversation()" aria-label="Close"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>'
+    +'<div class="lg-chat-body" id="lg-chat-body"><div class="lg-chat-empty">Loading conversation…</div></div>'
+    +'<div class="lg-chat-foot">'
+    +'<textarea id="lg-chat-input" placeholder="Type a reply… (⌘/Ctrl+Enter to send)" onkeydown="if(event.key===\'Enter\'&&(event.metaKey||event.ctrlKey)){event.preventDefault();sendReply();}"></textarea>'
+    +'<button class="fd-btn-primary" id="lg-chat-send" onclick="sendReply()">Send</button>'
+    +'</div></div>';
+  document.body.appendChild(ov);
+  loadThread(true);
+  _lgChat.timer=setInterval(function(){ loadThread(false); }, 6000);
+}
+function closeConversation(){
+  if(_lgChat&&_lgChat.timer) clearInterval(_lgChat.timer);
+  const ov=document.getElementById('lg-chat-ov'); if(ov) ov.remove();
+  _lgChat=null;
+}
+async function loadThread(showLoading){
+  if(!_lgChat) return;
+  const body=document.getElementById('lg-chat-body'); if(!body) return;
+  try{
+    const d=await apiCall('ghl_messages',{conversationId:_lgChat.id});
+    if(!_lgChat||!document.getElementById('lg-chat-body')) return;   // closed while loading
+    const msgs=(d&&d.messages)||[];
+    const fmt=s=>{ if(!s)return''; const t=new Date(s); return isNaN(t)?'':t.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); };
+    const rows=msgs.map(m=>{ const b=String(m.body||'').trim(); if(!b) return ''; return '<div class="lg-msg '+(m.inbound?'in':'out')+'">'+esc(b)+'<div class="lg-msg-t">'+esc(fmt(m.date))+'</div></div>'; }).filter(Boolean).join('');
+    const atBottom = body.scrollHeight-body.scrollTop-body.clientHeight < 40;
+    body.innerHTML = rows || '<div class="lg-chat-empty">No messages yet. Send the first one below.</div>';
+    if(showLoading||atBottom) body.scrollTop=body.scrollHeight;
+  }catch(e){ if(showLoading && body) body.innerHTML='<div class="lg-chat-empty">'+esc(e.message||'Could not load this conversation.')+'</div>'; }
+}
+async function sendReply(){
+  if(!_lgChat) return;
+  const inp=document.getElementById('lg-chat-input'), btn=document.getElementById('lg-chat-send');
+  const text=((inp&&inp.value)||'').trim(); if(!text) return;
+  if(!_lgChat.contactId){ toast('Can’t reply — this conversation has no linked contact','err'); return; }
+  if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  try{
+    const d=await apiCall('ghl_send',{contactId:_lgChat.contactId, type:_lgChat.type, message:text});
+    if(d&&d.ok){ if(inp) inp.value=''; await loadThread(true); }
+    else toast((d&&d.error)||'Message not sent','err');
+  }catch(e){ toast('Message not sent: '+e.message,'err'); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='Send'; } }
 }
 async function disableRecaptcha(){
   if(!_site.recaptcha||!_site.recaptcha.enabled){ toast('reCAPTCHA is already off'); return; }
