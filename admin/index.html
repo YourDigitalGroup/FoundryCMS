@@ -2204,7 +2204,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.54';
+const CMS_VERSION='1.14.55';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3490,7 +3490,7 @@ function formsRuntimeAssets(){
     +'document.addEventListener("click",function(e){var b=e.target.closest(".ff-prev,.ff-next");if(b){var f=b.closest(".foundry-form");if(f)ffPage(f,parseInt(b.getAttribute("data-dir")));}});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
     +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
-    +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3");'
+    +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3")||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||"";'
     +'if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});});}catch(e){}}'
     +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
     +'btn.disabled=true;btn.textContent="Sending…";'
@@ -4459,7 +4459,7 @@ function ffRenderForm(form){
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok='';var rcV3=form.getAttribute('data-rc-v3');if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});});}catch(e){}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});});}catch(e){}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
@@ -5174,6 +5174,54 @@ async function faviconApplyAll(silent){
     }catch(e){ console.warn('Favicon apply failed for '+fp,e.message); failed++; }
   }
   toast(done?('Favicon '+(url?'set on':'removed from')+' '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated','ok');
+}
+
+// ── reCAPTCHA v3 site-wide injection ──────────────────────────────
+// The v3 badge + token used to depend on each form's own baked-in <script>,
+// which was often stale (a form placed before reCAPTCHA was turned on has no
+// v3 markup) — so the badge never showed and every submission arrived with an
+// empty token, which the server (correctly) rejects as a bot. This injects a
+// managed block into EVERY page's <head> instead:
+//   1. loads Google's v3 api.js (?render=KEY) → the badge shows site-wide;
+//   2. stamps data-rc-v3="KEY" onto every .foundry-form on load, so the
+//      existing submit handler fetches a real token — no need to re-render forms.
+// Idempotent (replaces any prior managed block) and removed when v3 is off.
+function rcInjectIntoHtml(html){
+  const doc=new DOMParser().parseFromString(String(html||''),'text/html');
+  const head=doc.head||doc.documentElement;
+  doc.querySelectorAll('[data-fourge-rc]').forEach(el=>el.remove());
+  const rc=(_site&&_site.recaptcha)||{};
+  if(rc.enabled && rc.siteKey && rc.version==='v3'){
+    const key=String(rc.siteKey);
+    const boot=doc.createElement('script'); boot.setAttribute('data-fourge-rc','');
+    boot.textContent='window.__fourgeRcSiteKey='+JSON.stringify(key)+';window.__fourgeRcV3=true;'
+      +'document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll(".foundry-form").forEach(function(f){if(!f.getAttribute("data-rc-v3"))f.setAttribute("data-rc-v3",'+JSON.stringify(key)+');});});';
+    head.appendChild(boot);
+    // Load Google's v3 script for the badge — but only if the page doesn't
+    // already carry one (a placed form injects its own), to avoid a double load.
+    if(!doc.querySelector('script[src*="recaptcha/api.js"]')){
+      const s=doc.createElement('script'); s.setAttribute('data-fourge-rc',''); s.async=true; s.defer=true;
+      s.src='https://www.google.com/recaptcha/api.js?render='+encodeURIComponent(key);
+      head.appendChild(s);
+    }
+  }
+  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+}
+async function rcApplyAll(silent){
+  if(!canCallApi()){ if(!silent) toast('Sign in again to apply','err'); return; }
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList(); if(!pages.length){ if(!silent) toast('No pages found','err'); return; }
+  let done=0,failed=0;
+  for(const p of pages){
+    const fp=p.path||p.file; if(!fp||!veIsSafePath(fp)) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
+      await apiCall('write_file',{path:fp,content:rcInjectIntoHtml(html)});
+      done++;
+    }catch(e){ console.warn('reCAPTCHA apply failed for '+fp,e.message); failed++; }
+  }
+  if(!silent) toast(done?('reCAPTCHA applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated', done?'ok':'err');
+  return {done,failed};
 }
 
 // ── GO LIVE — find & replace a URL across every site file ─────────
@@ -6047,9 +6095,13 @@ async function saveRecaptcha(){
   _site.recaptcha.threshold=threshold;               // server enforces this for v3 scores
   try{
     await saveSiteInfo();
-    toast(siteKey?'reCAPTCHA saved — forms are now protected ✓':'reCAPTCHA keys cleared','ok');
     const rcSec=document.getElementById('s-rc-secret');if(rcSec){rcSec.value='';rcSec.placeholder='Secret saved on server';}
     if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();  // refresh the add-on card (badge/state)
+    // Publish to every page in one step (like Favicon): v3 injects the badge
+    // script + token wiring into each page's <head>; clearing or v2 strips it.
+    const r=await rcApplyAll(true);
+    if(siteKey && version==='v3') toast('reCAPTCHA v3 saved & applied to '+((r&&r.done)||0)+' page(s) — the badge shows bottom-right ✓','ok');
+    else toast(siteKey?'reCAPTCHA saved — forms are now protected ✓':'reCAPTCHA keys cleared','ok');
   }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 async function saveRepoOverride(){
