@@ -574,6 +574,15 @@ function cmsRecaptchaThreshold() {
 }
 
 function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
+    // Every rejection is logged with its exact cause so a misconfiguration is
+    // diagnosable from the server error log (the visitor still sees only a
+    // generic message). Common error-codes: 'invalid-input-secret' (wrong/mixed
+    // v2↔v3 secret), 'invalid-input-response' (bad/expired token, or a v2 key
+    // used for v3), 'timeout-or-duplicate' (token reused/stale).
+    if ($token === '' || $token === null) {
+        error_log('Fourge reCAPTCHA: no token received from the form (the reCAPTCHA script likely did not load on the page — check the badge is showing).');
+        return false;
+    }
     $ch = curl_init('https://www.google.com/recaptcha/api/siteverify');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -584,12 +593,20 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
     ]);
     $res = curl_exec($ch);
     curl_close($ch);
-    if (!$res) return false;
+    if (!$res) { error_log('Fourge reCAPTCHA: no response from Google siteverify (network/outbound blocked).'); return false; }
     $data = json_decode($res, true);
-    if (empty($data['success'])) return false;
+    if (empty($data['success'])) {
+        $codes = isset($data['error-codes']) ? implode(', ', (array)$data['error-codes']) : 'unknown';
+        error_log('Fourge reCAPTCHA: verification failed — ' . $codes);
+        return false;
+    }
     // reCAPTCHA v3 returns a 0.0–1.0 score; enforce the configured threshold.
     // v2 (checkbox) returns no score, so a successful verification is enough.
-    if (isset($data['score'])) return ((float)$data['score']) >= (float)$threshold;
+    if (isset($data['score'])) {
+        $ok = ((float)$data['score']) >= (float)$threshold;
+        if (!$ok) error_log('Fourge reCAPTCHA: score ' . $data['score'] . ' is below the threshold ' . $threshold . ' — lower the threshold in Plugins → reCAPTCHA if legitimate visitors are blocked.');
+        return $ok;
+    }
     return true;
 }
 

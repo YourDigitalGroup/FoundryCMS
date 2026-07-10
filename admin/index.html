@@ -796,6 +796,13 @@ textarea.fb-input{resize:vertical}
 .tlp-src-row span{flex:1;font-weight:500}
 .tlp-src-file{font-family:var(--font-mono);font-size:11px;color:var(--muted);background:var(--surface-3);padding:2px 7px;border-radius:4px}
 .tlp-loading{padding:20px;text-align:center;color:var(--muted);font-size:14px}
+.tlp-gen-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.tlp-gen-row:last-child{border-bottom:none}
+.tlp-gen-t{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tlp-gen-row .tlp-src-file{display:inline-block;margin-top:3px}
+.tlp-gen-actions{display:flex;gap:6px;flex-shrink:0}
+.tlp-gen-actions .fd-btn-ghost{font-size:12px;padding:5px 10px}
+.tlp-gen-del{color:var(--red)}
 /* Architect-only blocks (GitHub + secret keys) stay hidden until applyRole() confirms the Architect account */
 .architect-only{display:none}
 .tlp-card{border:1px solid var(--border);border-radius:11px;padding:16px;margin-bottom:12px;background:var(--surface)}
@@ -1404,6 +1411,11 @@ textarea.fb-input{resize:vertical}
           </div>
           <button class="fd-btn-primary" onclick="generateTLPs()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z"/></svg> Generate City Pages</button>
           <div id="tlp-preview-area"></div>
+          <div class="pe-side-card" id="tlp-generated-card" style="margin-top:20px">
+            <div class="pe-side-title">Generated Pages <span id="tlp-gen-count" style="font-weight:600;color:var(--muted)"></span></div>
+            <div style="font-size:11px;color:var(--muted);margin:2px 0 12px">Your city landing pages live here — kept out of the main Pages list so it stays clean. They're still indexed and in your sitemap. Edit, view, or delete them below.</div>
+            <div id="tlp-generated-list"></div>
+          </div>
         </div>
       </div>
 
@@ -2192,7 +2204,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.53';
+const CMS_VERSION='1.14.55';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2387,7 +2399,7 @@ async function loadDash(){
   const greet=(hr<12?'Good morning':hr<17?'Good afternoon':'Good evening')+(firstName?', '+capitalize(firstName):'')+'.'
   const greetEl=document.getElementById('dash-greeting');if(greetEl)greetEl.textContent=greet;
   updateUserDisplay();
-  try{await loadPages();const pg=getPageList();const stP=document.getElementById('st-pages');if(stP)stP.textContent=pg.length;const niP=document.getElementById('ni-pg-count');if(niP)niP.textContent=pg.length;
+  try{await loadPages();const pg=getVisiblePages();const stP=document.getElementById('st-pages');if(stP)stP.textContent=pg.length;const niP=document.getElementById('ni-pg-count');if(niP)niP.textContent=pg.length;
     const tbody=document.getElementById('dash-pages-body');
     if(tbody){if(!pg.length){
         tbody.innerHTML='<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No pages yet. Use Site Foundry to import.</div>';
@@ -3478,7 +3490,7 @@ function formsRuntimeAssets(){
     +'document.addEventListener("click",function(e){var b=e.target.closest(".ff-prev,.ff-next");if(b){var f=b.closest(".foundry-form");if(f)ffPage(f,parseInt(b.getAttribute("data-dir")));}});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
     +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
-    +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3");'
+    +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3")||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||"";'
     +'if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});});}catch(e){}}'
     +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
     +'btn.disabled=true;btn.textContent="Sending…";'
@@ -3613,14 +3625,58 @@ let _tlpPreviews=[];   // generated previews awaiting approval
 
 function initTLP(){
   renderTLPSourceList();
+  renderTLPGenerated();
   const out=document.getElementById('tlp-preview-area');
   if(out) out.innerHTML='';
+}
+
+// The generated-pages manager lives here (not in the main Pages list). Lists every
+// TLP page with Edit (open in the page editor), View (open the live page), and Delete.
+function renderTLPGenerated(){
+  const wrap=document.getElementById('tlp-generated-list'); if(!wrap) return;
+  const tlps=getTlpPages();
+  const cnt=document.getElementById('tlp-gen-count'); if(cnt) cnt.textContent=tlps.length?('· '+tlps.length):'';
+  if(!tlps.length){ wrap.innerHTML='<p style="color:var(--muted);font-size:13px;margin:0">No city pages yet. Generate some above and they\'ll be managed here.</p>'; return; }
+  wrap.innerHTML=tlps.map(function(p){
+    const pg=_pages[p.id]||{};
+    const loc=[pg.city,pg.state].filter(Boolean).join(', ');
+    return '<div class="tlp-gen-row">'
+      +'<div style="flex:1;min-width:0"><div class="tlp-gen-t">'+esc(decodeHtml(p.label||p.id))+(loc?' <span style="font-weight:500;color:var(--muted);font-size:11px">· '+esc(loc)+'</span>':'')+'</div>'
+      +'<code class="tlp-src-file">'+esc(p.file||'')+'</code></div>'
+      +'<div class="tlp-gen-actions">'
+      +'<button class="fd-btn-ghost" onclick="tlpEditPage(\''+esc(p.id)+'\')">Edit</button>'
+      +'<button class="fd-btn-ghost" onclick="tlpViewPage(\''+esc(p.id)+'\')">View</button>'
+      +'<button class="fd-btn-ghost tlp-gen-del" onclick="tlpDeletePage(\''+esc(p.id)+'\')">Delete</button>'
+      +'</div></div>';
+  }).join('');
+}
+function tlpEditPage(id){ if(!_pages[id]) return; veSelectPage(id); navTo('pages'); }
+function tlpViewPage(id){
+  const pg=_pages[id]; if(!pg) return;
+  const base=(_site&&_site.website||'').replace(/\/$/,'');
+  const path=cleanUrlPath(pg.file||pg.path||'');
+  window.open((base?base+'/':'/')+path,'_blank','noopener');
+}
+async function tlpDeletePage(id){
+  const pg=_pages[id]; if(!pg) return;
+  const fp=pg.path||pg.file;
+  if(!(await uiConfirm('This permanently deletes '+fp+' from the server and removes it from your sitemap. This can’t be undone.','Delete page','Delete city page?'))) return;
+  if(!canCallApi()){ toast('Sign in again to delete','err'); return; }
+  try{
+    await apiCall('delete_file',{path:fp});
+    delete _pages[id]; delete _veHtml[id]; delete _veOrigHtml[id];
+    await savePagesJson();
+    await updateSitemap();
+    if(_curPage===id) _curPage='';
+    renderTLPGenerated();
+    toast('City page deleted','ok');
+  }catch(e){ toast('Delete failed: '+e.message,'err'); }
 }
 
 function renderTLPSourceList(){
   const wrap=document.getElementById('tlp-source-list');
   if(!wrap)return;
-  const pages=getPageList();
+  const pages=getVisiblePages();   // don't offer a generated TLP as a source to localize
   if(!pages.length){ wrap.innerHTML='<p style="color:var(--muted);font-size:13px">No pages found. Create or import pages first.</p>'; return; }
   wrap.innerHTML=pages.map(p=>
     '<label class="tlp-src-row"><input type="checkbox" class="tlp-src-chk" value="'+esc(p.id)+'"> '
@@ -4403,7 +4459,7 @@ function ffRenderForm(form){
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok='';var rcV3=form.getAttribute('data-rc-v3');if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});});}catch(e){}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});});}catch(e){}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
@@ -5118,6 +5174,54 @@ async function faviconApplyAll(silent){
     }catch(e){ console.warn('Favicon apply failed for '+fp,e.message); failed++; }
   }
   toast(done?('Favicon '+(url?'set on':'removed from')+' '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated','ok');
+}
+
+// ── reCAPTCHA v3 site-wide injection ──────────────────────────────
+// The v3 badge + token used to depend on each form's own baked-in <script>,
+// which was often stale (a form placed before reCAPTCHA was turned on has no
+// v3 markup) — so the badge never showed and every submission arrived with an
+// empty token, which the server (correctly) rejects as a bot. This injects a
+// managed block into EVERY page's <head> instead:
+//   1. loads Google's v3 api.js (?render=KEY) → the badge shows site-wide;
+//   2. stamps data-rc-v3="KEY" onto every .foundry-form on load, so the
+//      existing submit handler fetches a real token — no need to re-render forms.
+// Idempotent (replaces any prior managed block) and removed when v3 is off.
+function rcInjectIntoHtml(html){
+  const doc=new DOMParser().parseFromString(String(html||''),'text/html');
+  const head=doc.head||doc.documentElement;
+  doc.querySelectorAll('[data-fourge-rc]').forEach(el=>el.remove());
+  const rc=(_site&&_site.recaptcha)||{};
+  if(rc.enabled && rc.siteKey && rc.version==='v3'){
+    const key=String(rc.siteKey);
+    const boot=doc.createElement('script'); boot.setAttribute('data-fourge-rc','');
+    boot.textContent='window.__fourgeRcSiteKey='+JSON.stringify(key)+';window.__fourgeRcV3=true;'
+      +'document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll(".foundry-form").forEach(function(f){if(!f.getAttribute("data-rc-v3"))f.setAttribute("data-rc-v3",'+JSON.stringify(key)+');});});';
+    head.appendChild(boot);
+    // Load Google's v3 script for the badge — but only if the page doesn't
+    // already carry one (a placed form injects its own), to avoid a double load.
+    if(!doc.querySelector('script[src*="recaptcha/api.js"]')){
+      const s=doc.createElement('script'); s.setAttribute('data-fourge-rc',''); s.async=true; s.defer=true;
+      s.src='https://www.google.com/recaptcha/api.js?render='+encodeURIComponent(key);
+      head.appendChild(s);
+    }
+  }
+  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+}
+async function rcApplyAll(silent){
+  if(!canCallApi()){ if(!silent) toast('Sign in again to apply','err'); return; }
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList(); if(!pages.length){ if(!silent) toast('No pages found','err'); return; }
+  let done=0,failed=0;
+  for(const p of pages){
+    const fp=p.path||p.file; if(!fp||!veIsSafePath(fp)) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
+      await apiCall('write_file',{path:fp,content:rcInjectIntoHtml(html)});
+      done++;
+    }catch(e){ console.warn('reCAPTCHA apply failed for '+fp,e.message); failed++; }
+  }
+  if(!silent) toast(done?('reCAPTCHA applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated', done?'ok':'err');
+  return {done,failed};
 }
 
 // ── GO LIVE — find & replace a URL across every site file ─────────
@@ -5991,9 +6095,13 @@ async function saveRecaptcha(){
   _site.recaptcha.threshold=threshold;               // server enforces this for v3 scores
   try{
     await saveSiteInfo();
-    toast(siteKey?'reCAPTCHA saved — forms are now protected ✓':'reCAPTCHA keys cleared','ok');
     const rcSec=document.getElementById('s-rc-secret');if(rcSec){rcSec.value='';rcSec.placeholder='Secret saved on server';}
     if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();  // refresh the add-on card (badge/state)
+    // Publish to every page in one step (like Favicon): v3 injects the badge
+    // script + token wiring into each page's <head>; clearing or v2 strips it.
+    const r=await rcApplyAll(true);
+    if(siteKey && version==='v3') toast('reCAPTCHA v3 saved & applied to '+((r&&r.done)||0)+' page(s) — the badge shows bottom-right ✓','ok');
+    else toast(siteKey?'reCAPTCHA saved — forms are now protected ✓':'reCAPTCHA keys cleared','ok');
   }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 async function saveRepoOverride(){
@@ -6501,6 +6609,12 @@ function getPageList(){
     path: _pages[id]?.path||null,
   }));
 }
+// Pages shown in the everyday management lists (Pages editor + dashboard).
+// Targeted Landing Pages are excluded here and managed in the TLP module instead,
+// so they don't clutter the list. SEO, sitemap, and apply-to-all sweeps keep
+// using getPageList() so TLPs stay real, indexed, published pages.
+function getVisiblePages(){ return getPageList().filter(p=>!(_pages[p.id]&&_pages[p.id].tlp)); }
+function getTlpPages(){ return getPageList().filter(p=>_pages[p.id]&&_pages[p.id].tlp); }
 
 // Derive a stable page id from a relative path. MUST match the Site Foundry
 // import scheme so a scanned file and its imported counterpart share one entry
@@ -6643,11 +6757,14 @@ function savePagesBackup(){
 // ── INIT ────────────────────────────────────────────────────────
 async function initPages(){
   await loadPages();
-  const pages=getPageList();
+  const all=getPageList(), visible=getVisiblePages();
+  // Honor a page chosen before navigating in (e.g. Edit from the dashboard or the
+  // TLP module); otherwise open home / the first non-TLP page.
+  const preferred=(_curPage&&_pages[_curPage])?_curPage:null;
   renderVePageList();
   veApplyDeviceSize(); // size the 16:9 desktop viewport before content loads
-  if(pages.length){
-    const autoId=_pages['home']?'home':pages[0].id;
+  if(all.length){
+    const autoId=preferred||(_pages['home']?'home':((visible[0]||all[0]).id));
     _curPage=autoId;
     renderVePageList();
     veLoadPage(autoId);
@@ -6658,7 +6775,9 @@ async function initPages(){
 
 // ── PAGE LIST ───────────────────────────────────────────────────
 function renderVePageList(){
-  const pages=getPageList();
+  // Hide Targeted Landing Pages from the sidebar — except the one currently open,
+  // so you can still see what you're editing if you opened it from the TLP module.
+  const pages=getPageList().filter(p=>!(_pages[p.id]&&_pages[p.id].tlp)||p.id===_curPage);
   const el=document.getElementById('ve-page-items');
   if(!el)return;
   if(!pages.length){
@@ -6683,7 +6802,7 @@ function renderVePageList(){
 }
 // Keep the sidebar "Pages" badge (and dashboard stat) in sync with the live count.
 function updatePageCount(){
-  const n=getPageList().length;
+  const n=getVisiblePages().length;
   const niP=document.getElementById('ni-pg-count'); if(niP) niP.textContent=n;
   const stP=document.getElementById('st-pages'); if(stP) stP.textContent=n;
 }
@@ -7008,7 +7127,7 @@ async function deletePageNow(){
     delete _pages[pid]; delete _veHtml[pid]; delete _veOrigHtml[pid];
     await savePagesJson();
     closeM('m-pagesettings');
-    if(_curPage===pid){ const rest=getPageList(); _curPage=rest[0]?rest[0].id:''; }
+    if(_curPage===pid){ const rest=getVisiblePages(); _curPage=rest[0]?rest[0].id:''; }
     renderVePageList();
     if(_curPage) veLoadPage(_curPage); else veShowEmpty('No pages. Upload .html files and they appear here.');
     toast('Page deleted','ok');
