@@ -584,19 +584,31 @@ function cmsRecaptchaLog($rec) {
     } catch (Throwable $e) {}
 }
 
+// Verify a submission's reCAPTCHA token and decide whether to BLOCK it. Returns one
+// of three outcomes (all recorded to the debug file so the CMS can show them):
+//   'passed'             — verified OK (v3 score >= threshold, or v2 success).
+//   'blocked'            — verified AND scored below the threshold: a real bot.
+//   'allowed_unverified' — verification could NOT run (no token, wrong keys, Google
+//                          unreachable). The submission is ALLOWED so a legitimate
+//                          lead is never lost just because reCAPTCHA is misconfigured
+//                          — a form is only ever BLOCKED when Google actively scores
+//                          it as a bot. The exact reason is recorded so the setup
+//                          problem is visible in Plugins → reCAPTCHA (and can be fixed,
+//                          which turns real protection back on automatically).
+// Common Google error-codes: 'invalid-input-secret' (wrong/mixed v2↔v3 secret),
+// 'invalid-input-response' (bad/expired token, or a v2 key used for v3),
+// 'timeout-or-duplicate' (token reused/stale).
 function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
-    // Common Google error-codes: 'invalid-input-secret' (wrong/mixed v2↔v3
-    // secret), 'invalid-input-response' (bad/expired token, or a v2 key used for
-    // v3), 'timeout-or-duplicate' (token reused/stale).
-    $rec = ['at'=>date('c'), 'ok'=>false, 'reason'=>'', 'score'=>null, 'threshold'=>(float)$threshold, 'tokenReceived'=>($token!=='' && $token!==null), 'hostname'=>''];
-    $finish = function ($ok, $reason) use (&$rec) {
-        $rec['ok'] = $ok; $rec['reason'] = $reason;
-        error_log('Fourge reCAPTCHA: ' . ($ok ? 'passed' : 'REJECTED') . ' — ' . $reason);
+    $rec = ['at'=>date('c'), 'outcome'=>'', 'ok'=>false, 'reason'=>'', 'score'=>null, 'threshold'=>(float)$threshold, 'tokenReceived'=>($token!=='' && $token!==null), 'hostname'=>''];
+    $finish = function ($outcome, $reason) use (&$rec) {
+        $rec['outcome'] = $outcome; $rec['reason'] = $reason; $rec['ok'] = ($outcome === 'passed');
+        error_log('Fourge reCAPTCHA: ' . strtoupper($outcome) . ' — ' . $reason);
         cmsRecaptchaLog($rec);
-        return $ok;
+        return $outcome;
     };
+    $letThrough = ' The submission was let through so a real lead is not lost — but reCAPTCHA is NOT protecting this form until this is fixed.';
     if ($token === '' || $token === null) {
-        return $finish(false, 'No token received from the form — the reCAPTCHA script did not load on the page (the badge is not showing). In Plugins → reCAPTCHA, click Save to publish it to your pages, and make sure the keys are reCAPTCHA v3 keys.');
+        return $finish('allowed_unverified', 'No token received from the form — the reCAPTCHA script did not load on the page (the badge is not showing). In Plugins → reCAPTCHA, click Save to publish it to your pages, and make sure the keys are reCAPTCHA v3 keys.' . $letThrough);
     }
     $ch = curl_init('https://www.google.com/recaptcha/api/siteverify');
     curl_setopt_array($ch, [
@@ -608,7 +620,7 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
     ]);
     $res = curl_exec($ch); $curlErr = curl_error($ch);
     curl_close($ch);
-    if (!$res) return $finish(false, 'No response from Google siteverify' . ($curlErr ? ' (' . $curlErr . ')' : '') . ' — the server may be blocking outbound HTTPS.');
+    if (!$res) return $finish('allowed_unverified', 'No response from Google siteverify' . ($curlErr ? ' (' . $curlErr . ')' : '') . ' — the server may be blocking outbound HTTPS.' . $letThrough);
     $data = json_decode($res, true);
     if (!empty($data['hostname'])) $rec['hostname'] = $data['hostname'];
     if (isset($data['score']))     $rec['score']    = (float)$data['score'];
@@ -618,17 +630,17 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
         if (strpos($codes, 'invalid-input-secret') !== false)        $hint = ' — the SECRET key is wrong, or a v2 secret was pasted for a v3 site.';
         elseif (strpos($codes, 'invalid-input-response') !== false)  $hint = ' — the token was invalid/expired, or the SITE key is a v2 key being used with v3. Both keys must come from a reCAPTCHA v3 registration.';
         elseif (strpos($codes, 'timeout-or-duplicate') !== false)    $hint = ' — the token expired or was reused.';
-        return $finish(false, 'Google rejected the verification: ' . $codes . $hint);
+        return $finish('allowed_unverified', 'Google rejected the verification: ' . $codes . $hint . $letThrough);
     }
-    // reCAPTCHA v3 returns a 0.0–1.0 score; enforce the configured threshold.
-    // v2 (checkbox) returns no score, so a successful verification is enough.
+    // reCAPTCHA v3 returns a 0.0–1.0 score; the threshold check is the ONLY place a
+    // submission is actually blocked. v2 (checkbox) returns no score, so a successful
+    // verification is enough.
     if (isset($data['score'])) {
-        $ok = ((float)$data['score']) >= (float)$threshold;
-        return $finish($ok, $ok
-            ? ('passed with score ' . $data['score'] . ' (threshold ' . $threshold . ')')
-            : ('score ' . $data['score'] . ' is below your threshold ' . $threshold . ' — lower it in Plugins → reCAPTCHA if real visitors are blocked.'));
+        if (((float)$data['score']) >= (float)$threshold)
+            return $finish('passed', 'passed with score ' . $data['score'] . ' (threshold ' . $threshold . ')');
+        return $finish('blocked', 'score ' . $data['score'] . ' is below your threshold ' . $threshold . ' — this looks like a bot. Lower the threshold in Plugins → reCAPTCHA if real visitors are being blocked.');
     }
-    return $finish(true, 'passed (v2 checkbox — no score)');
+    return $finish('passed', 'passed (v2 checkbox — no score)');
 }
 
 // Admin diagnostic: report the current reCAPTCHA config + the outcome of the most
@@ -1016,12 +1028,16 @@ function cmsSendForm($body) {
     $formId  = $body['formId']  ?? '';
     $rcToken = $body['recaptcha'] ?? '';
 
-    // reCAPTCHA verification (only enforced if a secret is configured in site.json)
+    // reCAPTCHA (only when a secret is configured in site.json). The check ALWAYS
+    // runs so its outcome is recorded for the diagnostic, but a submission is blocked
+    // ONLY when Google actively scores it as a bot ('blocked'). A misconfiguration
+    // (no token / wrong keys / Google unreachable) returns 'allowed_unverified' and
+    // the lead is let through, so a broken setup never silently loses real leads.
     $rcSecret = cmsRecaptchaSecret();
     if ($rcSecret) {
-        if (!$rcToken || !cmsVerifyRecaptcha($rcSecret, $rcToken, cmsRecaptchaThreshold())) {
+        if (cmsVerifyRecaptcha($rcSecret, $rcToken, cmsRecaptchaThreshold()) === 'blocked') {
             http_response_code(400);
-            echo json_encode(['error' => 'reCAPTCHA verification failed. Please try again.']); return;
+            echo json_encode(['error' => 'Your submission looked automated and was blocked. Please try again.']); return;
         }
     }
 

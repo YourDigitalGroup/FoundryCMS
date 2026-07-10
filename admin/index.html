@@ -20,7 +20,7 @@
   --ember-soft:#FCE4DD;--ember-glow:rgba(219,53,22,.12);
   --dark:#1E1B15;--dark-2:#27231B;--dark-border:#2E2A22;
   --dark-fg:#F4F0E6;--dark-fg2:#B5AE9C;--dark-accent:#F0563A;
-  --green:#16A34A;--red:#E1483B;--red-soft:#FCEAE7;
+  --green:#16A34A;--red:#E1483B;--red-soft:#FCEAE7;--amber:#B45309;
   /* Sidebar is WHITE in Fourge */
   --sb-bg:#FFFFFF;--sb-border:#EEE8DF;
   --sb-text:#5A5547;--sb-text-hover:#1A1814;
@@ -45,7 +45,7 @@ html[data-theme="dark"]{
   --sb-bg:#1A1712;--sb-border:#2A251D;
   --sb-text:#B5AE9C;--sb-text-hover:#F4F0E6;
   --sb-active-bg:rgba(240,90,60,.18);--sb-active-text:#F47B5E;
-  --green:#34D27B;--red:#F0685B;--red-soft:rgba(240,104,91,.16);
+  --green:#34D27B;--red:#F0685B;--red-soft:rgba(240,104,91,.16);--amber:#F0A93B;
   --sh:0 1px 2px rgba(0,0,0,.4),0 2px 6px rgba(0,0,0,.5);
   --sh-md:0 4px 10px rgba(0,0,0,.45),0 12px 28px rgba(0,0,0,.55);
   --sh-lg:0 12px 24px rgba(0,0,0,.5),0 28px 64px rgba(0,0,0,.6);
@@ -2204,7 +2204,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.56';
+const CMS_VERSION='1.14.57';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3490,10 +3490,10 @@ function formsRuntimeAssets(){
     +'document.addEventListener("click",function(e){var b=e.target.closest(".ff-prev,.ff-next");if(b){var f=b.closest(".foundry-form");if(f)ffPage(f,parseInt(b.getAttribute("data-dir")));}});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
     +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
+    +'btn.disabled=true;btn.textContent="Sending…";'   // register the click first — never wait on reCAPTCHA to show feedback
     +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3")||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||"";'
-    +'if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});});}catch(e){}}'
+    +'if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});}catch(_e){res("");}}),new Promise(function(res){setTimeout(function(){res("");},4000);})]);}catch(e){rcTok="";}}'   // race a 4s timeout so a bad key can never freeze the form
     +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
-    +'btn.disabled=true;btn.textContent="Sending…";'
     +'try{var res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});'
     +'var d=await res.json();if(d.error)throw new Error(d.error);'
     +'msg.className="ff-msg ok";msg.style.display="";msg.textContent=form.getAttribute("data-confirm");form.querySelectorAll(".ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});}'
@@ -4459,7 +4459,7 @@ function ffRenderForm(form){
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});});}catch(e){}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
@@ -5809,10 +5809,13 @@ function rcRenderStatus(d){
   const kv=rows.map(r=>`<tr><td style="padding:3px 14px 3px 0;color:var(--muted);white-space:nowrap;vertical-align:top">${esc(r[0])}</td><td style="padding:3px 0;color:var(--text);word-break:break-word">${esc(String(r[1]))}</td></tr>`).join('');
   let banner='';
   if(last){
-    const ok=!!last.ok;
+    const outcome=last.outcome||(last.ok?'passed':'blocked');
     const when=last.at?new Date(last.at):null; const whenTxt=(when&&!isNaN(when))?when.toLocaleString():'';
-    const color=ok?'var(--green)':'var(--red)', bg=ok?'rgba(22,163,74,.10)':'rgba(225,72,59,.10)';
-    banner=`<div style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;background:${bg};color:${color}"><span style="font-weight:700">${ok?'✓':'✕'}</span><span style="word-break:break-word"><strong>Last submission ${ok?'passed':'was blocked'}</strong>${last.score!=null?' · score '+esc(String(last.score)):''}${whenTxt?' · '+esc(whenTxt):''}<br>${esc(last.reason||'')}</span></div>`;
+    let icon,color,bg,title;
+    if(outcome==='passed'){ icon='✓'; color='var(--green)'; bg='rgba(22,163,74,.10)'; title='Last submission passed'; }
+    else if(outcome==='blocked'){ icon='✕'; color='var(--red)'; bg='rgba(225,72,59,.10)'; title='Last submission was blocked as a bot'; }
+    else { icon='⚠'; color='var(--amber)'; bg='rgba(180,83,9,.12)'; title='Last submission went through — but reCAPTCHA isn’t protecting this form yet'; }
+    banner=`<div style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;background:${bg};color:${color}"><span style="font-weight:700">${icon}</span><span style="word-break:break-word"><strong>${esc(title)}</strong>${last.score!=null?' · score '+esc(String(last.score)):''}${whenTxt?' · '+esc(whenTxt):''}<br>${esc(last.reason||'')}</span></div>`;
   } else {
     banner='<div class="info-b" style="margin:0 0 10px">No form submission has been checked yet. Submit your form once, then click this again to see the exact result.</div>';
   }
