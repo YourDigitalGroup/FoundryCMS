@@ -177,7 +177,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
 $PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','send_test_email'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','send_test_email','recaptcha_status'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -234,6 +234,7 @@ try {
         case 'ghl_messages':    ob_end_clean(); fourgeApiGhlMessages($authUser, $body); break;
         case 'ghl_send':        ob_end_clean(); fourgeApiGhlSend($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
+        case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
@@ -573,15 +574,29 @@ function cmsRecaptchaThreshold() {
     } catch (Exception $e) { return 0.5; }
 }
 
+// Records the outcome of the most recent reCAPTCHA check to data/recaptcha-debug.json
+// (no secrets, no PII — just the verdict) so the CMS can show the exact reason in
+// Plugins → reCAPTCHA without the admin needing server-log access.
+function cmsRecaptchaLog($rec) {
+    try {
+        $dir = __DIR__ . '/../data';
+        if (is_dir($dir) && is_writable($dir)) @file_put_contents($dir . '/recaptcha-debug.json', json_encode($rec));
+    } catch (Throwable $e) {}
+}
+
 function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
-    // Every rejection is logged with its exact cause so a misconfiguration is
-    // diagnosable from the server error log (the visitor still sees only a
-    // generic message). Common error-codes: 'invalid-input-secret' (wrong/mixed
-    // v2↔v3 secret), 'invalid-input-response' (bad/expired token, or a v2 key
-    // used for v3), 'timeout-or-duplicate' (token reused/stale).
+    // Common Google error-codes: 'invalid-input-secret' (wrong/mixed v2↔v3
+    // secret), 'invalid-input-response' (bad/expired token, or a v2 key used for
+    // v3), 'timeout-or-duplicate' (token reused/stale).
+    $rec = ['at'=>date('c'), 'ok'=>false, 'reason'=>'', 'score'=>null, 'threshold'=>(float)$threshold, 'tokenReceived'=>($token!=='' && $token!==null), 'hostname'=>''];
+    $finish = function ($ok, $reason) use (&$rec) {
+        $rec['ok'] = $ok; $rec['reason'] = $reason;
+        error_log('Fourge reCAPTCHA: ' . ($ok ? 'passed' : 'REJECTED') . ' — ' . $reason);
+        cmsRecaptchaLog($rec);
+        return $ok;
+    };
     if ($token === '' || $token === null) {
-        error_log('Fourge reCAPTCHA: no token received from the form (the reCAPTCHA script likely did not load on the page — check the badge is showing).');
-        return false;
+        return $finish(false, 'No token received from the form — the reCAPTCHA script did not load on the page (the badge is not showing). In Plugins → reCAPTCHA, click Save to publish it to your pages, and make sure the keys are reCAPTCHA v3 keys.');
     }
     $ch = curl_init('https://www.google.com/recaptcha/api/siteverify');
     curl_setopt_array($ch, [
@@ -591,23 +606,48 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_TIMEOUT        => 10,
     ]);
-    $res = curl_exec($ch);
+    $res = curl_exec($ch); $curlErr = curl_error($ch);
     curl_close($ch);
-    if (!$res) { error_log('Fourge reCAPTCHA: no response from Google siteverify (network/outbound blocked).'); return false; }
+    if (!$res) return $finish(false, 'No response from Google siteverify' . ($curlErr ? ' (' . $curlErr . ')' : '') . ' — the server may be blocking outbound HTTPS.');
     $data = json_decode($res, true);
+    if (!empty($data['hostname'])) $rec['hostname'] = $data['hostname'];
+    if (isset($data['score']))     $rec['score']    = (float)$data['score'];
     if (empty($data['success'])) {
         $codes = isset($data['error-codes']) ? implode(', ', (array)$data['error-codes']) : 'unknown';
-        error_log('Fourge reCAPTCHA: verification failed — ' . $codes);
-        return false;
+        $hint = '';
+        if (strpos($codes, 'invalid-input-secret') !== false)        $hint = ' — the SECRET key is wrong, or a v2 secret was pasted for a v3 site.';
+        elseif (strpos($codes, 'invalid-input-response') !== false)  $hint = ' — the token was invalid/expired, or the SITE key is a v2 key being used with v3. Both keys must come from a reCAPTCHA v3 registration.';
+        elseif (strpos($codes, 'timeout-or-duplicate') !== false)    $hint = ' — the token expired or was reused.';
+        return $finish(false, 'Google rejected the verification: ' . $codes . $hint);
     }
     // reCAPTCHA v3 returns a 0.0–1.0 score; enforce the configured threshold.
     // v2 (checkbox) returns no score, so a successful verification is enough.
     if (isset($data['score'])) {
         $ok = ((float)$data['score']) >= (float)$threshold;
-        if (!$ok) error_log('Fourge reCAPTCHA: score ' . $data['score'] . ' is below the threshold ' . $threshold . ' — lower the threshold in Plugins → reCAPTCHA if legitimate visitors are blocked.');
-        return $ok;
+        return $finish($ok, $ok
+            ? ('passed with score ' . $data['score'] . ' (threshold ' . $threshold . ')')
+            : ('score ' . $data['score'] . ' is below your threshold ' . $threshold . ' — lower it in Plugins → reCAPTCHA if real visitors are blocked.'));
     }
-    return true;
+    return $finish(true, 'passed (v2 checkbox — no score)');
+}
+
+// Admin diagnostic: report the current reCAPTCHA config + the outcome of the most
+// recent submission check, so the exact reason a form is blocked is visible in the
+// CMS (Plugins → reCAPTCHA) without needing server-log access. Never returns keys.
+function fourgeApiRecaptchaStatus($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
+    $cfg = ['enabled' => false, 'version' => '', 'hasSecret' => false, 'hasSiteKey' => false, 'threshold' => cmsRecaptchaThreshold()];
+    try {
+        $site = json_decode(@file_get_contents(__DIR__ . '/../data/site.json'), true);
+        $rc = ($site['recaptcha'] ?? []);
+        $cfg['enabled']    = !empty($rc['enabled']);
+        $cfg['version']    = (string)($rc['version'] ?? '');
+        $cfg['hasSecret']  = !empty($rc['secret']);
+        $cfg['hasSiteKey'] = !empty($rc['siteKey']);
+    } catch (Throwable $e) {}
+    $last = null;
+    try { $j = @file_get_contents(__DIR__ . '/../data/recaptcha-debug.json'); if ($j) $last = json_decode($j, true); } catch (Throwable $e) {}
+    echo json_encode(['ok' => true, 'config' => $cfg, 'last' => $last]);
 }
 
 // ── GOHIGHLEVEL (GHL) LEAD PUSH ─────────────────────────────────────────────

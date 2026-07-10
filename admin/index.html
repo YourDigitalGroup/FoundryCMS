@@ -2204,7 +2204,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.55';
+const CMS_VERSION='1.14.56';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5781,11 +5781,42 @@ function recaptchaAddonHtml(){
       <div class="fg"><label>Secret Key (kept on the server)</label><input type="password" id="s-rc-secret" placeholder="${hasSecret?'Secret saved on server':'6Lc… (kept on server)'}"></div>
       <div class="pl-addon-actions">
         <button class="fd-btn-primary" onclick="saveRecaptcha()">Save reCAPTCHA</button>
+        ${on?'<button class="fd-btn-ghost" onclick="rcCheckStatus()">Check last submission</button>':''}
         ${on?'<button class="fd-btn-ghost" onclick="disableRecaptcha()">Turn off</button>':''}
         <a href="https://www.google.com/recaptcha/admin" target="_blank" rel="noopener" class="pl-addon-link">Get your keys ↗</a>
       </div>
+      <div id="s-rc-status" style="margin-top:12px"></div>
     </div>
   </div>`;
+}
+// Show why the last form submission passed or failed reCAPTCHA — the exact reason
+// from the server (bad keys, low score, no token), so it's diagnosable in the CMS.
+async function rcCheckStatus(){
+  const box=document.getElementById('s-rc-status'); if(box) box.innerHTML='<div style="color:var(--muted);font-size:13px">Checking…</div>';
+  try{
+    const d=await apiCall('recaptcha_status');
+    if(box) box.innerHTML=rcRenderStatus(d);
+  }catch(e){ if(box) box.innerHTML='<div class="warn-b" style="margin:0">'+esc(e.message||'Could not read status.')+'</div>'; }
+}
+function rcRenderStatus(d){
+  if(!d||!d.config) return '<div class="warn-b" style="margin:0">No status available.</div>';
+  const c=d.config, last=d.last;
+  const rows=[];
+  rows.push(['Version', c.version==='v3'?'v3 (invisible + badge)':(c.version==='v2'?'v2 (checkbox)':'not set')]);
+  rows.push(['Site key', c.hasSiteKey?'set':'MISSING']);
+  rows.push(['Secret key', c.hasSecret?'set (on server)':'MISSING']);
+  if(c.version==='v3') rows.push(['Block threshold', String(c.threshold)]);
+  const kv=rows.map(r=>`<tr><td style="padding:3px 14px 3px 0;color:var(--muted);white-space:nowrap;vertical-align:top">${esc(r[0])}</td><td style="padding:3px 0;color:var(--text);word-break:break-word">${esc(String(r[1]))}</td></tr>`).join('');
+  let banner='';
+  if(last){
+    const ok=!!last.ok;
+    const when=last.at?new Date(last.at):null; const whenTxt=(when&&!isNaN(when))?when.toLocaleString():'';
+    const color=ok?'var(--green)':'var(--red)', bg=ok?'rgba(22,163,74,.10)':'rgba(225,72,59,.10)';
+    banner=`<div style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;background:${bg};color:${color}"><span style="font-weight:700">${ok?'✓':'✕'}</span><span style="word-break:break-word"><strong>Last submission ${ok?'passed':'was blocked'}</strong>${last.score!=null?' · score '+esc(String(last.score)):''}${whenTxt?' · '+esc(whenTxt):''}<br>${esc(last.reason||'')}</span></div>`;
+  } else {
+    banner='<div class="info-b" style="margin:0 0 10px">No form submission has been checked yet. Submit your form once, then click this again to see the exact result.</div>';
+  }
+  return banner+(kv?`<table style="font-size:12.5px;border-collapse:collapse">${kv}</table>`:'');
 }
 // Show the v3 score-threshold control only when v3 is selected.
 function rcToggleV3(v){ const row=document.getElementById('s-rc-threshold-row'); if(row) row.style.display=(v==='v3')?'':'none'; }
