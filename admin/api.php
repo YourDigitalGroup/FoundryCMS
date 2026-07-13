@@ -177,7 +177,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
 $PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','send_test_email','recaptcha_status'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','send_test_email','recaptcha_status'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -233,6 +233,7 @@ try {
         case 'ghl_dashboard':   ob_end_clean(); fourgeApiGhlDashboard($authUser, $body); break;
         case 'ghl_messages':    ob_end_clean(); fourgeApiGhlMessages($authUser, $body); break;
         case 'ghl_send':        ob_end_clean(); fourgeApiGhlSend($authUser, $body); break;
+        case 'ghl_form_def':    ob_end_clean(); fourgeApiGhlFormDef($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
@@ -689,7 +690,7 @@ function cmsGhlConfig() {
 
 // PURE (no network): map a submission (assoc fieldName=>value) to a GHL contact
 // payload + a human-readable note body. Detects email/phone/name heuristically.
-function cmsGhlMapContact($fields, $locationId, $formName, $siteUrl) {
+function cmsGhlMapContact($fields, $locationId, $formName, $siteUrl, $mapping = null) {
     $humanize = function ($k) {
         $k = preg_replace('/-[a-z0-9]{2,6}$/i', '', (string)$k);   // drop the "-ab12" id suffix
         $k = trim(preg_replace('/\s+/', ' ', preg_replace('/[_\-]+/', ' ', $k)));
@@ -716,14 +717,28 @@ function cmsGhlMapContact($fields, $locationId, $formName, $siteUrl) {
     if ($first === '' && $last === '' && $full !== '') $contact['name'] = $full;
     if ($email !== '') $contact['email'] = $email;
     if ($phone !== '') $contact['phone'] = $phone;
+    // A form matched to a CRM form (cmsGhlApplyMapping) overrides the heuristics:
+    // its explicit standard-field values win, and its custom fields ride along so
+    // automations can key on them (the note still carries the full submission).
+    if ($mapping && !empty($mapping['mapped'])) {
+        foreach (($mapping['contact'] ?? []) as $k => $v) { if ($v !== '' && $v !== null) $contact[$k] = $v; }
+        if (!empty($mapping['custom'])) $contact['customFields'] = $mapping['custom'];
+    }
     $note = 'New website form submission' . ($formName ? " — {$formName}" : '') . "\n\n" . implode("\n", $noteLines);
     if ($siteUrl) $note .= "\n\nPage: " . $siteUrl;
-    return ['contact' => $contact, 'note' => $note, 'hasContactInfo' => ($email !== '' || $phone !== '')];
+    $hasContact = ($email !== '' || $phone !== '' || !empty($contact['email']) || !empty($contact['phone']));
+    return ['contact' => $contact, 'note' => $note, 'hasContactInfo' => $hasContact];
 }
 
 // Push a submission to GHL. Best-effort; returns true when the contact upserts.
-function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl) {
-    $map = cmsGhlMapContact($fields, $locationId, $formName, $siteUrl);
+// When the CMS form is matched to a CRM form (its fields carry a 'ghl' mapping,
+// set in the form builder from the CRM form's share link), the submission's
+// values are sent as the CRM's REAL fields — standard ones and custom fields —
+// so automations that key on those fields fire with the data they need.
+function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl, $formId = '') {
+    $mapping = null;
+    if ($formId !== '') { try { $mapping = cmsGhlFormMapping($formId, $fields); } catch (Throwable $e) {} }
+    $map = cmsGhlMapContact($fields, $locationId, $formName, $siteUrl, $mapping);
     if (!$map['hasContactInfo']) return false;   // no email/phone → nothing GHL can dedupe or act on
     $headers = ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Content-Type: application/json', 'Accept: application/json'];
     $ch = curl_init(GHL_API_BASE . '/contacts/upsert');
@@ -744,6 +759,161 @@ function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl) {
         curl_exec($ch2); curl_close($ch2);
     }
     return true;
+}
+
+// Same slug the form renderer uses for input names (admin/index.html slugify()),
+// so submitted keys — slug(label)-<first 4 of field id> — can be matched back to
+// the form's field definitions here on the server.
+function cmsSlug($s) {
+    $s = function_exists('mb_strtolower') ? mb_strtolower((string)$s) : strtolower((string)$s);
+    return preg_replace('/[^a-z0-9-]/', '', preg_replace('/\s+/', '-', $s));
+}
+
+// Build the CRM push mapping for one submission: read the form's definition from
+// data/forms.json, and for every field carrying a 'ghl' mapping, find its
+// submitted value and file it under the CRM's REAL field — a standard contact
+// field (firstName/email/companyName/…) or a custom field (by id/key). Hidden
+// CRM fields the form was matched with (settings.ghlAuto) are sent as constants.
+function cmsGhlFormMapping($formId, $fields) {
+    $forms = json_decode(@file_get_contents(__DIR__ . '/../data/forms.json'), true);
+    if (!is_array($forms)) return null;
+    $form = null;
+    foreach ($forms as $f) { if (($f['id'] ?? '') === $formId) { $form = $f; break; } }
+    if (!$form) return null;
+    return cmsGhlApplyMapping($form, $fields);
+}
+function cmsGhlApplyMapping($form, $fields) {
+    $STD = ['first_name'=>'firstName','last_name'=>'lastName','email'=>'email','phone'=>'phone',
+            'full_name'=>'name','company_name'=>'companyName','organization'=>'companyName'];
+    $contact = []; $custom = []; $mapped = false;
+    // Submitted values for a form field: keys are slug(label)-<id4>, with optional
+    // -sub suffixes (name -first/-last, address -street/-city/…) or [] (checkboxes).
+    $valuesFor = function ($f) use ($fields) {
+        $p = cmsSlug($f['label'] ?? '') . '-' . substr((string)($f['id'] ?? ''), 0, 4);
+        $out = [];
+        foreach ((array)$fields as $k => $v) {
+            $k = (string)$k;
+            if (is_array($v)) $v = implode(', ', $v);
+            $v = trim((string)$v); if ($v === '') continue;
+            if ($k === $p || $k === $p.'[]')            $out[''] = $v;
+            elseif (strpos($k, $p.'-') === 0)           $out[substr($k, strlen($p)+1)] = $v;
+            elseif ($k === ($f['label'] ?? ''))         $out[''] = $v;   // hidden fields post by label
+        }
+        return $out;
+    };
+    foreach ((array)($form['fields'] ?? []) as $f) {
+        $g = $f['ghl'] ?? null;
+        if (!$g || !is_array($g)) continue;
+        $vals = $valuesFor($f);
+        if (!$vals) continue;
+        $flat = trim(implode(' ', array_values($vals)));
+        if (!empty($g['std'])) {
+            $std = (string)$g['std'];
+            if ($std === 'address') {
+                if (isset($vals['street'])) $contact['address1']   = $vals['street'];
+                if (isset($vals['city']))   $contact['city']       = $vals['city'];
+                if (isset($vals['state']))  $contact['state']      = $vals['state'];
+                if (isset($vals['zip']))    $contact['postalCode'] = $vals['zip'];
+            } elseif (isset($STD[$std])) {
+                if ($std === 'full_name' && isset($vals['first'])) $flat = trim($vals['first'].' '.($vals['last'] ?? ''));
+                $contact[$STD[$std]] = $flat;
+            }
+            $mapped = true;
+        } elseif (!empty($g['id']) || !empty($g['key'])) {
+            $entry = ['field_value' => $flat];
+            if (!empty($g['id'])) $entry['id'] = (string)$g['id'];
+            else $entry['key'] = preg_replace('/^contact\./', '', (string)$g['key']);
+            $custom[] = $entry; $mapped = true;
+        }
+    }
+    foreach ((array)($form['settings']['ghlAuto'] ?? []) as $a) {   // hidden CRM constants (e.g. Source Page)
+        if (!is_array($a) || (!isset($a['id']) && !isset($a['key'])) || !isset($a['value']) || $a['value']==='') continue;
+        $entry = ['field_value' => (string)$a['value']];
+        if (!empty($a['id'])) $entry['id'] = (string)$a['id'];
+        else $entry['key'] = preg_replace('/^contact\./', '', (string)$a['key']);
+        $custom[] = $entry; $mapped = true;
+    }
+    return $mapped ? ['mapped' => true, 'contact' => $contact, 'custom' => $custom] : null;
+}
+
+// ── CRM FORM DEFINITION (share-link import) ─────────────────────────
+// The CRM's form share page embeds its full definition (fields, custom-field ids
+// and keys, picklists, hidden defaults) in a NUXT devalue payload — public, no
+// token needed. Parse it so the form builder can match CMS fields to the CRM
+// form's REAL fields. Devalue is a flat array where object/array members are
+// integer POINTERS into the same array; resolve with cycle + depth guards.
+function cmsGhlParseFormWidget($html) {
+    if (!preg_match('~<script[^>]*id="__NUXT_DATA__"[^>]*>(.*?)</script>~s', (string)$html, $m)) return null;
+    $arr = json_decode($m[1], true);
+    if (!is_array($arr)) return null;
+    $isList = function ($a) { if (!is_array($a)) return false; $i = 0; foreach ($a as $k => $_) { if ($k !== $i++) return false; } return true; };
+    $res = function ($i, $depth, $seen) use (&$res, $arr, $isList) {
+        if (!is_int($i)) return $i;
+        if ($i < 0 || $i >= count($arr) || $depth > 20 || isset($seen[$i])) return null;
+        $v = $arr[$i]; $seen[$i] = true;
+        if (is_array($v)) {
+            $out = [];
+            foreach ($v as $k => $x) $out[$k] = $res($x, $depth + 1, $seen);
+            return $out;
+        }
+        return $v;
+    };
+    foreach ($arr as $v) {
+        if (!is_array($v) || $isList($v) || !isset($v['form'], $v['locationId'])) continue;
+        $form = $res($v['form'], 0, []);
+        if (!is_array($form) || !isset($form['fields'])) continue;
+        $fields = [];
+        foreach ((array)$form['fields'] as $f) {
+            if (!is_array($f)) continue;
+            $type = (string)($f['type'] ?? '');
+            if ($type === 'submit' || ($f['tag'] ?? '') === 'button') continue;
+            $o = [
+                'label'    => trim(html_entity_decode(strip_tags((string)($f['label'] ?? ($f['name'] ?? ''))))),
+                'type'     => $type,
+                'required' => !empty($f['required']),
+                'standard' => !empty($f['standard']),
+            ];
+            if ($o['standard']) {
+                $o['std'] = (string)($f['tag'] ?? ($f['hiddenFieldQueryKey'] ?? ''));
+            } else {
+                $o['id']       = (string)($f['id'] ?? ($f['Id'] ?? ''));
+                $o['key']      = (string)($f['fieldKey'] ?? '');
+                $o['dataType'] = (string)($f['dataType'] ?? '');
+                if (!empty($f['picklistOptions']) && is_array($f['picklistOptions'])) $o['options'] = array_values(array_map('strval', $f['picklistOptions']));
+                if (!empty($f['hidden'])) { $o['hidden'] = true; $o['hiddenValue'] = (string)($f['hiddenFieldValue'] ?? ''); }
+            }
+            $fields[] = $o;
+        }
+        return [
+            'locationId' => (string)$res($v['locationId'], 0, []),
+            'name'       => (string)$res($v['name'] ?? -1, 0, []),
+            'fields'     => $fields,
+        ];
+    }
+    return null;
+}
+// Admin action: fetch a CRM form's public share page and return its parsed field
+// definition. Only a form ID is accepted (or a share link it's extracted from) and
+// the URL is constructed server-side — the server never fetches a caller-supplied
+// URL, so this can't be used to probe internal hosts.
+function fourgeApiGhlFormDef($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
+    $raw = trim((string)($body['form'] ?? ''));
+    $id = '';
+    if (preg_match('~/widget/form/([A-Za-z0-9_-]{6,64})~', $raw, $m)) $id = $m[1];
+    elseif (preg_match('~^[A-Za-z0-9_-]{6,64}$~', $raw)) $id = $raw;
+    if ($id === '') { http_response_code(400); echo json_encode(['error' => 'Paste the form’s share link (it looks like …/widget/form/…).']); return; }
+    $ch = curl_init('https://api.leadconnectorhq.com/widget/form/' . $id);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15,
+        CURLOPT_HTTPHEADER => ['Accept: text/html'],
+    ]);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    if ($err || $code !== 200 || !$res) { http_response_code(502); echo json_encode(['error' => 'Could not load the form’s share page' . ($err ? ' ('.$err.')' : ($code ? ' (HTTP '.$code.')' : '')) . ' — check the link.']); return; }
+    $def = cmsGhlParseFormWidget($res);
+    if (!$def || empty($def['fields'])) { http_response_code(422); echo json_encode(['error' => 'That page didn’t contain a readable form definition — make sure it’s the form’s share link.']); return; }
+    echo json_encode(['ok' => true, 'formId' => $id, 'locationId' => $def['locationId'], 'name' => $def['name'], 'fields' => $def['fields']]);
 }
 
 // Validate token + location with a lightweight read. Returns [bool ok, string message].
@@ -1046,7 +1216,7 @@ function cmsSendForm($body) {
 
     // Push into GoHighLevel as a lead (best-effort; never blocks the form or email)
     $ghl = cmsGhlConfig();
-    if ($ghl) { try { cmsGhlPushLead($ghl['token'], $ghl['locationId'], $fields, $subject, $siteUrl); } catch (Throwable $e) { /* non-fatal */ } }
+    if ($ghl) { try { cmsGhlPushLead($ghl['token'], $ghl['locationId'], $fields, $subject, $siteUrl, $formId); } catch (Throwable $e) { /* non-fatal */ } }
 
     if (!$toEmail) {
         // Entry already stored; report success even without email config

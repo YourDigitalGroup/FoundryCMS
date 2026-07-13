@@ -1457,6 +1457,7 @@ textarea.fb-input{resize:vertical}
               <textarea id="fb-confirm" rows="3" style="width:100%;margin-bottom:12px"></textarea>
               <label class="pe-field-label">Submit button label</label>
               <input type="text" id="fb-submit-label" style="width:100%">
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-top:10px;cursor:pointer"><input type="checkbox" id="fb-phone-format"> Format phone numbers as (555) 123-4567</label>
             </div>
             <div class="pe-side-card">
               <div class="pe-side-title">Form Header</div>
@@ -1495,6 +1496,13 @@ textarea.fb-input{resize:vertical}
               <div class="pe-side-title">Custom CSS</div>
               <label class="pe-field-label">Advanced — extra CSS (targets <code>.foundry-form</code>)</label>
               <textarea id="fb-css" rows="6" spellcheck="false" style="width:100%;font-family:var(--font-mono);font-size:12px" placeholder="/* e.g. */&#10;.foundry-form .ff-submit{background:#111;border-radius:999px}&#10;.foundry-form input{border-color:#c8531e}"></textarea>
+            </div>
+            <div class="pe-side-card" id="fb-ghl-card" style="display:none">
+              <div class="pe-side-title">Lead Generation — match a CRM form</div>
+              <label class="pe-field-label">Paste the CRM form's share link and map this form's fields onto its real fields — so submissions feed your automations with the exact fields they use, not just a note.</label>
+              <input type="text" id="fb-ghl-link" placeholder="https://…/widget/form/…" style="width:100%;margin-bottom:8px">
+              <button type="button" class="fd-btn-secondary" id="fb-ghl-fetch" style="font-size:12.5px;padding:7px 12px" onclick="fbGhlFetch()">Fetch &amp; match fields</button>
+              <div id="fb-ghl-map" style="margin-top:10px"></div>
             </div>
           </div>
         </div>
@@ -2224,7 +2232,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.61';
+const CMS_VERSION='1.14.62';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2822,7 +2830,7 @@ function copyShortcode(id){
 
 function openNewForm(){
   _curForm=null;
-  _curFormMeta={notifyTo:(_site&&_site.email)||'', subject:'New Form Submission', confirmation:'Thanks! Your submission has been received.', submitLabel:'Submit'};
+  _curFormMeta={notifyTo:(_site&&_site.email)||'', subject:'New Form Submission', confirmation:'Thanks! Your submission has been received.', submitLabel:'Submit', phoneFormat:'us'};
   _formFields=[{id:uid(),type:'text',label:'Name',required:true},{id:uid(),type:'email',label:'Email',required:true}];
   showFormBuilder({title:''});
 }
@@ -2854,8 +2862,137 @@ function showFormBuilder(f){
   setColor('fb-style-border',style.border,'#d8d4cc');
   const radEl=document.getElementById('fb-style-radius'); if(radEl) radEl.value=(style.radius!=null&&style.radius!=='')?style.radius:'';
   const labEl=document.getElementById('fb-style-labels'); if(labEl) labEl.checked=(style.labels!=='hide');
+  const pfEl=document.getElementById('fb-phone-format'); if(pfEl) pfEl.checked=(_curFormMeta.phoneFormat==='us');
+  // CRM form matching card — only when Lead Generation is enabled for this site.
+  _fbGhlDef=null;
+  const gc=document.getElementById('fb-ghl-card');
+  if(gc){
+    gc.style.display=(_site&&_site.ghl&&_site.ghl.enabled)?'':'none';
+    const gl=document.getElementById('fb-ghl-link');
+    if(gl) gl.value=(_curFormMeta.ghlSource&&_curFormMeta.ghlSource.formId)?('https://api.leadconnectorhq.com/widget/form/'+_curFormMeta.ghlSource.formId):'';
+    const gm=document.getElementById('fb-ghl-map'); if(gm) gm.innerHTML=fbGhlSummary();
+  }
   renderFieldPalette();
   renderFormFields();
+}
+
+// ── MATCH A CRM FORM (Lead Generation) ────────────────────────────
+// Paste the CRM form's public share link; the server reads its definition
+// (ghl_form_def) and this maps the builder's fields onto the CRM's REAL fields —
+// standard contact fields and custom fields by id — so a submission feeds
+// automations with the exact fields they key on. Hidden CRM fields (e.g. a
+// "Source Page" constant) are sent automatically.
+let _fbGhlDef=null;
+async function fbGhlFetch(){
+  const link=document.getElementById('fb-ghl-link')?.value.trim()||'';
+  const box=document.getElementById('fb-ghl-map');
+  const btn=document.getElementById('fb-ghl-fetch');
+  if(!link){ toast('Paste the form’s share link first','err'); return; }
+  if(btn){ btn.disabled=true; btn.textContent='Fetching…'; }
+  if(box) box.innerHTML='<div style="color:var(--muted);font-size:12px">Reading the CRM form…</div>';
+  try{
+    _fbGhlDef=await apiCall('ghl_form_def',{form:link});
+    if(box) box.innerHTML=fbGhlRenderMap();
+  }catch(e){ _fbGhlDef=null; if(box) box.innerHTML='<div class="warn-b" style="margin:0">'+esc(e.message||'Could not read the form.')+'</div>'; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='Fetch & match fields'; } }
+}
+// Builder field type for a CRM field definition.
+function fbGhlTypeFor(cf){
+  if(cf.standard){
+    return {first_name:'text',last_name:'text',email:'email',phone:'phone',full_name:'name',name:'name',company_name:'text',organization:'text',address:'address'}[cf.std]||'text';
+  }
+  return {TEXT:'text',LARGE_TEXT:'textarea',NUMERICAL:'number',NUMBER:'number',PHONE:'phone',EMAIL:'email',
+          SINGLE_OPTIONS:'select',MULTIPLE_OPTIONS:'checkbox',CHECKBOX:'checkbox',RADIO:'radio',DATE:'date'}[cf.dataType]||'text';
+}
+// Fuzzy label match so "Company" auto-pairs with "Business name", etc. Generic
+// tokens (name/type/number/…) carry little weight so "First Name" can't steal
+// "Business name" from "Company" just by sharing the word "name".
+function fbGhlLabelScore(a,b){
+  const SYN={company:'business organization firm',business:'company organization firm',market:'city area location',city:'market location',phone:'tel telephone mobile cell number',email:'e-mail mail'};
+  const WEAK={name:1,type:1,number:1,field:1,your:1,info:1};
+  const tok=s=>String(s||'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').split(/\s+/).filter(Boolean);
+  const A=tok(a),B=tok(b);
+  if(!A.length||!B.length) return 0;
+  if(A.join(' ')===B.join(' ')) return 100;
+  const expand=t=>[t].concat((SYN[t]||'').split(' ').filter(Boolean));
+  let hits=0, total=0;
+  A.forEach(t=>{ const w=WEAK[t]?0.35:1; total+=w;
+    const ex=expand(t); if(B.some(u=>ex.includes(u)||expand(u).includes(t))) hits+=w; });
+  if(!total||!hits) return 0;
+  return Math.round(30+(hits/total)*50);
+}
+// Which builder fields are mappable (real inputs, not layout blocks).
+function fbGhlCmsFields(){
+  const SKIP={html:1,heading:1,'text-block':1,pagebreak:1,hidden:0};
+  return _formFields.map((f,i)=>({i,f})).filter(x=>!SKIP[x.f.type]);
+}
+function fbGhlRenderMap(){
+  const def=_fbGhlDef;
+  if(!def||!def.fields||!def.fields.length) return '<div class="warn-b" style="margin:0">No fields found on that form.</div>';
+  const cms=fbGhlCmsFields();
+  // Greedy unique auto-match: best scores first, each CMS field used once.
+  const picks={}; const taken={};
+  const scored=[];
+  def.fields.forEach((cf,ci)=>{ if(cf.hidden) return; cms.forEach(x=>{ const s=fbGhlLabelScore(cf.label,x.f.label); if(s>=45) scored.push({ci,i:x.i,s}); }); });
+  scored.sort((a,b)=>b.s-a.s).forEach(m=>{ if(picks[m.ci]==null && !taken[m.i]){ picks[m.ci]=m.i; taken[m.i]=true; } });
+  let rows=def.fields.map((cf,ci)=>{
+    const badge='<span style="font-size:10px;padding:2px 6px;border-radius:99px;background:var(--surface-3);color:var(--muted);margin-left:6px">'+(cf.hidden?'hidden':(cf.standard?'standard':'custom'))+'</span>';
+    if(cf.hidden){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">'
+        +'<div style="flex:1;min-width:0;font-size:12.5px">'+esc(cf.label)+badge
+        +'<div style="font-size:11px;color:var(--muted)">always sent as “'+esc(cf.hiddenValue||'')+'”</div></div>'
+        +'<label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="fb-ghl-auto-'+ci+'" checked> send</label>'
+      +'</div>';
+    }
+    const opts=['<option value="">— don’t send —</option>']
+      .concat(cms.map(x=>'<option value="'+x.i+'"'+(picks[ci]===x.i?' selected':'')+'>'+esc(decodeHtml(x.f.label||x.f.type))+'</option>'))
+      .concat(['<option value="__add">＋ Add as a new field</option>']);
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">'
+      +'<div style="flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cf.label)+(cf.required?' *':'')+badge+'</div>'
+      +'<select id="fb-ghl-sel-'+ci+'" style="max-width:180px;font-size:12px">'+opts.join('')+'</select>'
+    +'</div>';
+  }).join('');
+  return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Matched to <b>'+esc(def.name||def.formId)+'</b> — point each CRM field at one of this form’s fields (or add it):</div>'
+    +rows
+    +'<button type="button" class="fd-btn-primary" style="margin-top:10px;font-size:12.5px;padding:8px 14px" onclick="fbGhlApply()">Apply matching</button>';
+}
+function fbGhlApply(){
+  const def=_fbGhlDef; if(!def) return;
+  _formFields.forEach(f=>{ delete f.ghl; });   // re-map from scratch
+  const auto=[];
+  def.fields.forEach((cf,ci)=>{
+    if(cf.hidden){
+      const cb=document.getElementById('fb-ghl-auto-'+ci);
+      if(cb&&cb.checked&&(cf.id||cf.key)) auto.push({id:cf.id||'',key:cf.key||'',label:cf.label,value:cf.hiddenValue||''});
+      return;
+    }
+    const sel=document.getElementById('fb-ghl-sel-'+ci); if(!sel||!sel.value) return;
+    const g=cf.standard?{std:cf.std,label:cf.label}:{id:cf.id||'',key:cf.key||'',label:cf.label};
+    if(sel.value==='__add'){
+      const nf={id:uid(),type:fbGhlTypeFor(cf),label:cf.label,required:!!cf.required,ghl:g};
+      if(cf.options&&cf.options.length) nf.choices=cf.options.slice();
+      _formFields.push(nf);
+    }else{
+      const idx=parseInt(sel.value,10);
+      if(_formFields[idx]) _formFields[idx].ghl=g;
+    }
+  });
+  _curFormMeta.ghlSource={formId:def.formId,locationId:def.locationId||'',name:def.name||''};
+  _curFormMeta.ghlAuto=auto;
+  renderFormFields();
+  const gm=document.getElementById('fb-ghl-map'); if(gm) gm.innerHTML=fbGhlSummary();
+  toast('Fields matched ✓ — click Save Form to make it live','ok');
+}
+function fbGhlSummary(){
+  const src=_curFormMeta&&_curFormMeta.ghlSource;
+  if(!src||!src.formId) return '';
+  const mapped=_formFields.filter(f=>f.ghl&&(f.ghl.std||f.ghl.id||f.ghl.key));
+  const auto=(_curFormMeta.ghlAuto||[]);
+  return '<div class="info-b" style="margin:0">Matched to <b>'+esc(src.name||src.formId)+'</b> — '
+    +mapped.length+' field'+(mapped.length===1?'':'s')+' mapped'
+    +(auto.length?(' · '+auto.length+' sent automatically'):'')
+    +'.<br><span style="font-size:11px">'+esc(mapped.map(f=>decodeHtml(f.label||'')+' → '+(f.ghl.label||f.ghl.std||'field')).join(' · '))+'</span>'
+    +'<br><span style="font-size:11px;color:var(--muted)">Fetch again to change the matching.</span></div>';
 }
 // Clear a form-builder color swatch back to "unset" (uses the theme default).
 function fbClearColor(id){ const el=document.getElementById(id); if(el) el.dataset.set='0'; }
@@ -3071,7 +3208,10 @@ async function saveForm(){
       css:get('fb-css'),
       headerTitle:get('fb-header-title'),
       headerDesc:get('fb-header-desc'),
-      style
+      style,
+      phoneFormat:((document.getElementById('fb-phone-format')||{}).checked?'us':''),
+      ghlSource:(_curFormMeta&&_curFormMeta.ghlSource)||null,   // CRM form this one is matched to
+      ghlAuto:(_curFormMeta&&Array.isArray(_curFormMeta.ghlAuto))?_curFormMeta.ghlAuto:[]
     }
   };
   if(_curForm!=null) _forms[_curForm]=form;
@@ -3770,7 +3910,7 @@ function renderFormHtml(form){
       +(hdrTitle?'<h2 class="ff-form-title">'+esc(hdrTitle)+'</h2>':'')
       +(hdrDesc?'<p class="ff-form-desc">'+esc(hdrDesc).replace(/\n/g,'<br>')+'</p>':'')
       +'</div>':'';
-  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'"'+(rcKey&&rcV3?' data-rc-v3="'+esc(rcKey)+'"':'')+' data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
+  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'"'+(rcKey&&rcV3?' data-rc-v3="'+esc(rcKey)+'"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us="1"':'')+' data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
     +hdr
     +pagesHtml
     +rcHtml
@@ -3856,6 +3996,11 @@ function formsRuntimeAssets(){
     +'var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display="none";pages[nx].style.display="";'
     +'f.querySelector(".ff-prev").style.display=nx>0?"":"none";f.querySelector(".ff-next").style.display=nx<pages.length-1?"":"none";f.querySelector(".ff-submit").style.display=nx===pages.length-1?"":"none";}'
     +'document.addEventListener("click",function(e){var b=e.target.closest(".ff-prev,.ff-next");if(b){var f=b.closest(".foundry-form");if(f)ffPage(f,parseInt(b.getAttribute("data-dir")));}});'
+    // Optional US phone mask: forms saved with settings.phoneFormat==='us' carry
+    // data-phone-us and their tel inputs format live as (555) 123-4567. Numbers
+    // typed with a leading + (international) are left untouched.
+    +'function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,"");if(d.length>11)return v;var p="";if(d.length===11){if(d[0]!=="1")return v;p="1 ";d=d.slice(1);}if(!d.length)return "";if(d.length<4)return p+"("+d;if(d.length<7)return p+"("+d.slice(0,3)+") "+d.slice(3);return p+"("+d.slice(0,3)+") "+d.slice(3,6)+"-"+d.slice(6);}'
+    +'document.addEventListener("input",function(e){var t=e.target;if(!t||t.type!=="tel")return;var f=t.closest&&t.closest(".foundry-form");if(f&&f.hasAttribute("data-phone-us"))t.value=ffFmtPhone(t.value);});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
     +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
     +'btn.disabled=true;btn.textContent="Sending…";'   // register the click first — never wait on reCAPTCHA to show feedback
@@ -4823,12 +4968,13 @@ function ffRenderForm(form){
   var hs=form.settings||{}, ht=(hs.headerTitle||'').toString().trim(), hd=(hs.headerDesc||'').toString().trim();
   var hdr=(ht||hd)?('<div class=\"ff-header\">'+(ht?'<h2 class=\"ff-form-title\">'+esc(ht)+'</h2>':'')+(hd?'<p class=\"ff-form-desc\">'+esc(hd).replace(/\\n/g,'<br>')+'</p>':'')+'</div>'):'';
   var fst=stl+((((form.settings&&form.settings.css)||'').toString().trim())?('<style>'+form.settings.css+'</style>'):'');
-  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
+  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us=\"1\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
 async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
-function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
+function ffFmtPhone(v){if(/^\s*\+/.test(v))return v;var d=String(v).replace(/\D/g,'');if(d.length>11)return v;var p='';if(d.length===11){if(d[0]!=='1')return v;p='1 ';d=d.slice(1);}if(!d.length)return '';if(d.length<4)return p+'('+d;if(d.length<7)return p+'('+d.slice(0,3)+') '+d.slice(3);return p+'('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);}
+function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
 try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}}}catch(e){}
