@@ -330,43 +330,43 @@ function renderBlock(block){
           e.preventDefault();
           const fd=new FormData(e.target);
           const fields={};
-          let hasName='',hasEmail='';
           (d.fields||[]).forEach(f=>{
-            const v=fd.get(f.label)||e.target.querySelector(`[placeholder="${f.placeholder||f.label}"]`)?.value||'';
-            fields[f.label]=v;
-            if(f.type==='email')hasEmail=v;
-            if(f.type==='text'&&f.label.toLowerCase().includes('name'))hasName=v;
+            fields[f.label]=String(fd.get(f.label)||'').trim();
           });
-          const apiUrl=_site.apiUrl||'';
-          const apiToken=_site.apiToken||'';
+          // send_form is a PUBLIC endpoint (no token needed). Default to the
+          // site's own /admin/api.php so the form works on the deployed site
+          // without any extra config; _site.apiUrl can override it.
+          const apiUrl=_site.apiUrl||'/admin/api.php';
           const notifyEmail=_site.notifyEmail||'';
           const btn=e.target.querySelector('button[type="submit"]');
+          const okMsg=e.target.querySelector('.form-success');
+          const errMsg=e.target.querySelector('.form-error');
+          if(okMsg)okMsg.style.display='none';
+          if(errMsg)errMsg.style.display='none';
           if(btn){btn.disabled=true;btn.textContent='Sending…';}
           try{
-            if(apiUrl&&apiToken){
-              const res=await fetch(apiUrl,{method:'POST',headers:{'Content-Type':'application/json','X-Api-Token':apiToken},body:JSON.stringify({action:'send_form',token:apiToken,fields,subject:d.heading||'Form Submission',to:notifyEmail,siteUrl:_site.website||window.location.origin})});
-              const result=await res.json();
-              if(!result.ok)throw new Error(result.error||'Send failed');
-            }
+            const res=await fetch(apiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',fields,subject:d.heading||'New Form Submission',to:notifyEmail,siteUrl:_site.website||window.location.href})});
+            const result=await res.json().catch(()=>({}));
+            if(!res.ok||result.error)throw new Error(result.error||('Request failed ('+res.status+')'));
             e.target.reset();
-            if(btn){btn.disabled=false;btn.textContent=d.submitText||'Submit';}
-            const msg=e.target.parentElement.querySelector('.form-success');
-            if(msg)msg.style.display='block';
+            if(okMsg)okMsg.style.display='block';
           }catch(err){
+            if(errMsg)errMsg.style.display='block';
+          }finally{
             if(btn){btn.disabled=false;btn.textContent=d.submitText||'Submit';}
-            alert('Sorry, there was an error sending your message. Please try again or contact us directly.');
           }
         }}>
           {(d.fields||[]).map((f,i)=>(
             <div key={i} style={{marginBottom:14}}>
               <label style={{display:'block',fontSize:11,fontWeight:800,letterSpacing:'.08em',textTransform:'uppercase',color:'#5a6b7a',marginBottom:5}}>{f.label}{f.required&&' *'}</label>
               {f.type==='textarea'
-                ?<textarea required={f.required} placeholder={f.placeholder} rows={4} style={{width:'100%',padding:'9px 11px',border:'1.5px solid #dde2e8',fontFamily:'inherit',fontSize:14,outline:'none',resize:'vertical',boxSizing:'border-box'}}/>
-                :<input type={f.type||'text'} required={f.required} placeholder={f.placeholder} style={{width:'100%',padding:'9px 11px',border:'1.5px solid #dde2e8',fontFamily:'inherit',fontSize:14,outline:'none',boxSizing:'border-box'}}/>
+                ?<textarea name={f.label} required={f.required} placeholder={f.placeholder} rows={4} style={{width:'100%',padding:'9px 11px',border:'1.5px solid #dde2e8',fontFamily:'inherit',fontSize:14,outline:'none',resize:'vertical',boxSizing:'border-box'}}/>
+                :<input name={f.label} type={f.type||'text'} required={f.required} placeholder={f.placeholder} style={{width:'100%',padding:'9px 11px',border:'1.5px solid #dde2e8',fontFamily:'inherit',fontSize:14,outline:'none',boxSizing:'border-box'}}/>
               }
             </div>
           ))}
-          <div className="form-success" style={{display:'none',padding:'12px',background:'#E8F0E8',color:'#2D4A2D',fontSize:14,marginBottom:8,borderRadius:3}}>{d.successMessage||'Thank you! We'll be in touch soon.'}</div>
+          <div className="form-error" style={{display:'none',padding:'12px',background:'#FDE8E8',color:'#8B1A1A',fontSize:14,marginBottom:8,borderRadius:3}}>Sorry, there was an error sending your message. Please try again or contact us directly.</div>
+          <div className="form-success" style={{display:'none',padding:'12px',background:'#E8F0E8',color:'#2D4A2D',fontSize:14,marginBottom:8,borderRadius:3}}>{d.successMessage||'Thank you! We\'ll be in touch soon.'}</div>
           <button type="submit" style={{background:primary,color:'white',border:'none',padding:'12px 24px',fontFamily:'inherit',fontWeight:700,fontSize:13,letterSpacing:'.05em',textTransform:'uppercase',cursor:'pointer',width:'100%',marginTop:8}}>{d.submitText||'Submit'}</button>
         </form>
       </div>
@@ -417,7 +417,7 @@ function injectSEO(pageId){
   setMeta('description',s.metaDescription);setMeta('keywords',s.focusKeyword);
   setMeta('og:title',s.ogTitle||s.titleTag,'property');setMeta('og:description',s.ogDescription||s.metaDescription,'property');setMeta('og:image',s.ogImage,'property');
   if(s.canonical){let el=document.querySelector('link[rel="canonical"]');if(!el){el=document.createElement('link');el.rel='canonical';document.head.appendChild(el);}el.href=s.canonical;}
-  if(s.schema){const ld=document.createElement('script');ld.type='application/ld+json';const site=_site||{};const a=site.address||{};ld.textContent=JSON.stringify({"@context":"https://schema.org","@type":s.schema,"name":site.name||'','url':site.website||'','telephone":site.phone||"','address':{"@type":"PostalAddress","streetAddress":a.street||'','addressLocality":a.city||"','addressRegion':a.state||'','postalCode":a.zip||"','addressCountry':a.country||'US'}});document.head.appendChild(ld);}
+  if(s.schema){const ld=document.createElement('script');ld.type='application/ld+json';const site=_site||{};const a=site.address||{};ld.textContent=JSON.stringify({"@context":"https://schema.org","@type":s.schema,"name":site.name||'',"url":site.website||'',"telephone":site.phone||'',"address":{"@type":"PostalAddress","streetAddress":a.street||'',"addressLocality":a.city||'',"addressRegion":a.state||'',"postalCode":a.zip||'',"addressCountry":a.country||'US'}});document.head.appendChild(ld);}
 }
 
 // ─── PAGE COMPONENT ──────────────────────────────────────────────

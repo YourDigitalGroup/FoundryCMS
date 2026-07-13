@@ -20,7 +20,7 @@
   --ember-soft:#FCE4DD;--ember-glow:rgba(219,53,22,.12);
   --dark:#1E1B15;--dark-2:#27231B;--dark-border:#2E2A22;
   --dark-fg:#F4F0E6;--dark-fg2:#B5AE9C;--dark-accent:#F0563A;
-  --green:#16A34A;--red:#E1483B;--red-soft:#FCEAE7;
+  --green:#16A34A;--red:#E1483B;--red-soft:#FCEAE7;--amber:#B45309;
   /* Sidebar is WHITE in Fourge */
   --sb-bg:#FFFFFF;--sb-border:#EEE8DF;
   --sb-text:#5A5547;--sb-text-hover:#1A1814;
@@ -45,7 +45,7 @@ html[data-theme="dark"]{
   --sb-bg:#1A1712;--sb-border:#2A251D;
   --sb-text:#B5AE9C;--sb-text-hover:#F4F0E6;
   --sb-active-bg:rgba(240,90,60,.18);--sb-active-text:#F47B5E;
-  --green:#34D27B;--red:#F0685B;--red-soft:rgba(240,104,91,.16);
+  --green:#34D27B;--red:#F0685B;--red-soft:rgba(240,104,91,.16);--amber:#F0A93B;
   --sh:0 1px 2px rgba(0,0,0,.4),0 2px 6px rgba(0,0,0,.5);
   --sh-md:0 4px 10px rgba(0,0,0,.45),0 12px 28px rgba(0,0,0,.55);
   --sh-lg:0 12px 24px rgba(0,0,0,.5),0 28px 64px rgba(0,0,0,.6);
@@ -2204,7 +2204,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.56';
+const CMS_VERSION='1.14.57';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3202,12 +3202,18 @@ async function openConvertForm(){
   body.innerHTML='<div style="padding:16px;color:var(--muted);font-size:13px">Scanning your pages for forms…</div>';
   _convertScan=await formScanPages();
   if(!_convertScan.length){ body.innerHTML='<div class="empty" style="padding:24px"><h3>No convertible forms found</h3><p>No hand-coded &lt;form&gt; was found on your pages. (Forms already built in the CMS are skipped.)</p></div>'; return; }
-  body.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Pick a form to turn into a managed form. You can review the fields before it goes live; on Save the CMS replaces the form on that page so submissions start landing in Entries.</div>'
+  body.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px">'
+      +'<div style="font-size:12px;color:var(--muted)">Review one form before it goes live, convert them all in place, or use one form on every page. Converting replaces the form on its page so submissions start landing in Entries. “Use on all pages” puts that one form on every page.</div>'
+      +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:13px;padding:8px 14px;white-space:nowrap" onclick="convertAllForms()">Convert all ('+_convertScan.length+') →</button>'
+    +'</div>'
     +_convertScan.map((it,i)=>
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
         +'<div style="min-width:0"><div style="font-size:13px;font-weight:600">'+esc(it.label)+'</div>'
         +'<div style="font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis">'+it.fields.length+' field'+(it.fields.length===1?'':'s')+': '+esc(it.summary)+(it.fields.filter(x=>x.type!=='hidden').length>6?'…':'')+'</div></div>'
-        +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:13px;padding:8px 14px" onclick="startConvertForm('+i+')">Convert →</button>'
+        +'<div style="flex-shrink:0;display:flex;gap:8px">'
+          +'<button class="fd-btn-secondary" style="font-size:13px;padding:8px 14px;white-space:nowrap" onclick="useFormEverywhere('+i+')">Use on all pages →</button>'
+          +'<button class="fd-btn-primary" style="font-size:13px;padding:8px 14px" onclick="startConvertForm('+i+')">Convert →</button>'
+        +'</div>'
       +'</div>'
     ).join('');
 }
@@ -3223,6 +3229,22 @@ function startConvertForm(i){
   showFormBuilder({ title:(t?t.replace(/\b\w/g,c=>c.toUpperCase()):'Contact')+' Form' });
   toast('Review the fields, then click Save — I’ll place the form on '+it.label+' automatically.','ok');
 }
+// Swap the (formIndex-th) hand-coded <form> on a page for the CMS-rendered form,
+// make sure the forms runtime is present, and save the page. Returns 'ok',
+// 'noread' (page couldn't be read) or 'notfound' (no matching original form).
+// Replacing in place (one <form> → one <form>) keeps document form indexes
+// stable, so several forms on the SAME page can be converted sequentially.
+async function placeFormOnPage(form, path, formIndex){
+  const d=await apiCall('read_file',{path}); let html=d.content||'';
+  if(!html) return 'noread';
+  const rendered=renderFormHtml(form);
+  let n=-1, replaced=false;
+  html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===formIndex && !/class=["'][^"']*foundry-form/.test(m)){ replaced=true; return rendered; } return m; });
+  if(!replaced) return 'notfound';
+  html=ensureFormsRuntime(html);   // refresh/inject the shared form CSS+JS
+  await apiCall('write_file',{path,content:html});
+  return 'ok';
+}
 // After the converted form is saved, swap the original <form> on the page for the
 // CMS-rendered form and make sure the forms runtime is present, then save the page.
 async function placeConvertedForm(formId){
@@ -3230,16 +3252,73 @@ async function placeConvertedForm(formId){
   if(!src) return;
   const form=_forms.find(f=>f.id===formId); if(!form){ toast('Form saved.','ok'); return; }
   try{
-    const d=await apiCall('read_file',{path:src.path}); let html=d.content||'';
-    if(!html){ toast('Form saved, but the page couldn’t be read. Add [form id='+formId+'] where you want it.','err'); return; }
-    const rendered=renderFormHtml(form);
-    let n=-1, replaced=false;
-    html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===src.formIndex && !/class=["'][^"']*foundry-form/.test(m)){ replaced=true; return rendered; } return m; });
-    if(!replaced){ toast('Form saved. Couldn’t auto-locate the original form on '+src.label+' — add [form id='+formId+'] there manually.','err'); return; }
-    html=ensureFormsRuntime(html);   // refresh/inject the shared form CSS+JS
-    await apiCall('write_file',{path:src.path,content:html});
-    toast('Form converted and placed on '+src.label+' ✓ — submissions will now show in Entries.','ok');
+    const r=await placeFormOnPage(form, src.path, src.formIndex);
+    if(r==='ok') toast('Form converted and placed on '+src.label+' ✓ — submissions will now show in Entries.','ok');
+    else if(r==='noread') toast('Form saved, but the page couldn’t be read. Add [form id='+formId+'] where you want it.','err');
+    else toast('Form saved. Couldn’t auto-locate the original form on '+src.label+' — add [form id='+formId+'] there manually.','err');
   }catch(e){ toast('Form saved, but updating '+src.label+' failed: '+(e.message||e),'err'); }
+}
+// Bulk: convert EVERY hand-coded form found by the page scan into a managed form
+// and place it, in one pass — so the site owner doesn't have to convert each by
+// hand. Each page's form keeps its own fields/heading; submissions then land in
+// Forms → Entries. Builds each form the same way startConvertForm()+saveForm() do.
+async function convertAllForms(){
+  const items=(_convertScan||[]).slice();
+  if(!items.length){ toast('No forms to convert','err'); return; }
+  if(!confirm('Convert all '+items.length+' form'+(items.length===1?'':'s')+' into managed forms? Each page’s form will be replaced with a managed version that captures submissions under Forms → Entries.')) return;
+  closeM('m-form-convert');
+  let done=0, failed=0, failedLabels=[];
+  for(const it of items){
+    try{
+      const form=buildFormFromScan(it);
+      const r=await placeFormOnPage(form, it.path, it.formIndex);
+      if(r==='ok'){ _forms.unshift(form); done++; }
+      else { failed++; failedLabels.push(it.label||it.path); }
+    }catch(e){ failed++; failedLabels.push(it.label||it.path); console.warn('convert-all failed for '+(it.label||it.path), e&&e.message); }
+  }
+  if(done){ try{ await saveFormsJson(); }catch(e){ toast('Placed forms, but saving the forms list failed: '+(e.message||e),'err'); } }
+  renderFormsList();
+  goPanel('p-forms');
+  toast('Converted '+done+' form'+(done===1?'':'s')+(failed?(' · '+failed+' skipped (couldn’t auto-locate)'):'')+' ✓', failed&&!done?'err':'ok');
+}
+// Build a single managed form from the scanned form at index i.
+function buildFormFromScan(it){
+  const t=String(it.label||'').replace(/\.html?$/i,'').replace(/[\/_-]+/g,' ').trim();
+  return {
+    id:'form-'+uid().slice(0,5),
+    title:(t?t.replace(/\b\w/g,c=>c.toUpperCase()):'Contact')+' Form',
+    fields:JSON.parse(JSON.stringify(it.fields)),
+    settings:{
+      notifyTo:(_site&&_site.email)||'',
+      subject:'New Form Submission',
+      confirmation:'Thanks! Your message has been received.',
+      submitLabel:'Submit',
+      css:'',
+      headerTitle:it.headerTitle||'',
+      headerDesc:it.headerDesc||'',
+      style:{}
+    }
+  };
+}
+// Bulk: take ONE form (the scanned form at index i — e.g. the home-page form) and
+// place that SAME managed form on every detected form spot across all pages, so
+// every page ends up with the identical, working form. All submissions share one
+// form id and land together under Forms → Entries.
+async function useFormEverywhere(i){
+  const items=(_convertScan||[]).slice();
+  const src=items[i]; if(!src){ toast('Form not found — rescan and try again','err'); return; }
+  if(!confirm('Put the “'+src.label+'” form on all '+items.length+' form spot'+(items.length===1?'':'s')+' across your pages? They’ll all become the same managed form and capture submissions under Forms → Entries.')) return;
+  closeM('m-form-convert');
+  const form=buildFormFromScan(src);
+  let done=0, failed=0;
+  for(const it of items){
+    try{ const r=await placeFormOnPage(form, it.path, it.formIndex); if(r==='ok')done++; else failed++; }
+    catch(e){ failed++; console.warn('use-everywhere failed for '+(it.label||it.path), e&&e.message); }
+  }
+  if(done){ _forms.unshift(form); try{ await saveFormsJson(); }catch(e){ toast('Placed forms, but saving the forms list failed: '+(e.message||e),'err'); } }
+  renderFormsList();
+  goPanel('p-forms');
+  toast('Placed the same form on '+done+' spot'+(done===1?'':'s')+(failed?(' · '+failed+' skipped'):'')+' ✓', failed&&!done?'err':'ok');
 }
 
 // ── ENTRIES ───────────────────────────────────────────────────────
@@ -3490,10 +3569,10 @@ function formsRuntimeAssets(){
     +'document.addEventListener("click",function(e){var b=e.target.closest(".ff-prev,.ff-next");if(b){var f=b.closest(".foundry-form");if(f)ffPage(f,parseInt(b.getAttribute("data-dir")));}});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
     +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
+    +'btn.disabled=true;btn.textContent="Sending…";'   // register the click first — never wait on reCAPTCHA to show feedback
     +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3")||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||"";'
-    +'if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});});}catch(e){}}'
+    +'if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});}catch(_e){res("");}}),new Promise(function(res){setTimeout(function(){res("");},4000);})]);}catch(e){rcTok="";}}'   // race a 4s timeout so a bad key can never freeze the form
     +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
-    +'btn.disabled=true;btn.textContent="Sending…";'
     +'try{var res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});'
     +'var d=await res.json();if(d.error)throw new Error(d.error);'
     +'msg.className="ff-msg ok";msg.style.display="";msg.textContent=form.getAttribute("data-confirm");form.querySelectorAll(".ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});}'
@@ -4459,7 +4538,7 @@ function ffRenderForm(form){
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute){try{rcTok=await new Promise(function(res){grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});});}catch(e){}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!rcTok){var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}btn.disabled=true;btn.textContent='Sending…';try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
@@ -5809,10 +5888,13 @@ function rcRenderStatus(d){
   const kv=rows.map(r=>`<tr><td style="padding:3px 14px 3px 0;color:var(--muted);white-space:nowrap;vertical-align:top">${esc(r[0])}</td><td style="padding:3px 0;color:var(--text);word-break:break-word">${esc(String(r[1]))}</td></tr>`).join('');
   let banner='';
   if(last){
-    const ok=!!last.ok;
+    const outcome=last.outcome||(last.ok?'passed':'blocked');
     const when=last.at?new Date(last.at):null; const whenTxt=(when&&!isNaN(when))?when.toLocaleString():'';
-    const color=ok?'var(--green)':'var(--red)', bg=ok?'rgba(22,163,74,.10)':'rgba(225,72,59,.10)';
-    banner=`<div style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;background:${bg};color:${color}"><span style="font-weight:700">${ok?'✓':'✕'}</span><span style="word-break:break-word"><strong>Last submission ${ok?'passed':'was blocked'}</strong>${last.score!=null?' · score '+esc(String(last.score)):''}${whenTxt?' · '+esc(whenTxt):''}<br>${esc(last.reason||'')}</span></div>`;
+    let icon,color,bg,title;
+    if(outcome==='passed'){ icon='✓'; color='var(--green)'; bg='rgba(22,163,74,.10)'; title='Last submission passed'; }
+    else if(outcome==='blocked'){ icon='✕'; color='var(--red)'; bg='rgba(225,72,59,.10)'; title='Last submission was blocked as a bot'; }
+    else { icon='⚠'; color='var(--amber)'; bg='rgba(180,83,9,.12)'; title='Last submission went through — but reCAPTCHA isn’t protecting this form yet'; }
+    banner=`<div style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;background:${bg};color:${color}"><span style="font-weight:700">${icon}</span><span style="word-break:break-word"><strong>${esc(title)}</strong>${last.score!=null?' · score '+esc(String(last.score)):''}${whenTxt?' · '+esc(whenTxt):''}<br>${esc(last.reason||'')}</span></div>`;
   } else {
     banner='<div class="info-b" style="margin:0 0 10px">No form submission has been checked yet. Submit your form once, then click this again to see the exact result.</div>';
   }
