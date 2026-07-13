@@ -1743,6 +1743,14 @@ textarea.fb-input{resize:vertical}
           <div class="fg"><label>API Key</label><input type="password" id="s-claude" placeholder="sk-ant-…"></div>
           <button class="fd-btn-primary" onclick="saveClaudeKey()">Save</button>
         </div>
+        <!-- Same diagnostic as Plugins → Email delivery (shared sendTestEmail handler
+             + send_test_email action) — surfaced here too so it's findable from
+             Settings. admin-only to match the server-side gate (level 2+). -->
+        <div class="si-sec admin-only"><h2>Contact-Form Email</h2><div class="desc">Send a test email through the same transport your forms use (your SMTP relay, or the Mailgun API) to check delivery. Email is configured server-side in <code>admin/config.secret.php</code>. Submissions are always saved under Forms → Entries even if email fails.</div>
+          <div class="fg"><label>Send test to</label><input type="email" id="st-mail-to" placeholder="you@yourdomain.com"><small>Leave blank to send to your own account email (or the site's notify address).</small></div>
+          <button class="fd-btn-primary" id="st-mail-btn" onclick="sendTestEmail('st-mail')">Send test email</button>
+          <div id="st-mail-result" style="margin-top:14px"></div>
+        </div>
         <!-- Updates card removed — updates are fully automatic (installed at login).
              The engine source can still be overridden via the architect-only
              "Repository Override" card above if a site ever needs a non-default repo. -->
@@ -2204,7 +2212,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.58';
+const CMS_VERSION='1.14.59';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5993,10 +6001,14 @@ function mailAddonHtml(){
     </div>
   </div>`;
 }
-async function sendTestEmail(){
-  const to=document.getElementById('s-mail-to')?.value.trim()||'';
-  const box=document.getElementById('s-mail-result');
-  const btn=document.getElementById('s-mail-btn');
+// One handler for both surfaces: Plugins → Email delivery (default 's-mail')
+// and Settings → Contact-Form Email ('st-mail'). Same send_test_email action,
+// same renderMailResult — just different input/result elements.
+async function sendTestEmail(pfx){
+  pfx=pfx||'s-mail';
+  const to=document.getElementById(pfx+'-to')?.value.trim()||'';
+  const box=document.getElementById(pfx+'-result');
+  const btn=document.getElementById(pfx+'-btn');
   if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
   if(box) box.innerHTML='<div style="color:var(--muted);font-size:13px">Sending test email…</div>';
   try{
