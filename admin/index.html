@@ -3202,12 +3202,18 @@ async function openConvertForm(){
   body.innerHTML='<div style="padding:16px;color:var(--muted);font-size:13px">Scanning your pages for forms…</div>';
   _convertScan=await formScanPages();
   if(!_convertScan.length){ body.innerHTML='<div class="empty" style="padding:24px"><h3>No convertible forms found</h3><p>No hand-coded &lt;form&gt; was found on your pages. (Forms already built in the CMS are skipped.)</p></div>'; return; }
-  body.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Pick a form to turn into a managed form. You can review the fields before it goes live; on Save the CMS replaces the form on that page so submissions start landing in Entries.</div>'
+  body.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px">'
+      +'<div style="font-size:12px;color:var(--muted)">Review one form before it goes live, convert them all in place, or use one form on every page. Converting replaces the form on its page so submissions start landing in Entries. “Use on all pages” puts that one form on every page.</div>'
+      +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:13px;padding:8px 14px;white-space:nowrap" onclick="convertAllForms()">Convert all ('+_convertScan.length+') →</button>'
+    +'</div>'
     +_convertScan.map((it,i)=>
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
         +'<div style="min-width:0"><div style="font-size:13px;font-weight:600">'+esc(it.label)+'</div>'
         +'<div style="font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis">'+it.fields.length+' field'+(it.fields.length===1?'':'s')+': '+esc(it.summary)+(it.fields.filter(x=>x.type!=='hidden').length>6?'…':'')+'</div></div>'
-        +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:13px;padding:8px 14px" onclick="startConvertForm('+i+')">Convert →</button>'
+        +'<div style="flex-shrink:0;display:flex;gap:8px">'
+          +'<button class="fd-btn-secondary" style="font-size:13px;padding:8px 14px;white-space:nowrap" onclick="useFormEverywhere('+i+')">Use on all pages →</button>'
+          +'<button class="fd-btn-primary" style="font-size:13px;padding:8px 14px" onclick="startConvertForm('+i+')">Convert →</button>'
+        +'</div>'
       +'</div>'
     ).join('');
 }
@@ -3223,6 +3229,22 @@ function startConvertForm(i){
   showFormBuilder({ title:(t?t.replace(/\b\w/g,c=>c.toUpperCase()):'Contact')+' Form' });
   toast('Review the fields, then click Save — I’ll place the form on '+it.label+' automatically.','ok');
 }
+// Swap the (formIndex-th) hand-coded <form> on a page for the CMS-rendered form,
+// make sure the forms runtime is present, and save the page. Returns 'ok',
+// 'noread' (page couldn't be read) or 'notfound' (no matching original form).
+// Replacing in place (one <form> → one <form>) keeps document form indexes
+// stable, so several forms on the SAME page can be converted sequentially.
+async function placeFormOnPage(form, path, formIndex){
+  const d=await apiCall('read_file',{path}); let html=d.content||'';
+  if(!html) return 'noread';
+  const rendered=renderFormHtml(form);
+  let n=-1, replaced=false;
+  html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===formIndex && !/class=["'][^"']*foundry-form/.test(m)){ replaced=true; return rendered; } return m; });
+  if(!replaced) return 'notfound';
+  html=ensureFormsRuntime(html);   // refresh/inject the shared form CSS+JS
+  await apiCall('write_file',{path,content:html});
+  return 'ok';
+}
 // After the converted form is saved, swap the original <form> on the page for the
 // CMS-rendered form and make sure the forms runtime is present, then save the page.
 async function placeConvertedForm(formId){
@@ -3230,16 +3252,73 @@ async function placeConvertedForm(formId){
   if(!src) return;
   const form=_forms.find(f=>f.id===formId); if(!form){ toast('Form saved.','ok'); return; }
   try{
-    const d=await apiCall('read_file',{path:src.path}); let html=d.content||'';
-    if(!html){ toast('Form saved, but the page couldn’t be read. Add [form id='+formId+'] where you want it.','err'); return; }
-    const rendered=renderFormHtml(form);
-    let n=-1, replaced=false;
-    html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===src.formIndex && !/class=["'][^"']*foundry-form/.test(m)){ replaced=true; return rendered; } return m; });
-    if(!replaced){ toast('Form saved. Couldn’t auto-locate the original form on '+src.label+' — add [form id='+formId+'] there manually.','err'); return; }
-    html=ensureFormsRuntime(html);   // refresh/inject the shared form CSS+JS
-    await apiCall('write_file',{path:src.path,content:html});
-    toast('Form converted and placed on '+src.label+' ✓ — submissions will now show in Entries.','ok');
+    const r=await placeFormOnPage(form, src.path, src.formIndex);
+    if(r==='ok') toast('Form converted and placed on '+src.label+' ✓ — submissions will now show in Entries.','ok');
+    else if(r==='noread') toast('Form saved, but the page couldn’t be read. Add [form id='+formId+'] where you want it.','err');
+    else toast('Form saved. Couldn’t auto-locate the original form on '+src.label+' — add [form id='+formId+'] there manually.','err');
   }catch(e){ toast('Form saved, but updating '+src.label+' failed: '+(e.message||e),'err'); }
+}
+// Bulk: convert EVERY hand-coded form found by the page scan into a managed form
+// and place it, in one pass — so the site owner doesn't have to convert each by
+// hand. Each page's form keeps its own fields/heading; submissions then land in
+// Forms → Entries. Builds each form the same way startConvertForm()+saveForm() do.
+async function convertAllForms(){
+  const items=(_convertScan||[]).slice();
+  if(!items.length){ toast('No forms to convert','err'); return; }
+  if(!confirm('Convert all '+items.length+' form'+(items.length===1?'':'s')+' into managed forms? Each page’s form will be replaced with a managed version that captures submissions under Forms → Entries.')) return;
+  closeM('m-form-convert');
+  let done=0, failed=0, failedLabels=[];
+  for(const it of items){
+    try{
+      const form=buildFormFromScan(it);
+      const r=await placeFormOnPage(form, it.path, it.formIndex);
+      if(r==='ok'){ _forms.unshift(form); done++; }
+      else { failed++; failedLabels.push(it.label||it.path); }
+    }catch(e){ failed++; failedLabels.push(it.label||it.path); console.warn('convert-all failed for '+(it.label||it.path), e&&e.message); }
+  }
+  if(done){ try{ await saveFormsJson(); }catch(e){ toast('Placed forms, but saving the forms list failed: '+(e.message||e),'err'); } }
+  renderFormsList();
+  goPanel('p-forms');
+  toast('Converted '+done+' form'+(done===1?'':'s')+(failed?(' · '+failed+' skipped (couldn’t auto-locate)'):'')+' ✓', failed&&!done?'err':'ok');
+}
+// Build a single managed form from the scanned form at index i.
+function buildFormFromScan(it){
+  const t=String(it.label||'').replace(/\.html?$/i,'').replace(/[\/_-]+/g,' ').trim();
+  return {
+    id:'form-'+uid().slice(0,5),
+    title:(t?t.replace(/\b\w/g,c=>c.toUpperCase()):'Contact')+' Form',
+    fields:JSON.parse(JSON.stringify(it.fields)),
+    settings:{
+      notifyTo:(_site&&_site.email)||'',
+      subject:'New Form Submission',
+      confirmation:'Thanks! Your message has been received.',
+      submitLabel:'Submit',
+      css:'',
+      headerTitle:it.headerTitle||'',
+      headerDesc:it.headerDesc||'',
+      style:{}
+    }
+  };
+}
+// Bulk: take ONE form (the scanned form at index i — e.g. the home-page form) and
+// place that SAME managed form on every detected form spot across all pages, so
+// every page ends up with the identical, working form. All submissions share one
+// form id and land together under Forms → Entries.
+async function useFormEverywhere(i){
+  const items=(_convertScan||[]).slice();
+  const src=items[i]; if(!src){ toast('Form not found — rescan and try again','err'); return; }
+  if(!confirm('Put the “'+src.label+'” form on all '+items.length+' form spot'+(items.length===1?'':'s')+' across your pages? They’ll all become the same managed form and capture submissions under Forms → Entries.')) return;
+  closeM('m-form-convert');
+  const form=buildFormFromScan(src);
+  let done=0, failed=0;
+  for(const it of items){
+    try{ const r=await placeFormOnPage(form, it.path, it.formIndex); if(r==='ok')done++; else failed++; }
+    catch(e){ failed++; console.warn('use-everywhere failed for '+(it.label||it.path), e&&e.message); }
+  }
+  if(done){ _forms.unshift(form); try{ await saveFormsJson(); }catch(e){ toast('Placed forms, but saving the forms list failed: '+(e.message||e),'err'); } }
+  renderFormsList();
+  goPanel('p-forms');
+  toast('Placed the same form on '+done+' spot'+(done===1?'':'s')+(failed?(' · '+failed+' skipped'):'')+' ✓', failed&&!done?'err':'ok');
 }
 
 // ── ENTRIES ───────────────────────────────────────────────────────
