@@ -1423,7 +1423,7 @@ textarea.fb-input{resize:vertical}
            FORMS
       ═══════════════════════════════════════════════════════ -->
       <div class="panel" id="p-forms">
-        <div class="ta" style="display:flex;gap:8px;flex-wrap:wrap"><button class="fd-btn-primary" onclick="openNewForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Form</button><button class="fd-btn-secondary" onclick="openConvertForm()" title="Turn an existing form on one of your pages into a managed form so its submissions are captured"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg> Convert a page form</button></div>
+        <div class="ta" style="display:flex;gap:8px;flex-wrap:wrap"><button class="fd-btn-primary" onclick="openNewForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Form</button><button class="fd-btn-secondary" onclick="openConvertForm()" title="Turn an existing form on one of your pages into a managed form so its submissions are captured"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg> Convert a page form</button><button class="fd-btn-secondary" onclick="openFormPlacements()" title="See every form across your pages and point each spot at the right managed form"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Form placements</button></div>
         <div id="forms-body"></div>
       </div>
 
@@ -2141,6 +2141,18 @@ textarea.fb-input{resize:vertical}
     </div>
   </div>
 </div>
+<div class="mw" id="m-form-placements">
+  <div class="modal" style="width:720px;max-width:94vw;max-height:84vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Form placements</h2><button class="ib" onclick="closeM('m-form-placements')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" id="form-placements-body" style="overflow-y:auto"></div>
+  </div>
+</div>
+<div class="mw" id="m-formpicker" style="z-index:900">
+  <div class="modal" style="width:520px;max-width:94vw;max-height:80vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Insert a form</h2><button class="ib" onclick="closeM('m-formpicker')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" id="fp-picker-list" style="overflow-y:auto"></div>
+  </div>
+</div>
 <div class="mw" id="m-iconpicker" style="z-index:900">
   <div class="modal" style="width:560px;max-height:82vh;display:flex;flex-direction:column">
     <div class="mh"><h2>Add an icon</h2><button class="ib" onclick="closeM('m-iconpicker')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -2212,7 +2224,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.59';
+const CMS_VERSION='1.14.60';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3193,6 +3205,7 @@ async function formScanPages(){
     let doc; try{ doc=new DOMParser().parseFromString(html,'text/html'); }catch{ continue; }
     [...doc.querySelectorAll('form')].forEach((f,idx)=>{
       if(f.classList.contains('foundry-form')) return;   // already a CMS form
+      if(formLooksLikeSearch(f)) return;                 // search widgets aren't lead forms
       const fields=parseHtmlFormToFields(f);
       if(!fields.length) return;
       const hdr=captureFormHeader(f);
@@ -3237,21 +3250,188 @@ function startConvertForm(i){
   showFormBuilder({ title:(t?t.replace(/\b\w/g,c=>c.toUpperCase()):'Contact')+' Form' });
   toast('Review the fields, then click Save — I’ll place the form on '+it.label+' automatically.','ok');
 }
-// Swap the (formIndex-th) hand-coded <form> on a page for the CMS-rendered form,
-// make sure the forms runtime is present, and save the page. Returns 'ok',
-// 'noread' (page couldn't be read) or 'notfound' (no matching original form).
-// Replacing in place (one <form> → one <form>) keeps document form indexes
-// stable, so several forms on the SAME page can be converted sequentially.
-async function placeFormOnPage(form, path, formIndex){
+// Swap the (formIndex-th) <form> on a page for the CMS-rendered form, make sure
+// the forms runtime is present, and save the page. Returns 'ok', 'noread' (page
+// couldn't be read) or 'notfound' (no matching form at that index). By default
+// only hand-coded forms are replaced; pass includeManaged=true to also swap an
+// already-managed foundry-form (re-attribution). Replacing in place (one <form>
+// → one <form>) keeps document form indexes stable, so several forms on the
+// SAME page can be converted sequentially. (When a managed form is swapped, its
+// old glued <style> prefix stays behind — it's scoped to the old form's #ffm-id
+// so it's inert on the new one.)
+async function placeFormOnPage(form, path, formIndex, includeManaged){
   const d=await apiCall('read_file',{path}); let html=d.content||'';
   if(!html) return 'noread';
   const rendered=renderFormHtml(form);
   let n=-1, replaced=false;
-  html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===formIndex && !/class=["'][^"']*foundry-form/.test(m)){ replaced=true; return rendered; } return m; });
+  html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===formIndex && (includeManaged || !/class=["'][^"']*foundry-form/.test(m))){ replaced=true; return rendered; } return m; });
   if(!replaced) return 'notfound';
   html=ensureFormsRuntime(html);   // refresh/inject the shared form CSS+JS
   await apiCall('write_file',{path,content:html});
   return 'ok';
+}
+// Expand [form id=xxx] shortcodes into the rendered managed form. Only the BLOG
+// runtime ever rendered these — on a normal page the pasted shortcode published
+// as literal text, which is why "the form isn't applying". A shortcode that is
+// a <p>'s sole content swallows the wrapper too (editors paste into paragraphs);
+// an unknown id is left as typed so the author can see and fix it.
+function expandFormShortcodes(html){
+  return String(html||'').replace(/<p[^>]*>\s*\[form id=([\w-]+)\]\s*<\/p>|\[form id=([\w-]+)\]/gi,(m,a,b)=>{
+    const f=(_forms||[]).find(x=>x.id===(a||b));
+    return f?renderFormHtml(f):m;
+  });
+}
+// Final pass before a page is written: expand form shortcodes, and when the page
+// carries a managed form make sure the shared forms runtime (CSS + submit JS) is
+// there — so a form dropped in via the editor or a shortcode works on the live page.
+function veFinalizePageHtml(html){
+  html=expandFormShortcodes(html);
+  if(/class=["'][^"']*foundry-form/.test(html)) html=ensureFormsRuntime(html);
+  return html;
+}
+
+// ── FORM PLACEMENTS (attribute every on-page form to a managed form) ──
+// Scan every page for every <form> — managed (foundry) AND hand-coded — so the
+// whole site's form usage is visible in one table and each spot can be pointed
+// at the RIGHT managed form (e.g. 13 converted duplicates → the 2 real forms).
+// A search widget isn't a lead form — don't offer to convert or re-attribute it
+// (a "Set all" would replace the site's search bar with a contact form).
+// Structural test only: an explicit role="search", or a form whose controls are
+// nothing but search/submit-type inputs. Class names are deliberately NOT used —
+// a "property-search" quote form is a real lead form.
+function formLooksLikeSearch(f){
+  if((f.getAttribute('role')||'').toLowerCase()==='search') return true;
+  const ins=[...f.querySelectorAll('input,textarea,select')];
+  return ins.length>0 && ins.every(i=>['search','submit','button','hidden','image','reset'].includes((i.type||'').toLowerCase()));
+}
+let _fpRows=[];
+async function formPlacementsScan(){
+  if(!_forms.length){ try{ await initForms(); }catch{} }
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
+  const pages=getPageList(), rows=[];
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    let html=''; try{ const d=await apiCall('read_file',{path:fp}); html=d.content||''; }catch{ continue; }
+    if(!html || !/<form\b/i.test(html)) continue;
+    let doc; try{ doc=new DOMParser().parseFromString(html,'text/html'); }catch{ continue; }
+    [...doc.querySelectorAll('form')].forEach((f,idx)=>{
+      let currentId='', desc='';
+      if(f.classList.contains('foundry-form')){
+        currentId=f.getAttribute('data-form-id')||'';
+        const mf=_forms.find(x=>x.id===currentId);
+        desc=mf?decodeHtml(mf.title||currentId):(currentId||'managed form')+' (missing from your Forms list)';
+      }else{
+        if(formLooksLikeSearch(f)) return;   // search widgets aren't lead forms
+        const fields=parseHtmlFormToFields(f);
+        if(!fields.length) return;
+        desc='Hand-coded: '+fields.filter(x=>x.type!=='hidden').slice(0,5).map(x=>x.label).join(', ');
+      }
+      rows.push({path:fp,label:pg.label||fp,formIndex:idx,currentId,desc});
+    });
+  }
+  return rows;
+}
+async function openFormPlacements(){
+  if(!canCallApi()){ toast('Sign in again to scan your pages','err'); return; }
+  openM('m-form-placements');
+  const body=document.getElementById('form-placements-body');
+  body.innerHTML='<div style="padding:16px;color:var(--muted);font-size:13px">Scanning your pages for forms…</div>';
+  _fpRows=await formPlacementsScan();
+  fpRender();
+}
+function fpFormOptions(sel){
+  return '<option value="">— pick a form —</option>'+_forms.map(f=>'<option value="'+esc(f.id)+'"'+(f.id===sel?' selected':'')+'>'+esc(decodeHtml(f.title||f.id))+'</option>').join('');
+}
+function fpRender(){
+  const body=document.getElementById('form-placements-body'); if(!body) return;
+  if(!_fpRows.length){ body.innerHTML='<div class="empty" style="padding:24px"><h3>No forms found on your pages</h3><p>Place a form first — open a page in the editor and use “Insert a form”, or convert an existing page form.</p></div>'; return; }
+  if(!_forms.length){ body.innerHTML='<div class="empty" style="padding:24px"><h3>No managed forms yet</h3><p>Create a form (or convert one) first, then come back to attribute your pages to it.</p></div>'; return; }
+  body.innerHTML=''
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Every form on your pages, and the managed form it uses. Point any of them at the right form and click Apply — the page is rewritten with that form (submissions land under its Entries). Hand-coded forms count too, so this also converts.</div>'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
+      +'<span style="font-size:12px;color:var(--muted)">Set all to</span>'
+      +'<select id="fp-all" style="max-width:240px">'+fpFormOptions('')+'</select>'
+      +'<button class="fd-btn-secondary" style="font-size:12.5px;padding:7px 12px" onclick="fpSetAll()">Set all</button>'
+      +'<span style="flex:1"></span>'
+      +'<button class="fd-btn-primary" id="fp-apply" style="font-size:13px;padding:8px 16px" onclick="applyFormPlacements()">Apply changes</button>'
+    +'</div>'
+    +_fpRows.map((r,i)=>
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
+        +'<div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.label)+'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.currentId?'Uses: ':'')+esc(r.desc)+'</div></div>'
+        +'<select id="fp-sel-'+i+'" style="flex-shrink:0;max-width:230px">'+fpFormOptions(r.currentId)+'</select>'
+      +'</div>'
+    ).join('')
+    +'<div id="fp-unused" style="margin-top:14px"></div>';
+  fpRenderUnused();
+}
+function fpSetAll(){
+  const v=document.getElementById('fp-all')?.value||'';
+  if(!v){ toast('Pick a form first','err'); return; }
+  _fpRows.forEach((r,i)=>{ const s=document.getElementById('fp-sel-'+i); if(s) s.value=v; });
+}
+async function applyFormPlacements(){
+  const btn=document.getElementById('fp-apply');
+  if(btn){ btn.disabled=true; btn.textContent='Applying…'; }
+  let changed=0, failed=0;
+  try{
+    for(let i=0;i<_fpRows.length;i++){
+      const sel=document.getElementById('fp-sel-'+i); if(!sel) continue;
+      const want=sel.value;
+      if(!want || want===_fpRows[i].currentId) continue;   // unchanged / not chosen
+      const form=_forms.find(f=>f.id===want); if(!form){ failed++; continue; }
+      try{
+        const r=await placeFormOnPage(form,_fpRows[i].path,_fpRows[i].formIndex,true);
+        if(r==='ok'){ _fpRows[i].currentId=want; _fpRows[i].desc=decodeHtml(form.title||form.id); changed++; }
+        else failed++;
+      }catch(e){ failed++; console.warn('placement failed for '+_fpRows[i].label, e&&e.message); }
+    }
+  }finally{ if(btn){ btn.disabled=false; btn.textContent='Apply changes'; } }
+  fpRender();
+  toast(changed?('Updated '+changed+' form spot'+(changed===1?'':'s')+(failed?(' · '+failed+' failed'):'')+' ✓'):(failed?('No spots updated · '+failed+' failed'):'Nothing to change — every spot already uses the selected form'), failed&&!changed?'err':'ok');
+}
+// Managed forms that aren't on any page (per the current scan) and aren't used by
+// a blog post — after consolidating 13 duplicates down to 2 real forms, this is
+// the one-click cleanup for the leftover 11. Past entries stay viewable (they
+// list under the Entries screen even when their form is gone).
+async function formIdsUsedInPosts(){
+  const used=new Set();
+  let posts=null;
+  try{ const d=await apiCall('read_file',{path:'data/posts.json'}); if(d.content) posts=JSON.parse(d.content); }catch{}
+  if(!posts){ try{ const r=await fetch('../data/posts.json?t='+Date.now()); if(r.ok) posts=await r.json(); }catch{} }
+  (posts||[]).forEach(p=>{
+    (p.blocks||[]).forEach(b=>{ if(b&&b.type==='form'&&b.formId) used.add(b.formId); });
+    const txt=JSON.stringify(p.blocks||[]);
+    let m; const re=/\[form id=([\w-]+)\]/g;
+    while((m=re.exec(txt))) used.add(m[1]);   // shortcodes inside text blocks
+  });
+  return used;
+}
+async function fpRenderUnused(){
+  const box=document.getElementById('fp-unused'); if(!box) return;
+  const placed=new Set(_fpRows.map(r=>r.currentId).filter(Boolean));
+  const inPosts=await formIdsUsedInPosts();
+  const unused=_forms.filter(f=>!placed.has(f.id)&&!inPosts.has(f.id));
+  if(!unused.length){ box.innerHTML=''; return; }
+  box.innerHTML='<div style="padding:12px 14px;border:1px dashed var(--border);border-radius:10px">'
+    +'<div style="font-size:12.5px;font-weight:600;margin-bottom:4px">'+unused.length+' form'+(unused.length===1?' isn’t':'s aren’t')+' used on any page or post</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">'+esc(unused.map(f=>decodeHtml(f.title||f.id)).join(' · '))+'</div>'
+    +'<button class="fd-btn-secondary" style="font-size:12.5px;padding:7px 12px" onclick="fpDeleteUnused()">Delete unused forms</button>'
+    +'<span style="font-size:11.5px;color:var(--muted);margin-left:10px">Their past entries stay viewable under Entries.</span>'
+  +'</div>';
+}
+async function fpDeleteUnused(){
+  const placed=new Set(_fpRows.map(r=>r.currentId).filter(Boolean));
+  const inPosts=await formIdsUsedInPosts();
+  const unused=_forms.filter(f=>!placed.has(f.id)&&!inPosts.has(f.id));
+  if(!unused.length){ toast('Nothing to delete','ok'); return; }
+  if(!confirm('Delete '+unused.length+' unused form'+(unused.length===1?'':'s')+' ('+unused.map(f=>decodeHtml(f.title||f.id)).join(', ')+')? Pages are untouched; past entries stay viewable under Entries.')) return;
+  const drop=new Set(unused.map(f=>f.id));
+  _forms=_forms.filter(f=>!drop.has(f.id));
+  try{ await saveFormsJson(); }catch(e){ toast('Delete failed to save: '+(e.message||e),'err'); return; }
+  renderFormsList();
+  fpRenderUnused();
+  toast('Deleted '+unused.length+' unused form'+(unused.length===1?'':'s')+' ✓','ok');
 }
 // After the converted form is saved, swap the original <form> on the page for the
 // CMS-rendered form and make sure the forms runtime is present, then save the page.
@@ -7785,6 +7965,21 @@ return '(function(){\n'
 +'        var NOKIDS={IMG:1,BR:1,HR:1,INPUT:1,VIDEO:1,PICTURE:1,IFRAME:1,EMBED:1};\n'
 +'        if(NOKIDS[el.tagName]){ el.parentElement.insertBefore(ic, el.nextSibling); } else { el.appendChild(ic); }\n'
 +'        selectEl(ic);\n'
+// Insert a block of real page markup (e.g. a managed form) at the selection:
+// into the element when it can hold children (section/column/div), otherwise
+// right after it. The admin side sends the fully rendered HTML.
++'      }else if(m.action==="insertHtml"){\n'
++'        var wrap=document.createElement("div");\n'
++'        wrap.innerHTML=String(m.html||"");\n'
++'        var kids=[].slice.call(wrap.childNodes);\n'
++'        var HOLDS={DIV:1,SECTION:1,MAIN:1,ARTICLE:1,ASIDE:1,HEADER:1,FOOTER:1,FORM:0,TD:1,LI:1,FIGURE:1};\n'
++'        var firstEl=null, anchor=el;\n'
++'        kids.forEach(function(nd){\n'
++'          if(HOLDS[el.tagName]){ el.appendChild(nd); }\n'
++'          else { anchor.parentElement.insertBefore(nd, anchor.nextSibling); anchor=nd; }\n'
++'          if(!firstEl&&nd.nodeType===1&&nd.tagName!=="STYLE") firstEl=nd;\n'
++'        });\n'
++'        if(firstEl){ selectEl(firstEl); try{firstEl.scrollIntoView({block:"center",behavior:"smooth"});}catch(e9){} }\n'
 +'      }\n'
 +'      return;\n'
 +'    }\n'
@@ -8224,7 +8419,8 @@ function veShowProps(info){
   // Stash original styles so Apply only sends changed values
   _veOrigStyles = st;
   const iconBtn = '<button class="ve-apply-btn" style="margin:10px 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openIconPicker()"><i class="fa-solid fa-icons"></i> Insert an icon</button>';
-  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + veAiPanel() + fields;
+  const formBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openFormPicker()"><i class="fa-solid fa-rectangle-list"></i> Insert a form</button>';
+  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
   if(_veAiChat && _veAiChat.sel && _veAiChat.sel.fid===info.fid && _veAiChat.log && _veAiChat.log.length){ veAiRenderLog(); }
 }
@@ -8422,6 +8618,49 @@ function veInsertIcon(iconClass){
   document.getElementById('ve-unsaved')?.classList.add('on');
   closeM('m-iconpicker');
   toast('Icon added — click it to change its color or size','ok');
+}
+
+// ── INSERT A FORM (page editor) ───────────────────────────────────
+// Pick any managed form and drop it into the page at the selected element —
+// into it when it's a container, right after it otherwise. The rendered form
+// is real page markup, so it publishes with the page; veFinalizePageHtml adds
+// the forms runtime on Save so it submits on the live site.
+let _formTargetFid=null;
+async function openFormPicker(){
+  _formTargetFid=_veCurSel?.fid||null;
+  if(!_formTargetFid){ toast('Click where the form should go first — a section or column works best','err'); return; }
+  if(!_forms.length){ try{ await initForms(); }catch{} }
+  openM('m-formpicker');
+  formPickerRender();
+}
+function formPickerRender(){
+  const list=document.getElementById('fp-picker-list'); if(!list) return;
+  if(!_forms.length){
+    list.innerHTML='<div class="empty" style="padding:24px"><h3>No forms yet</h3><p>Create one in the Forms tab first (or convert a form already on a page) — then insert it here.</p></div>';
+    return;
+  }
+  list.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">The form is added where you clicked — inside a section or column, or right after a smaller element. It goes live when you Save the page.</div>'
+    +_forms.map(f=>{
+      const n=(f.fields||[]).filter(x=>x.type!=='pagebreak'&&x.type!=='html'&&x.type!=='heading'&&x.type!=='text-block').length;
+      const summary=(f.fields||[]).filter(x=>x.label&&x.type!=='hidden').slice(0,5).map(x=>x.label).join(', ');
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
+        +'<div style="min-width:0"><div style="font-size:13px;font-weight:600">'+esc(decodeHtml(f.title||f.id))+'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+n+' field'+(n===1?'':'s')+(summary?(': '+esc(summary)):'')+'</div></div>'
+        +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:13px;padding:8px 14px" onclick="veInsertForm(\''+esc(f.id)+'\')">Insert →</button>'
+      +'</div>';
+    }).join('');
+}
+function veInsertForm(formId){
+  const fid=_formTargetFid||_veCurSel?.fid;
+  if(!fid){ toast('Click an element first','err'); return; }
+  const form=_forms.find(f=>f.id===formId);
+  if(!form){ toast('Form not found — refresh and try again','err'); return; }
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,html:renderFormHtml(form)},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  closeM('m-formpicker');
+  toast('Form added — Save the page to publish it','ok');
 }
 
 function veUndo(){
@@ -9930,6 +10169,7 @@ async function veSavePage(){
   if(_veMode==='code' && _cmEditor){ html=_cmEditor.getValue(); }
   else { html=veSerializeClean(); if(html==null){ toast('Page not loaded yet','err'); return; } }
   html=pageInjectCustom(html, pg);   // per-page custom CSS/JS (Page Settings)
+  html=veFinalizePageHtml(html);     // expand [form id=…] + ensure the forms runtime
 
   const btn=document.getElementById('ve-save-btn');
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
