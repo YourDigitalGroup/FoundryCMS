@@ -2224,7 +2224,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.60';
+const CMS_VERSION='1.14.61';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3211,6 +3211,7 @@ async function formScanPages(){
       const hdr=captureFormHeader(f);
       found.push({ pageId:pg.id, path:fp, label:pg.label||fp, formIndex:idx, fields,
         headerTitle:hdr.title, headerDesc:hdr.desc,
+        noLabels:f.querySelectorAll('label').length===0,   // placeholder-style form → keep it that way
         summary:fields.filter(x=>x.type!=='hidden').slice(0,6).map(x=>x.label).join(', ') });
     });
   }
@@ -3249,6 +3250,13 @@ function startConvertForm(i){
   const t=String(it.label||'').replace(/\.html?$/i,'').replace(/[\/_-]+/g,' ').trim();
   showFormBuilder({ title:(t?t.replace(/\b\w/g,c=>c.toUpperCase()):'Contact')+' Form' });
   toast('Review the fields, then click Save — I’ll place the form on '+it.label+' automatically.','ok');
+  // Grab the original form's look in the background and drop it into the Custom
+  // CSS box (unless the user already typed there). Scoped to .foundry-form here
+  // because the form's id doesn't exist until Save.
+  captureFormCss(it.path,it.formIndex,'.foundry-form').then(css=>{
+    const el=document.getElementById('fb-css');
+    if(css && el && !el.value.trim()){ el.value=css; toast('Grabbed the form’s current styling into Custom CSS ✓','ok'); }
+  }).catch(()=>{});
 }
 // Swap the (formIndex-th) <form> on a page for the CMS-rendered form, make sure
 // the forms runtime is present, and save the page. Returns 'ok', 'noread' (page
@@ -3262,13 +3270,95 @@ function startConvertForm(i){
 async function placeFormOnPage(form, path, formIndex, includeManaged){
   const d=await apiCall('read_file',{path}); let html=d.content||'';
   if(!html) return 'noread';
-  const rendered=renderFormHtml(form);
-  let n=-1, replaced=false;
-  html=html.replace(/<form\b[^>]*>[\s\S]*?<\/form>/gi, m=>{ n++; if(n===formIndex && (includeManaged || !/class=["'][^"']*foundry-form/.test(m))){ replaced=true; return rendered; } return m; });
-  if(!replaced) return 'notfound';
+  const blocks=findFormBlocks(html);
+  const blk=blocks[formIndex];
+  if(!blk) return 'notfound';
+  if(!includeManaged && /class=["'][^"']*foundry-form/.test(blk.html)) return 'notfound';
+  html=html.slice(0,blk.start)+renderFormHtml(form)+html.slice(blk.end);
   html=ensureFormsRuntime(html);   // refresh/inject the shared form CSS+JS
   await apiCall('write_file',{path,content:html});
   return 'ok';
+}
+// Enumerate the page's REAL <form>…</form> blocks by text offset — skipping any
+// that live inside comments, <script>, <style>, <template>, or <textarea>, which
+// the DOM never renders as forms. The placement scans index forms via DOMParser,
+// so the swap must count them the same way: a commented-out old form used to
+// shift the raw-text count and make every swap after it miss (the "placements
+// don't apply" bug). Matching is done on a same-length shadow copy with those
+// regions blanked; slicing uses the original string.
+function findFormBlocks(html){
+  html=String(html||'');
+  const shadow=html.replace(/<!--[\s\S]*?-->|<script\b[\s\S]*?<\/script\s*>|<style\b[\s\S]*?<\/style\s*>|<template\b[\s\S]*?<\/template\s*>|<textarea\b[\s\S]*?<\/textarea\s*>/gi, m=>' '.repeat(m.length));
+  const out=[]; const re=/<form\b[^>]*>[\s\S]*?<\/form\s*>/gi; let m;
+  while((m=re.exec(shadow))) out.push({start:m.index, end:m.index+m[0].length, html:html.slice(m.index, m.index+m[0].length)});
+  return out;
+}
+
+// ── CAPTURE THE ORIGINAL FORM'S LOOK ──────────────────────────────
+// Render the real page in a hidden same-origin iframe (so its stylesheets and
+// fonts apply), read the COMPUTED styles of the original form's parts — inputs,
+// placeholder, labels, submit button, the form box itself — and emit them as
+// scoped CSS for the managed form's Custom CSS. The swapped-in foundry form
+// then looks like the site's design instead of browser defaults. !important is
+// used so the captured look beats both the foundry runtime defaults and any
+// theme rules that still target generic inputs.
+function captureFormCss(path, formIndex, scope){
+  return new Promise(resolve=>{
+    let done=false; const ifr=document.createElement('iframe');
+    const finish=css=>{ if(done) return; done=true; try{ ifr.remove(); }catch{} resolve(css||''); };
+    setTimeout(()=>finish(''), 8000);                       // never hang a conversion on a slow page
+    ifr.style.cssText='position:fixed;left:-12000px;top:0;width:1200px;height:900px;visibility:hidden;pointer-events:none';
+    ifr.onload=()=>{ setTimeout(()=>{                       // one tick so late CSS settles
+      try{
+        const doc=ifr.contentDocument, win=ifr.contentWindow;
+        const f=[...doc.querySelectorAll('form')][formIndex];
+        finish(f?buildCssFromComputed(win,f,scope||'.foundry-form'):'');
+      }catch(e){ finish(''); }
+    },120); };
+    ifr.onerror=()=>finish('');
+    document.body.appendChild(ifr);
+    ifr.src='../'+String(path||'').replace(/^\/+/,'')+'?t='+Date.now();
+  });
+}
+function buildCssFromComputed(win, formEl, scope){
+  const vis=el=>el&&(el.offsetWidth>0||el.offsetHeight>0);
+  const grab=(el,props)=>{ if(!el) return '';
+    const cs=win.getComputedStyle(el);
+    return props.map(p=>{ const v=cs.getPropertyValue(p); return v?p+':'+v+' !important':''; }).filter(Boolean).join(';');
+  };
+  const FIELD=['background-color','color','border','border-radius','padding','font-size','font-family','font-weight','line-height','box-shadow'];
+  const BTN=['background-color','background-image','color','border','border-radius','padding','font-size','font-family','font-weight','letter-spacing','text-transform','box-shadow','line-height'];
+  const LBL=['color','font-size','font-weight','letter-spacing','text-transform','font-family'];
+  const BOX=['background-color','border','border-radius','padding','box-shadow'];
+  const input=[...formEl.querySelectorAll('input')].find(i=>vis(i)&&!['submit','button','hidden','checkbox','radio','image','reset','search'].includes((i.type||'').toLowerCase()));
+  const ta=[...formEl.querySelectorAll('textarea')].find(vis);
+  const sel=[...formEl.querySelectorAll('select')].find(vis);
+  const lbl=[...formEl.querySelectorAll('label')].find(vis);
+  const btn=[...formEl.querySelectorAll('button,[type=submit]')].find(vis);
+  const rules=[];
+  const fieldSrc=input||ta||sel;
+  if(fieldSrc){
+    rules.push(scope+' input,'+scope+' textarea,'+scope+' select{'+grab(fieldSrc,FIELD)+'}');
+    try{ const pc=win.getComputedStyle(fieldSrc,'::placeholder');
+      const col=pc.getPropertyValue('color'), op=pc.getPropertyValue('opacity');
+      if(col) rules.push(scope+' input::placeholder,'+scope+' textarea::placeholder{color:'+col+' !important'+(op?';opacity:'+op+' !important':'')+'}');
+    }catch(e){}
+  }
+  if(lbl) rules.push(scope+' .ff-label{'+grab(lbl,LBL)+'}');
+  if(btn){
+    let b=grab(btn,BTN)+';cursor:pointer !important';
+    try{ const bw=btn.getBoundingClientRect().width, fw=formEl.getBoundingClientRect().width;
+      if(fw>0 && bw/fw>0.92) b+=';width:100% !important';   // original button spans the form
+    }catch(e){}
+    rules.push(scope+' .ff-submit{'+b+'}');
+  }
+  try{ const cs=win.getComputedStyle(formEl);
+    const bg=cs.getPropertyValue('background-color');
+    const decorated=(bg&&bg!=='rgba(0, 0, 0, 0)'&&bg!=='transparent')||parseFloat(cs.getPropertyValue('border-top-width'))>0||cs.getPropertyValue('box-shadow')!=='none';
+    if(decorated) rules.push(scope+'{'+grab(formEl,BOX)+'}');
+  }catch(e){}
+  if(!rules.length) return '';
+  return '/* Captured from the original form so this one matches the site design. Edit freely. */\n'+rules.join('\n');
 }
 // Expand [form id=xxx] shortcodes into the rendered managed form. Only the BLOG
 // runtime ever rendered these — on a normal page the pasted shortcode published
@@ -3373,19 +3463,26 @@ function fpSetAll(){
 async function applyFormPlacements(){
   const btn=document.getElementById('fp-apply');
   if(btn){ btn.disabled=true; btn.textContent='Applying…'; }
-  let changed=0, failed=0;
+  let changed=0, failed=0, cssBaked=false;
   try{
     for(let i=0;i<_fpRows.length;i++){
       const sel=document.getElementById('fp-sel-'+i); if(!sel) continue;
       const want=sel.value;
       if(!want || want===_fpRows[i].currentId) continue;   // unchanged / not chosen
       const form=_forms.find(f=>f.id===want); if(!form){ failed++; continue; }
+      // Replacing a hand-coded form with a form that has no styling of its own:
+      // capture the original's look first (it's about to leave the page) so the
+      // managed form matches the site design instead of browser defaults.
+      if(!_fpRows[i].currentId && form.settings && !String(form.settings.css||'').trim()){
+        try{ const css=await captureFormCss(_fpRows[i].path,_fpRows[i].formIndex,'#ffm-'+form.id); if(css){ form.settings.css=css; cssBaked=true; } }catch(e){}
+      }
       try{
         const r=await placeFormOnPage(form,_fpRows[i].path,_fpRows[i].formIndex,true);
         if(r==='ok'){ _fpRows[i].currentId=want; _fpRows[i].desc=decodeHtml(form.title||form.id); changed++; }
         else failed++;
       }catch(e){ failed++; console.warn('placement failed for '+_fpRows[i].label, e&&e.message); }
     }
+    if(cssBaked){ try{ await saveFormsJson(); }catch(e){} }   // keep the captured styling on the form
   }finally{ if(btn){ btn.disabled=false; btn.textContent='Apply changes'; } }
   fpRender();
   toast(changed?('Updated '+changed+' form spot'+(changed===1?'':'s')+(failed?(' · '+failed+' failed'):'')+' ✓'):(failed?('No spots updated · '+failed+' failed'):'Nothing to change — every spot already uses the selected form'), failed&&!changed?'err':'ok');
@@ -3459,6 +3556,8 @@ async function convertAllForms(){
   for(const it of items){
     try{
       const form=buildFormFromScan(it);
+      // Capture the original's look BEFORE the swap removes it from the page.
+      try{ form.settings.css=(await captureFormCss(it.path,it.formIndex,'#ffm-'+form.id))||''; }catch(e){}
       const r=await placeFormOnPage(form, it.path, it.formIndex);
       if(r==='ok'){ _forms.unshift(form); done++; }
       else { failed++; failedLabels.push(it.label||it.path); }
@@ -3484,7 +3583,7 @@ function buildFormFromScan(it){
       css:'',
       headerTitle:it.headerTitle||'',
       headerDesc:it.headerDesc||'',
-      style:{}
+      style:it.noLabels?{labels:'hide'}:{}   // original used placeholders, not labels
     }
   };
 }
@@ -3498,6 +3597,8 @@ async function useFormEverywhere(i){
   if(!confirm('Put the “'+src.label+'” form on all '+items.length+' form spot'+(items.length===1?'':'s')+' across your pages? They’ll all become the same managed form and capture submissions under Forms → Entries.')) return;
   closeM('m-form-convert');
   const form=buildFormFromScan(src);
+  // Capture the chosen form's look from its own page before it's swapped out.
+  try{ form.settings.css=(await captureFormCss(src.path,src.formIndex,'#ffm-'+form.id))||''; }catch(e){}
   let done=0, failed=0;
   for(const it of items){
     try{ const r=await placeFormOnPage(form, it.path, it.formIndex); if(r==='ok')done++; else failed++; }
@@ -7969,6 +8070,9 @@ return '(function(){\n'
 // into the element when it can hold children (section/column/div), otherwise
 // right after it. The admin side sends the fully rendered HTML.
 +'      }else if(m.action==="insertHtml"){\n'
+// The shared stylesheet rides along so the inserted block renders styled in the
+// editor; it persists into the saved page too (veFinalizePageHtml re-normalizes).
++'        if(m.css && !document.getElementById("foundry-forms-css")){ var cwrap=document.createElement("div"); cwrap.innerHTML=String(m.css); var cst=cwrap.firstElementChild; if(cst)(document.head||document.documentElement).appendChild(cst); }\n'
 +'        var wrap=document.createElement("div");\n'
 +'        wrap.innerHTML=String(m.html||"");\n'
 +'        var kids=[].slice.call(wrap.childNodes);\n'
@@ -8657,7 +8761,10 @@ function veInsertForm(formId){
   if(!form){ toast('Form not found — refresh and try again','err'); return; }
   const ifrm=document.getElementById('visual-iframe');
   if(!ifrm||!ifrm.contentWindow) return;
-  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,html:renderFormHtml(form)},'*');
+  // Ship the shared forms CSS along with the markup so the form looks right IN
+  // the editor too (it was only being injected at save time, so inserted forms
+  // showed browser-default styling until the page was saved and reopened).
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,html:renderFormHtml(form),css:formsRuntimeCss()},'*');
   document.getElementById('ve-unsaved')?.classList.add('on');
   closeM('m-formpicker');
   toast('Form added — Save the page to publish it','ok');
