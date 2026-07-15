@@ -1345,6 +1345,7 @@ textarea.fb-input{resize:vertical}
         <div class="ta" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="fd-btn-primary" onclick="openNewPost()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Post</button>
           <button class="btn btn-o btn-sm" onclick="publishBlogPage()" title="Generate posts.html so you can link it in your nav menu"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Publish Blog Page</button>
+          <button class="btn btn-o btn-sm" onclick="openPagesToPosts()" title="Turn existing pages into blog posts — pages named blog… are detected automatically, and you can pick any page"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg> Convert pages to posts</button>
           <span style="font-size:12px;color:var(--muted)">Link <code style="font-family:var(--font-mono);background:var(--surface-3);padding:2px 6px;border-radius:4px">posts.html</code> in your nav to show the blog.</span>
         </div>
         <div id="posts-body"><div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg><h3>No posts yet</h3><p>Click New Post to write your first article.</p></div></div>
@@ -2149,6 +2150,12 @@ textarea.fb-input{resize:vertical}
     </div>
   </div>
 </div>
+<div class="mw" id="m-page2post">
+  <div class="modal" style="width:640px;max-width:94vw;max-height:84vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Convert pages to blog posts</h2><button class="ib" onclick="closeM('m-page2post')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" id="page2post-body" style="overflow-y:auto"></div>
+  </div>
+</div>
 <div class="mw" id="m-form-placements">
   <div class="modal" style="width:720px;max-width:94vw;max-height:84vh;display:flex;flex-direction:column">
     <div class="mh"><h2>Form placements</h2><button class="ib" onclick="closeM('m-form-placements')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -2232,7 +2239,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.62';
+const CMS_VERSION='1.14.63';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4451,7 +4458,159 @@ const POST_BLOCK_TYPES=[
   {type:'embed',     label:'Embed',     icon:'▶'},
   {type:'form',      label:'Form',      icon:'▤'},
   {type:'divider',   label:'Divider',   icon:'—'},
+  {type:'html',      label:'HTML',      icon:'<>'},
 ];
+
+// ── CONVERT PAGES → BLOG POSTS ────────────────────────────────────
+// Turn existing pages into managed blog posts. Pages named blog… (blog-my-trip
+// .html, /blog/…, a "Blog …" label) are auto-detected and pre-ticked, and ANY
+// page can be ticked — so designating a page as a post is the same flow. The
+// page's content is mapped to native post blocks (headings, paragraphs, images,
+// lists, quotes, embeds, dividers, managed forms); markup the blocks can't
+// represent is kept verbatim in an HTML block so nothing is lost.
+let _p2pPages=[];
+function pageLooksLikeBlog(pg){
+  const base=String(pg.file||pg.path||'').split('/').pop().toLowerCase();
+  const path=String(pg.path||pg.file||'').toLowerCase();
+  const label=String(pg.label||'').toLowerCase();
+  return /^blog([-_.]|$)/.test(base) || /(^|\/)blog\//.test(path) || /^blog\b/.test(label);
+}
+// The page's content area: <main>/<article> when present, else the body with
+// the site chrome (header/nav/footer) and machinery stripped.
+function pageContentRoot(doc){
+  const src=doc.querySelector('main')||doc.querySelector('article')||doc.body||doc.documentElement;
+  const clone=src.cloneNode(true);
+  clone.querySelectorAll('script,style,noscript,link,meta,header,nav,footer,.grecaptcha-badge,[data-fourge-rc],[id*="adaptify" i],[class*="adaptify" i]').forEach(n=>n.remove());
+  return clone;
+}
+// Walk the content and emit post blocks. The FIRST h1 is captured as the title
+// (the blog shell renders the title itself); everything unrecognized survives
+// as an HTML block.
+function pageContentBlocks(root, meta){
+  const out=[];
+  const push=b=>{ b.id=uid(); out.push(b); };
+  const isYtVm=u=>/youtube\.com|youtu\.be|vimeo\.com/.test(u||'');
+  (function walk(el){
+    [...el.childNodes].forEach(node=>{
+      if(node.nodeType===3){ const t=node.textContent.trim(); if(t) push({type:'paragraph',html:esc(t)}); return; }
+      if(node.nodeType!==1) return;
+      const tag=node.tagName.toLowerCase();
+      if(tag==='h1'){ const t=node.textContent.trim(); if(!meta.h1&&t){ meta.h1=t; } else if(t) push({type:'heading',level:'h2',text:t}); return; }
+      if(/^h[2-6]$/.test(tag)){ const t=node.textContent.trim(); if(t) push({type:'heading',level:(tag==='h5'||tag==='h6')?'h4':tag,text:t}); return; }
+      if(tag==='p'){
+        const img=node.querySelector('img');
+        if(img&&!node.textContent.trim()){ push({type:'image',url:img.getAttribute('src')||'',alt:img.getAttribute('alt')||'',caption:''}); return; }
+        const h=node.innerHTML.trim(); if(h) push({type:'paragraph',html:h}); return;
+      }
+      if(tag==='img'){ push({type:'image',url:node.getAttribute('src')||'',alt:node.getAttribute('alt')||'',caption:''}); return; }
+      if(tag==='figure'){
+        const img=node.querySelector('img');
+        if(img){ push({type:'image',url:img.getAttribute('src')||'',alt:img.getAttribute('alt')||'',caption:(node.querySelector('figcaption')?.textContent||'').trim()}); return; }
+        push({type:'html',html:node.outerHTML}); return;
+      }
+      if(tag==='ul'||tag==='ol'){
+        const items=[...node.children].filter(c=>c.tagName==='LI').map(li=>li.textContent.trim()).filter(Boolean).join('\n');
+        if(items) push({type:'list',ordered:tag==='ol',items}); return;
+      }
+      if(tag==='blockquote'){ push({type:'quote',text:node.textContent.trim(),cite:(node.querySelector('cite')?.textContent||'').trim()}); return; }
+      if(tag==='hr'){ push({type:'divider'}); return; }
+      if(tag==='iframe'){
+        const src=node.getAttribute('src')||'';
+        if(isYtVm(src)) push({type:'embed',url:src}); else push({type:'html',html:node.outerHTML});
+        return;
+      }
+      if(tag==='form'){
+        const fid=node.getAttribute('data-form-id');
+        if(fid) push({type:'form',formId:fid}); else push({type:'html',html:node.outerHTML});
+        return;
+      }
+      if(tag==='br') return;
+      if(['div','section','article','main','span','center'].includes(tag)){
+        if(node.querySelector('p,h1,h2,h3,h4,h5,h6,img,ul,ol,blockquote,figure,form,iframe')) walk(node);
+        else { const t=node.textContent.trim(); if(t) push({type:'paragraph',html:node.innerHTML.trim()}); }
+        return;
+      }
+      push({type:'html',html:node.outerHTML});   // tables, videos, custom widgets — kept as-is
+    });
+  })(root);
+  return out;
+}
+function pageToPost(html, pg, publish){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const metaC=n=>doc.querySelector('meta[name="'+n+'"]')?.getAttribute('content')||doc.querySelector('meta[property="'+n+'"]')?.getAttribute('content')||'';
+  const meta={h1:''};
+  const blocks=pageContentBlocks(pageContentRoot(doc), meta);
+  const titleTag=(doc.querySelector('title')?.textContent||'').split(/\s*[|–—·]\s*/)[0].trim();
+  const title=metaC('og:title')||meta.h1||titleTag||pg.label||'Untitled post';
+  const firstImg=blocks.find(b=>b.type==='image'&&b.url);
+  const firstPara=blocks.find(b=>b.type==='paragraph'&&b.html);
+  const tmp=document.createElement('div'); tmp.innerHTML=firstPara?firstPara.html:'';
+  const base=String(pg.file||pg.path||'').split('/').pop().replace(/\.html?$/i,'');
+  let slug=slugify(base.replace(/^blog[-_.]?/i,''))||slugify(title)||('post-'+uid().slice(0,4));
+  return {
+    id:uid(), title, slug,
+    excerpt:(metaC('description')||tmp.textContent.trim()).slice(0,180),
+    author:(_site&&_site.name)||'',
+    date:(metaC('article:published_time')||'').slice(0,10)||new Date().toISOString().slice(0,10),
+    featured:metaC('og:image')||(firstImg?firstImg.url:''),
+    blocks, published:!!publish
+  };
+}
+async function openPagesToPosts(){
+  if(!canCallApi()){ toast('Sign in again to scan your pages','err'); return; }
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
+  openM('m-page2post');
+  const body=document.getElementById('page2post-body');
+  _p2pPages=getVisiblePages().filter(pg=>String(pg.file||pg.path||'').split('/').pop().toLowerCase()!=='posts.html');
+  if(!_p2pPages.length){ body.innerHTML='<div class="empty" style="padding:24px"><h3>No pages found</h3><p>Import or create pages first.</p></div>'; return; }
+  const slugTaken=new Set(_posts.map(p=>p.slug));
+  body.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Tick the pages that should become blog posts — pages named <b>blog…</b> are pre-ticked, and you can tick any other page too. Each page’s content becomes an editable post (headings, text, images, lists…); anything the blocks can’t represent is kept as-is.</div>'
+    +'<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px">'
+      +'<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="p2p-publish" checked> Publish immediately</label>'
+      +'<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="p2p-remove"> Delete the original pages afterwards</label>'
+    +'</div>'
+    +_p2pPages.map((pg,i)=>{
+      const base=String(pg.file||pg.path||'').split('/').pop();
+      const guessSlug=slugify(base.replace(/\.html?$/i,'').replace(/^blog[-_.]?/i,''));
+      const dupe=guessSlug&&slugTaken.has(guessSlug);
+      return '<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer">'
+        +'<input type="checkbox" id="p2p-chk-'+i+'"'+(pageLooksLikeBlog(pg)?' checked':'')+'>'
+        +'<span style="flex:1;min-width:0"><span style="font-size:13px;font-weight:600">'+esc(pg.label||base)+'</span>'
+        +'<span style="display:block;font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(pg.path||pg.file||'')+(dupe?' · a post with this address already exists (a suffix will be added)':'')+'</span></span>'
+      +'</label>';
+    }).join('')
+    +'<div style="margin-top:12px;display:flex;justify-content:flex-end"><button class="fd-btn-primary" id="p2p-go" onclick="convertPagesToPosts()">Convert selected →</button></div>';
+}
+async function convertPagesToPosts(){
+  const sel=_p2pPages.map((pg,i)=>({pg,i})).filter(x=>document.getElementById('p2p-chk-'+x.i)?.checked);
+  if(!sel.length){ toast('Tick at least one page first','err'); return; }
+  const publish=document.getElementById('p2p-publish')?.checked!==false;
+  const removeOrig=document.getElementById('p2p-remove')?.checked===true;
+  if(removeOrig && !confirm('Also DELETE the '+sel.length+' original page file'+(sel.length===1?'':'s')+' from the site? Their old addresses will stop working (each post gets a new address on your blog page). This can’t be undone.')) return;
+  const btn=document.getElementById('p2p-go'); if(btn){ btn.disabled=true; btn.textContent='Converting…'; }
+  let done=0, failed=0, removed=0;
+  try{
+    for(const {pg} of sel){
+      const fp=pg.path||pg.file; if(!fp){ failed++; continue; }
+      try{
+        const d=await apiCall('read_file',{path:fp}); const html=d.content||'';
+        if(!html){ failed++; continue; }
+        const post=pageToPost(html, pg, publish);
+        if(_posts.some(p=>p.slug===post.slug)) post.slug=post.slug+'-'+post.id.slice(0,4);
+        _posts.unshift(post); done++;
+        if(removeOrig){
+          try{ await apiCall('delete_file',{path:fp}); delete _pages[pg.id]; delete _veHtml[pg.id]; delete _veOrigHtml[pg.id]; removed++; }catch(e){ console.warn('page delete failed for '+fp, e&&e.message); }
+        }
+      }catch(e){ failed++; console.warn('convert failed for '+fp, e&&e.message); }
+    }
+    if(done){ try{ await savePostsJson(); await ensurePostsHtml(); }catch(e){ toast('Posts converted but saving failed: '+(e.message||e),'err'); } }
+    if(removed){ try{ await savePagesJson(); await updateSitemap(); }catch(e){} try{ renderVePageList(); }catch(e){} }
+  }finally{ if(btn){ btn.disabled=false; btn.textContent='Convert selected →'; } }
+  closeM('m-page2post');
+  renderPosts();
+  goPanel('p-posts');
+  toast(done?('Converted '+done+' page'+(done===1?'':'s')+' to blog posts'+(removed?(' · deleted '+removed+' original'+(removed===1?'':'s')):'')+(failed?(' · '+failed+' failed'):'')+' ✓'):('Nothing converted'+(failed?(' — '+failed+' failed'):'')), done?'ok':'err');
+}
 
 function openNewPost(){
   _curPost=null;
@@ -4598,6 +4757,9 @@ function renderOneBlock(b,i){
       +(b.formId?'<div style="font-size:12px;color:var(--muted);margin-top:6px">Shortcode: <code style="font-family:var(--font-mono);background:var(--surface-3);padding:2px 6px;border-radius:4px">[form id='+esc(b.formId)+']</code></div>':'<div style="font-size:12px;color:var(--muted);margin-top:6px">No forms yet — create one in the Forms tab first.</div>');
   }else if(b.type==='divider'){
     inner='<div style="text-align:center;color:var(--muted);padding:6px;font-size:12px">— horizontal divider —</div>';
+  }else if(b.type==='html'){
+    inner='<textarea oninput="updateBlockField('+i+',\'html\',this.value)" rows="6" spellcheck="false" placeholder="Raw HTML — rendered as-is on the post" style="width:100%;font-family:var(--font-mono);font-size:12px">'+esc(b.html||'')+'</textarea>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:4px">Advanced — this markup is placed in the post exactly as written. Converted pages use it to keep sections the blocks can’t represent.</div>';
   }
   return '<div class="pe-block" data-id="'+b.id+'">'+ctrls+'<div class="pe-block-body">'+inner+'</div></div>';
 }
@@ -4788,6 +4950,7 @@ function blockToHtml(b){
   }
   if(b.type==='form') return b.formId?'[form id='+b.formId+']':'';
   if(b.type==='divider') return '<hr>';
+  if(b.type==='html') return b.html||'';
   return '';
 }
 
@@ -4915,6 +5078,7 @@ function blockToHtml(b){
   if(b.type==='list'){var tag=b.ordered?'ol':'ul';var items=(b.items||'').split('\\n').filter(function(x){return x.trim();}).map(function(x){return '<li>'+esc(x.trim())+'</li>';}).join('');return '<'+tag+'>'+items+'</'+tag+'>';}
   if(b.type==='embed'){if(!b.url)return'';var src=b.url;var yt=b.url.match(/(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([\\w-]+)/);var vm=b.url.match(/vimeo\\.com\\/(\\d+)/);if(yt)src='https://www.youtube.com/embed/'+yt[1];else if(vm)src='https://player.vimeo.com/video/'+vm[1];return '<div class="embed"><iframe src="'+esc(src)+'" frameborder="0" allowfullscreen></iframe></div>';}
   if(b.type==='divider')return '<hr>';
+  if(b.type==='html')return b.html||'';
   return '';
 }
 function decodeEntities(s){if(!s)return'';var t=document.createElement('textarea');t.innerHTML=s;return t.value;}
