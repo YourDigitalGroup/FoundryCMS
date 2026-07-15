@@ -2239,7 +2239,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.63';
+const CMS_VERSION='1.14.64';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4443,7 +4443,7 @@ function renderPosts(){
       +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(p.title||'Untitled'))+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(p.date||'')+'</td>'
       +'<td><span style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;'+(p.published?'background:rgba(22,163,74,.1);color:var(--green)':'background:var(--surface-3);color:var(--muted)')+'">'+(p.published?'Published':'Draft')+'</span></td>'
-      +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();editPost('+i+')">Edit</button></td>'
+      +'<td style="text-align:right;white-space:nowrap"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();postToPage('+i+')" title="Turn this post back into a normal page (with your site’s header and footer)">→ Page</button> <button class="btn btn-o btn-xs" onclick="event.stopPropagation();editPost('+i+')">Edit</button></td>'
       +'</tr>').join('')
     +'</tbody></table>';
 }
@@ -4610,6 +4610,48 @@ async function convertPagesToPosts(){
   renderPosts();
   goPanel('p-posts');
   toast(done?('Converted '+done+' page'+(done===1?'':'s')+' to blog posts'+(removed?(' · deleted '+removed+' original'+(removed===1?'':'s')):'')+(failed?(' · '+failed+' failed'):'')+' ✓'):('Nothing converted'+(failed?(' — '+failed+' failed'):'')), done?'ok':'err');
+}
+
+// ── CONVERT A POST BACK TO A PAGE ─────────────────────────────────
+// The reverse of pages→posts (e.g. a page that was converted by mistake, or
+// deleted on the pages side). Rebuilds a real page from the post's blocks,
+// wrapped in the site's own header/footer/CSS via pageFromSiteShell, registers
+// it in the page list + sitemap, and optionally removes the post.
+function postBodyHtml(post){
+  let body='<h1>'+esc(decodeHtml(post.title||''))+'</h1>\n'+(post.blocks||[]).map(blockToHtml).join('\n');
+  return expandFormShortcodes(body);   // a form block becomes the real form
+}
+async function postToPage(i){
+  const post=_posts[i]; if(!post){ toast('Post not found','err'); return; }
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch{} }
+  const title=decodeHtml(post.title||'Page');
+  let base=slugify(post.slug||post.title)||('page-'+uid().slice(0,4));
+  let file=base+'.html';
+  const fileTaken=f=>Object.values(_pages).some(pg=>String(pg.file||pg.path||'').toLowerCase()===f.toLowerCase());
+  if(fileTaken(file)||_pages[pageIdFromPath(file)]) file=base+'-page.html';
+  if(!confirm('Create the page '+file+' from “'+title+'”? It gets your site’s header and footer and appears in the page editor.')) return;
+  if(!_forms.length){ try{ await initForms(); }catch{} }   // form blocks need the forms list to render
+  const body=postBodyHtml(post);
+  let html=null;
+  try{ html=await pageFromSiteShell(title, body); }catch(e){}
+  if(!html) html='<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>'+esc(title)+'</title>\n</head>\n<body>\n<section style="max-width:880px;margin:0 auto;padding:64px 20px;line-height:1.7">'+body+'</section>\n</body>\n</html>';
+  html=veFinalizePageHtml(html);   // forms runtime if the post carried a form
+  const id=pageIdFromPath(file);
+  try{
+    await apiCall('write_file',{path:file,content:html});
+    _pages[id]={title,file,path:file,css:'',blocks:[]};
+    await savePagesJson();
+    try{ await updateSitemap(); }catch(e){}
+    try{ renderVePageList(); }catch(e){}
+    let dropped=false;
+    if(confirm('Page created ✓ — also delete the post, so it no longer shows on the blog?')){
+      _posts.splice(i,1); dropped=true;
+      try{ await savePostsJson(); await ensurePostsHtml(); }catch(e){}
+    }
+    renderPosts();
+    toast('Converted to page '+file+(dropped?' · post removed':'')+' ✓ — it’s in the page editor now','ok');
+  }catch(e){ toast('Could not create the page: '+(e.message||e),'err'); }
 }
 
 function openNewPost(){
