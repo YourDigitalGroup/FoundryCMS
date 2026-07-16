@@ -491,6 +491,18 @@ function handleUpload() {
     if (empty($_FILES['files'])) {
         echo json_encode(['error' => 'No files in request']); return;
     }
+    // Optional destination folder ('to'), so a file can be written back where it
+    // already lives (the image optimizer overwrites images in their own folder,
+    // e.g. images/). Traversal-safe: the folder must ALREADY exist and resolve
+    // inside the web root — nothing is ever created or written outside it.
+    $destDir = PUBLIC_HTML; $toRel = '';
+    $to = isset($_POST['to']) ? str_replace('\\', '/', trim((string)$_POST['to'], "/ \t\n\r")) : '';
+    if ($to !== '') {
+        if (preg_match('~(^|/)\.\.(/|$)~', $to) || strpos($to, "\0") !== false) { echo json_encode(['error' => 'Bad destination folder']); return; }
+        $cand = realpath(PUBLIC_HTML . '/' . $to);
+        if (!$cand || strpos($cand, PUBLIC_HTML) !== 0 || !is_dir($cand)) { echo json_encode(['error' => 'Destination folder not found']); return; }
+        $destDir = $cand; $toRel = $to . '/';
+    }
     $allowed = ['html','htm','css','jsx','js','json','svg','jpg','jpeg','png','webp','gif','ico','woff','woff2','ttf','otf','pdf'];
     $blocked  = ['php','php3','php4','phtml','phar','asp','aspx','cgi','pl','sh','exe','bat'];
     $results  = [];
@@ -504,9 +516,9 @@ function handleUpload() {
         $safe = preg_replace('/[^a-zA-Z0-9._\-]/', '', $orig);
         $ext  = strtolower(pathinfo($safe, PATHINFO_EXTENSION));
         if (in_array($ext, $blocked)) { $results[] = ['name'=>$orig,'success'=>false,'error'=>'File type blocked']; continue; }
-        $dest = PUBLIC_HTML . '/' . $safe;
+        $dest = $destDir . '/' . $safe;
         if (move_uploaded_file($tmp, $dest)) {
-            $results[] = ['name'=>$safe,'success'=>true,'path'=>$safe];
+            $results[] = ['name'=>$safe,'success'=>true,'path'=>$toRel . $safe];
         } else {
             $results[] = ['name'=>$safe,'success'=>false,'error'=>'Could not save'];
         }
