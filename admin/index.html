@@ -1738,7 +1738,7 @@ textarea.fb-input{resize:vertical}
 
       <div class="panel" id="p-settings">
         <div style="max-width:680px">
-        <div class="si-sec architect-only"><h2>GitHub Integration</h2><div class="desc">Repo is read from <code>data/site.json</code>. Token stored per-browser in localStorage.</div>
+        <div class="si-sec architect-only"><h2>GitHub Integration</h2><div class="desc">Repo is read from <code>data/site.json</code>. The token is stored encrypted on the server — page saves and revisions mirror to GitHub for every editor, from any browser.</div>
           <div class="fg"><label>GitHub Token</label><input type="password" id="s-pat" placeholder="ghp_…"><small>Needs <code>repo</code> scope.</small></div>
           <div style="display:flex;gap:8px"><button class="fd-btn-primary" onclick="saveGHToken()">Save Token</button><button class="fd-btn-secondary" onclick="testGH()">Test Connection</button></div>
           <div id="s-repo-info" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
@@ -2243,7 +2243,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.65';
+const CMS_VERSION='1.14.66';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2368,6 +2368,29 @@ async function ghWrite(path,content,sha,msg){const{repo,branch}=ghCfg();const bo
 async function ghBin(path,buf,sha,msg){const{repo,branch}=ghCfg();const b64=btoa(String.fromCharCode(...new Uint8Array(buf)));const body={message:msg,content:b64,branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message);}return res.json();}
 async function ghSHA(path){const{repo,branch}=ghCfg();const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path+'?ref='+branch,{headers:ghH()});if(!res.ok)return null;const d=await res.json();return d.sha||null;}
 async function ghDelete(path,msg){const{repo,branch}=ghCfg();const sha=await ghSHA(path);if(!sha)return null;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'DELETE',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify({message:msg||'Fourge: delete',sha,branch})});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||'GitHub delete failed');}return res.json();}
+// Mirror a file into the site's GitHub repo. SERVER-side first (the gh_mirror
+// action pushes with the encrypted github_pat, so it works for EVERY signed-in
+// user from any browser — the token never reaches non-Architect sessions), then
+// falls back to the browser-side PAT (Architect sessions) if the server has no
+// token/repo configured. Returns {ok, via:'server'|'browser'|null, error?}.
+async function ghMirror(path,content,message,opts){
+  const del=!!(opts&&opts.delete);
+  try{
+    const r=await apiCall('gh_mirror', del?{path,message,delete:true}:{path,content,message});
+    if(r&&r.ok) return {ok:true,via:'server'};
+    if(r&&r.reason==='github') return {ok:false,via:'server',error:r.error||'GitHub rejected the update'};
+    // no_repo / no_token → try the browser PAT below
+  }catch(e){ /* older api.php without gh_mirror, or transient error → browser fallback */ }
+  const{repo,pat}=ghCfg();
+  if(repo&&pat){
+    try{
+      if(del){ await ghDelete(path,message); }
+      else{ const sha=await ghSHA(path); await ghWrite(path,content,sha,message); }
+      return {ok:true,via:'browser'};
+    }catch(e){ return {ok:false,via:'browser',error:e.message}; }
+  }
+  return {ok:false,via:null,error:'not_configured'};
+}
 async function checkGH(){
   const dot=document.getElementById('gh-dot'),lbl=document.getElementById('gh-lbl');
   const{repo,pat}=ghCfg();
@@ -7951,7 +7974,7 @@ async function headingsApplyAll(){
 async function savePagesJson(){
   const json=JSON.stringify(_pages,null,2); let ok=false;
   if(canCallApi()){ try{ await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
-  const{repo,pat}=ghCfg(); if(repo&&pat){ try{ const sha=await ghSHA(F_PAGES); await ghWrite(F_PAGES,json,sha,'Fourge: page settings'); ok=true; }catch(e){} }
+  try{ const g=await ghMirror(F_PAGES,json,'Fourge: page settings'); ok=ok||g.ok; }catch(e){}
   if(ok) savePagesBackup();   // keep the known-good snapshot in sync with this change
   return ok;
 }
@@ -10716,14 +10739,15 @@ async function logRevision(pg, filePath, html){
     await apiCall('write_file',{path:'data/revisions.json',content:revIndex});
     await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html});
     dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html'}).catch(()=>{}); });
-    // GitHub mirror (durable version history in the repo). Non-blocking so a
-    // GitHub hiccup or rate-limit can never fail the page save.
-    const{repo,pat}=ghCfg();
-    if(repo&&pat){
-      ghWrite('data/rev_'+rid+'.html',html,null,'Fourge: revision snapshot '+rid).catch(e=>console.warn('GitHub revision snapshot failed:',e.message));
-      ghSHA('data/revisions.json').then(sha=>ghWrite('data/revisions.json',revIndex,sha,'Fourge: revision index')).catch(e=>console.warn('GitHub revision index failed:',e.message));
-      dropped.forEach(x=>{ ghDelete('data/rev_'+x.id+'.html','Fourge: prune old revision '+x.id).catch(()=>{}); });
-    }
+    // GitHub mirror (durable version history in the repo). Server-side push, so
+    // it runs for EVERY user — not just Architect sessions holding the PAT.
+    // Non-blocking so a GitHub hiccup or rate-limit can never fail the page save.
+    ghMirror('data/rev_'+rid+'.html',html,'Fourge: revision snapshot '+rid)
+      .then(g=>{ if(!g.ok&&g.error&&g.error!=='not_configured') console.warn('GitHub revision snapshot failed:',g.error); })
+      .catch(e=>console.warn('GitHub revision snapshot failed:',e.message));
+    ghMirror('data/revisions.json',revIndex,'Fourge: revision index')
+      .catch(e=>console.warn('GitHub revision index failed:',e.message));
+    dropped.forEach(x=>{ ghMirror('data/rev_'+x.id+'.html','','Fourge: prune old revision '+x.id,{delete:true}).catch(()=>{}); });
   }catch(e){ console.warn('Revision log failed:',e.message); }
 }
 
@@ -10762,16 +10786,14 @@ async function veSavePage(){
       serverErr='Server API not configured (Settings → Server API)';
     }
 
-    // 2. Push to GitHub
-    let savedGH=false;
-    const{repo,pat}=ghCfg();
-    if(repo&&pat){
-      try{
-        const sha=await ghSHA(pg.file);
-        await ghWrite(pg.file,html,sha,'Fourge: visual edit "'+pg.title+'"');
-        savedGH=true;
-      }catch(e){ console.warn('GitHub save failed:',e.message); }
-    }
+    // 2. Mirror to GitHub — server-side push (works for every user) with the
+    //    browser PAT as fallback; a real failure is SHOWN, not just logged.
+    let savedGH=false, ghErr='';
+    try{
+      const g=await ghMirror(pg.file,html,'Fourge: visual edit "'+pg.title+'"');
+      savedGH=g.ok;
+      if(!g.ok && g.error && g.error!=='not_configured'){ ghErr=g.error; console.warn('GitHub save failed:',g.error); }
+    }catch(e){ console.warn('GitHub save failed:',e.message); }
 
     _veHtml[_curPage]=html;
     _veOrigHtml[_curPage]=html;
@@ -10779,6 +10801,7 @@ async function veSavePage(){
     renderVePageList();
 
     if(savedServer&&savedGH) toast('Saved to server + GitHub ✓','ok');
+    else if(savedServer&&ghErr) toast('Saved to server ✓ — GitHub mirror failed: '+ghErr,'err');
     else if(savedServer) toast('Saved to server ✓ (GitHub not configured)','ok');
     else if(savedGH) toast('Pushed to GitHub ✓ (Server API not configured)','ok');
     else toast('NOT SAVED — '+(serverErr||'configure Server API or GitHub in Settings'),'err');
