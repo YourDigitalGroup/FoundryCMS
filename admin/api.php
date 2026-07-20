@@ -177,7 +177,7 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
 $PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','send_test_email','recaptcha_status'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -234,6 +234,7 @@ try {
         case 'ghl_messages':    ob_end_clean(); fourgeApiGhlMessages($authUser, $body); break;
         case 'ghl_send':        ob_end_clean(); fourgeApiGhlSend($authUser, $body); break;
         case 'ghl_form_def':    ob_end_clean(); fourgeApiGhlFormDef($authUser, $body); break;
+        case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
@@ -491,6 +492,18 @@ function handleUpload() {
     if (empty($_FILES['files'])) {
         echo json_encode(['error' => 'No files in request']); return;
     }
+    // Optional destination folder ('to'), so a file can be written back where it
+    // already lives (the image optimizer overwrites images in their own folder,
+    // e.g. images/). Traversal-safe: the folder must ALREADY exist and resolve
+    // inside the web root — nothing is ever created or written outside it.
+    $destDir = PUBLIC_HTML; $toRel = '';
+    $to = isset($_POST['to']) ? str_replace('\\', '/', trim((string)$_POST['to'], "/ \t\n\r")) : '';
+    if ($to !== '') {
+        if (preg_match('~(^|/)\.\.(/|$)~', $to) || strpos($to, "\0") !== false) { echo json_encode(['error' => 'Bad destination folder']); return; }
+        $cand = realpath(PUBLIC_HTML . '/' . $to);
+        if (!$cand || strpos($cand, PUBLIC_HTML) !== 0 || !is_dir($cand)) { echo json_encode(['error' => 'Destination folder not found']); return; }
+        $destDir = $cand; $toRel = $to . '/';
+    }
     $allowed = ['html','htm','css','jsx','js','json','svg','jpg','jpeg','png','webp','gif','ico','woff','woff2','ttf','otf','pdf'];
     $blocked  = ['php','php3','php4','phtml','phar','asp','aspx','cgi','pl','sh','exe','bat'];
     $results  = [];
@@ -504,9 +517,9 @@ function handleUpload() {
         $safe = preg_replace('/[^a-zA-Z0-9._\-]/', '', $orig);
         $ext  = strtolower(pathinfo($safe, PATHINFO_EXTENSION));
         if (in_array($ext, $blocked)) { $results[] = ['name'=>$orig,'success'=>false,'error'=>'File type blocked']; continue; }
-        $dest = PUBLIC_HTML . '/' . $safe;
+        $dest = $destDir . '/' . $safe;
         if (move_uploaded_file($tmp, $dest)) {
-            $results[] = ['name'=>$safe,'success'=>true,'path'=>$safe];
+            $results[] = ['name'=>$safe,'success'=>true,'path'=>$toRel . $safe];
         } else {
             $results[] = ['name'=>$safe,'success'=>false,'error'=>'Could not save'];
         }
@@ -914,6 +927,72 @@ function fourgeApiGhlFormDef($me, $body) {
     $def = cmsGhlParseFormWidget($res);
     if (!$def || empty($def['fields'])) { http_response_code(422); echo json_encode(['error' => 'That page didn’t contain a readable form definition — make sure it’s the form’s share link.']); return; }
     echo json_encode(['ok' => true, 'formId' => $id, 'locationId' => $def['locationId'], 'name' => $def['name'], 'fields' => $def['fields']]);
+}
+
+// ── GITHUB MIRROR (server-side) ─────────────────────────────────────
+// Pushes a file into the site's GitHub repo FROM THE SERVER, using the
+// github_pat stored encrypted in the DB — so page saves and revision snapshots
+// mirror for EVERY signed-in user, from any browser. (Previously the push ran
+// in the browser with the Architect-only PAT, so any non-Architect session
+// silently skipped the mirror — server copies existed, GitHub stayed empty.)
+// The token is only USED here; it is never returned to the caller.
+function cmsGhMirrorCfg() {
+    $repo = ''; $branch = 'main'; $token = '';
+    try {
+        $site = json_decode(@file_get_contents(__DIR__ . '/../data/site.json'), true);
+        $gh = $site['github'] ?? [];
+        $repo = (string)($gh['repo'] ?? '');
+        if (!empty($gh['branch'])) $branch = (string)$gh['branch'];
+    } catch (Throwable $e) {}
+    try { $ov = (string)fourgeGetSecret(fourgeDb(), 'repo_override'); if ($ov !== '') $repo = $ov; } catch (Throwable $e) {}
+    try { $token = (string)fourgeGetSecret(fourgeDb(), 'github_pat'); } catch (Throwable $e) {}
+    return [$repo, $branch, $token];
+}
+// One GitHub REST call. Returns [httpCode, decodedJson|null, curlError].
+function cmsGhApi($method, $url, $token, $payload = null) {
+    $ch = curl_init($url);
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST  => $method,
+        CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $token, 'Accept: application/vnd.github+json', 'User-Agent: FourgeCMS', 'X-GitHub-Api-Version: 2022-11-28'],
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_TIMEOUT        => 25,
+    ];
+    if ($payload !== null) $opts[CURLOPT_POSTFIELDS] = json_encode($payload);
+    curl_setopt_array($ch, $opts);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch);
+    curl_close($ch);
+    return [$code, $res ? json_decode($res, true) : null, $err];
+}
+function fourgeApiGhMirror($me, $body) {
+    // Any signed-in user: mirroring rides along with saving. Path guards keep it
+    // to real site files (no traversal, never the secrets file or .git internals).
+    $path = str_replace('\\', '/', (string)($body['path'] ?? ''));
+    $del  = !empty($body['delete']);
+    $msg  = trim((string)($body['message'] ?? '')); if ($msg === '') $msg = 'Fourge: update ' . $path;
+    if ($path === '' || strpos($path, "\0") !== false || $path[0] === '/'
+        || preg_match('~(^|/)\.\.(/|$)~', $path) || preg_match('~(^|/)\.git(/|$)~i', $path)
+        || stripos($path, 'admin/config.secret') === 0) {
+        http_response_code(400); echo json_encode(['ok' => false, 'reason' => 'bad_path', 'error' => 'That file can’t be mirrored.']); return;
+    }
+    list($repo, $branch, $token) = cmsGhMirrorCfg();
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo']); return; }
+    if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token']); return; }
+    $base = 'https://api.github.com/repos/' . $repo . '/contents/' . implode('/', array_map('rawurlencode', explode('/', $path)));
+    list($gc, $gd) = cmsGhApi('GET', $base . '?ref=' . rawurlencode($branch), $token);
+    $sha = ($gc === 200 && isset($gd['sha'])) ? $gd['sha'] : null;
+    if ($del) {
+        if (!$sha) { echo json_encode(['ok' => true, 'skipped' => 'absent']); return; }   // nothing to prune
+        list($c, $d, $e) = cmsGhApi('DELETE', $base, $token, ['message' => $msg, 'sha' => $sha, 'branch' => $branch]);
+        if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
+        echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub delete failed (' . $c . ')' . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]); return;
+    }
+    $payload = ['message' => $msg, 'content' => base64_encode((string)($body['content'] ?? '')), 'branch' => $branch];
+    if ($sha) $payload['sha'] = $sha;
+    list($c, $d, $e) = cmsGhApi('PUT', $base, $token, $payload);
+    if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
+    error_log('Fourge GitHub mirror failed for ' . $path . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
+    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]);
 }
 
 // Validate token + location with a lightweight read. Returns [bool ok, string message].

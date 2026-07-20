@@ -1546,6 +1546,10 @@ textarea.fb-input{resize:vertical}
                   Upload
                   <input type="file" multiple accept="image/*,video/*,.pdf,.svg" onchange="uploadMedia(this.files)" style="display:none">
                 </label>
+                <button class="fd-btn-secondary" id="media-opt-all" onclick="optimizeAllImages()" title="Shrink every JPEG/PNG/WebP for the web — resized to a sensible size, re-compressed at web quality (72dpi), saved over the originals only when smaller" style="display:flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  Optimize All Images
+                </button>
                 <button class="fd-btn-primary" onclick="_media=[];initMedia()" style="display:flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
                   Scan Server
@@ -1734,7 +1738,7 @@ textarea.fb-input{resize:vertical}
 
       <div class="panel" id="p-settings">
         <div style="max-width:680px">
-        <div class="si-sec architect-only"><h2>GitHub Integration</h2><div class="desc">Repo is read from <code>data/site.json</code>. Token stored per-browser in localStorage.</div>
+        <div class="si-sec architect-only"><h2>GitHub Integration</h2><div class="desc">Repo is read from <code>data/site.json</code>. The token is stored encrypted on the server — page saves and revisions mirror to GitHub for every editor, from any browser.</div>
           <div class="fg"><label>GitHub Token</label><input type="password" id="s-pat" placeholder="ghp_…"><small>Needs <code>repo</code> scope.</small></div>
           <div style="display:flex;gap:8px"><button class="fd-btn-primary" onclick="saveGHToken()">Save Token</button><button class="fd-btn-secondary" onclick="testGH()">Test Connection</button></div>
           <div id="s-repo-info" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
@@ -2239,7 +2243,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.64';
+const CMS_VERSION='1.14.66';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2364,6 +2368,29 @@ async function ghWrite(path,content,sha,msg){const{repo,branch}=ghCfg();const bo
 async function ghBin(path,buf,sha,msg){const{repo,branch}=ghCfg();const b64=btoa(String.fromCharCode(...new Uint8Array(buf)));const body={message:msg,content:b64,branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message);}return res.json();}
 async function ghSHA(path){const{repo,branch}=ghCfg();const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path+'?ref='+branch,{headers:ghH()});if(!res.ok)return null;const d=await res.json();return d.sha||null;}
 async function ghDelete(path,msg){const{repo,branch}=ghCfg();const sha=await ghSHA(path);if(!sha)return null;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'DELETE',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify({message:msg||'Fourge: delete',sha,branch})});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||'GitHub delete failed');}return res.json();}
+// Mirror a file into the site's GitHub repo. SERVER-side first (the gh_mirror
+// action pushes with the encrypted github_pat, so it works for EVERY signed-in
+// user from any browser — the token never reaches non-Architect sessions), then
+// falls back to the browser-side PAT (Architect sessions) if the server has no
+// token/repo configured. Returns {ok, via:'server'|'browser'|null, error?}.
+async function ghMirror(path,content,message,opts){
+  const del=!!(opts&&opts.delete);
+  try{
+    const r=await apiCall('gh_mirror', del?{path,message,delete:true}:{path,content,message});
+    if(r&&r.ok) return {ok:true,via:'server'};
+    if(r&&r.reason==='github') return {ok:false,via:'server',error:r.error||'GitHub rejected the update'};
+    // no_repo / no_token → try the browser PAT below
+  }catch(e){ /* older api.php without gh_mirror, or transient error → browser fallback */ }
+  const{repo,pat}=ghCfg();
+  if(repo&&pat){
+    try{
+      if(del){ await ghDelete(path,message); }
+      else{ const sha=await ghSHA(path); await ghWrite(path,content,sha,message); }
+      return {ok:true,via:'browser'};
+    }catch(e){ return {ok:false,via:'browser',error:e.message}; }
+  }
+  return {ok:false,via:null,error:'not_configured'};
+}
 async function checkGH(){
   const dot=document.getElementById('gh-dot'),lbl=document.getElementById('gh-lbl');
   const{repo,pat}=ghCfg();
@@ -5295,8 +5322,9 @@ function renderMediaViewer(){
   const tEl=document.getElementById('mv-title'); if(tEl) tEl.textContent=m.name;
   const hasPrev=_mediaViewPos>0, hasNext=_mediaViewPos<list.length-1;
   const navBtn=(dir,side,ch)=>'<button title="'+(dir<0?'Previous':'Next')+' photo (saves this one first)" onclick="mediaViewerNav('+dir+')" style="position:absolute;top:50%;transform:translateY(-50%);'+side+':12px;width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.92);color:#111;font-size:26px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.35)">'+ch+'</button>';
+  const bustUrl=m.url+(m._bust?((m.url.includes('?')?'&':'?')+'v='+m._bust):'');
   const preview=isImg
-    ? '<img src="'+esc(m.url)+'" alt="'+esc(m.alt||m.name)+'" style="max-width:100%;max-height:100%;object-fit:contain;display:block">'
+    ? '<img src="'+esc(bustUrl)+'" alt="'+esc(m.alt||m.name)+'" style="max-width:100%;max-height:100%;object-fit:contain;display:block">'
     : '<div style="color:#bbb;font-size:13px;text-align:center;padding:24px">'+esc(m.name)+'<br><span style="font-size:11px">No preview available</span></div>';
   const right=isImg
     ? '<label style="display:block;font-size:12px;font-weight:700;margin-bottom:5px">Alt text</label>'
@@ -5316,7 +5344,13 @@ function renderMediaViewer(){
     +'</div>'
     +'<div style="width:340px;flex-shrink:0;padding:20px;overflow-y:auto;border-left:1px solid var(--border);display:flex;flex-direction:column">'
       +'<div style="font-size:13px;font-weight:600;word-break:break-word;margin-bottom:3px">'+esc(m.name)+'</div>'
-      +'<div style="font-size:11px;color:var(--muted);word-break:break-all;margin-bottom:16px">'+esc(m.url)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);word-break:break-all;margin-bottom:10px">'+esc(m.url)+'</div>'
+      +(optimizableExt(m.name)
+        ? '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">'
+            +(m.size?('<span style="font-size:11.5px;color:var(--muted)">'+fmtBytes(m.size)+'</span>'):'')
+            +'<button class="fd-btn-secondary" id="mv-opt-btn" style="font-size:12px;padding:6px 12px" onclick="optimizeMediaItem('+_mediaViewCurIdx+')" title="Scale for the web (max 2000px), re-compress at web quality (72dpi), and strip camera metadata — saved over this file only if it gets smaller">Optimize for web</button>'
+          +'</div><div id="mv-opt-result" style="font-size:12px;line-height:1.5;margin-bottom:12px"></div>'
+        : '')
       +right
       +'<button class="btn btn-n btn-sm" style="margin-top:auto" onclick="copyUrl(event,\''+esc(m.url)+'\')"><i class="fa-solid fa-copy"></i> Copy URL</button>'
     +'</div>';
@@ -5431,6 +5465,104 @@ async function uploadMedia(files){
   _media=[];
   await initMedia();
 }
+
+// ── IMAGE OPTIMIZER (web / 72dpi) ─────────────────────────────────
+// Re-encodes an image in the browser and writes it back to the SAME file:
+// oversized photos are scaled to a web-sensible size (longest edge 2000px),
+// JPEG/WebP recompress at quality 0.82, PNG recompresses losslessly, and the
+// re-encode strips camera metadata (EXIF/GPS/print DPI — the result carries the
+// web-standard 72dpi). Rotation stored in EXIF is baked into the pixels first
+// so photos don't turn sideways. The file is only replaced when the result is
+// at least 5% smaller — otherwise it's already optimized and left untouched.
+const OPT_MAX_EDGE=2000, OPT_QUALITY=0.82, OPT_SKIP_UNDER=150*1024;
+function fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(n<102400?1:0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+function optimizableExt(name){ return /\.(jpg|jpeg|png|webp)$/i.test(String(name||'')); }
+async function optimizeImageFile(m){
+  if(!optimizableExt(m.name)) return {skip:'type'};                     // gif (animation), svg, avif: left alone
+  const cleanUrl=String(m.url||'').split('?')[0];
+  const r=await fetch(cleanUrl+'?t='+Date.now(),{cache:'no-store'});
+  if(!r.ok) throw new Error('Could not read the image ('+r.status+')');
+  const blob=await r.blob();
+  const origSize=blob.size||m.size||0;
+  let bmp;
+  try{ bmp=await createImageBitmap(blob,{imageOrientation:'from-image'}); }   // bake EXIF rotation
+  catch(e){ bmp=await createImageBitmap(blob); }
+  const scale=Math.min(1, OPT_MAX_EDGE/Math.max(bmp.width,bmp.height));
+  const w=Math.max(1,Math.round(bmp.width*scale)), h=Math.max(1,Math.round(bmp.height*scale));
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  const px=/\.png$/i.test(m.name), wb=/\.webp$/i.test(m.name);
+  const ctx=cv.getContext('2d');
+  if(!px&&!wb){ ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h); }   // JPEG has no alpha — avoid black flattening
+  ctx.drawImage(bmp,0,0,w,h);
+  if(bmp.close) bmp.close();
+  const mime=px?'image/png':(wb?'image/webp':'image/jpeg');
+  const out=await new Promise(res=>cv.toBlob(res,mime,px?undefined:OPT_QUALITY));
+  if(!out) return {skip:'encode'};
+  if(!(out.size<origSize*0.95)) return {skip:'already',origSize,newSize:origSize};
+  await uploadOptimizedBlob(out,m);
+  m.size=out.size; m._bust=Date.now();
+  return {origSize,newSize:out.size,resized:scale<1,w,h};
+}
+// Write the optimized image back over the original file, in its own folder.
+async function uploadOptimizedBlob(blob,m){
+  const{url,token}=getApiCfg();
+  if(!url||!token) throw new Error('Sign in again first');
+  const dir=String(m.path||'').includes('/')?m.path.slice(0,m.path.lastIndexOf('/')):'';
+  const fd=new FormData();
+  fd.append('action','upload');
+  fd.append('token',token);
+  if(dir) fd.append('to',dir);
+  fd.append('files',new File([blob],m.name,{type:blob.type}));
+  const res=await fetch(url,{method:'POST',headers:authHeaders(),body:fd});
+  const d=await res.json();
+  if(d.error) throw new Error(d.error);
+  const r=d.results&&d.results[0];
+  if(!r||!r.success) throw new Error((r&&r.error)||'Could not save the optimized image');
+}
+// Per-image button in the media viewer.
+async function optimizeMediaItem(i){
+  const m=_media[i]; if(!m) return;
+  const btn=document.getElementById('mv-opt-btn'), box=document.getElementById('mv-opt-result');
+  if(btn){ btn.disabled=true; btn.textContent='Optimizing…'; }
+  try{
+    const r=await optimizeImageFile(m);
+    if(r.skip==='type'){ if(box) box.textContent='This file type is left as-is (animations and vector files don’t re-compress safely).'; }
+    else if(r.skip==='already'){ if(box){ box.style.color='var(--green)'; box.textContent='Already optimized ✓ — no smaller version possible ('+fmtBytes(r.origSize)+').'; } }
+    else if(r.skip){ if(box) box.textContent='Could not re-encode this image.'; }
+    else{
+      const pct=Math.round((1-r.newSize/r.origSize)*100);
+      if(box){ box.style.color='var(--green)'; box.textContent='Optimized ✓ '+fmtBytes(r.origSize)+' → '+fmtBytes(r.newSize)+' ('+pct+'% smaller'+(r.resized?(', resized to '+r.w+'×'+r.h):'')+')'; }
+      toast('Image optimized ✓ — '+pct+'% smaller','ok');
+      renderMediaViewer();   // fresh preview + size
+      renderMediaGrid();
+    }
+  }catch(e){ if(box){ box.style.color='var(--red)'; box.textContent='✕ '+(e.message||'Optimize failed'); } toast('Optimize failed: '+e.message,'err'); }
+  finally{ const b2=document.getElementById('mv-opt-btn'); if(b2){ b2.disabled=false; b2.textContent='Optimize for web'; } }
+}
+// The easy button: optimize every image in the library in one pass.
+async function optimizeAllImages(){
+  const items=(_media||[]).filter(m=>optimizableExt(m.name));
+  if(!items.length){ toast('No JPEG/PNG/WebP images to optimize','err'); return; }
+  if(!confirm('Optimize all '+items.length+' image'+(items.length===1?'':'s')+' for the web? Oversized photos are scaled to a sensible size (max 2000px), re-compressed at web quality (72dpi), and saved over the originals. Images that are already optimized are left untouched.')) return;
+  const btn=document.getElementById('media-opt-all');
+  let done=0,saved=0,skipped=0,failed=0,total=0,n=0;
+  for(const m of items){
+    n++;
+    if(btn){ btn.disabled=true; btn.textContent='Optimizing '+n+'/'+items.length+'…'; }
+    try{
+      if((m.size||0) && m.size<OPT_SKIP_UNDER){ skipped++; continue; }   // small files aren't worth re-encoding
+      const r=await optimizeImageFile(m);
+      if(r.skip){ skipped++; continue; }
+      done++; total+=r.origSize; saved+=(r.origSize-r.newSize);
+    }catch(e){ failed++; console.warn('optimize failed for '+m.path, e&&e.message); }
+  }
+  if(btn){ btn.disabled=false; btn.innerHTML=OPT_ALL_LABEL; }
+  renderMediaGrid();
+  const pct=total?Math.round(saved/total*100):0;
+  toast(done?('Optimized '+done+' image'+(done===1?'':'s')+' — saved '+fmtBytes(saved)+(pct?(' ('+pct+'%)'):'')+(skipped?(' · '+skipped+' already fine'):'')+(failed?(' · '+failed+' failed'):'')+' ✓')
+            :('Nothing to shrink — '+skipped+' image'+(skipped===1?' is':'s are')+' already optimized'+(failed?(' · '+failed+' failed'):'')), done||!failed?'ok':'err');
+}
+const OPT_ALL_LABEL='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Optimize All Images';
 function pickMedia(blockId,fieldKey){const grid=document.getElementById('media-pick-grid');if(grid)grid.innerHTML=_media.map(m=>`<div class="mc" onclick="chooseMedia('${blockId}','${fieldKey}','${esc(m.url)}')"><img src="${esc(m.url)}" alt="${esc(m.name)}" loading="lazy"><div class="mc-nm">${esc(m.name)}</div></div>`).join('');openM('m-media-pick');}
 function chooseMedia(blockId,fieldKey,url){const el=document.getElementById('f-'+blockId+'-'+fieldKey);if(el)el.value=url;updateField(blockId,fieldKey,url);closeM('m-media-pick');}
 
@@ -7842,7 +7974,7 @@ async function headingsApplyAll(){
 async function savePagesJson(){
   const json=JSON.stringify(_pages,null,2); let ok=false;
   if(canCallApi()){ try{ await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
-  const{repo,pat}=ghCfg(); if(repo&&pat){ try{ const sha=await ghSHA(F_PAGES); await ghWrite(F_PAGES,json,sha,'Fourge: page settings'); ok=true; }catch(e){} }
+  try{ const g=await ghMirror(F_PAGES,json,'Fourge: page settings'); ok=ok||g.ok; }catch(e){}
   if(ok) savePagesBackup();   // keep the known-good snapshot in sync with this change
   return ok;
 }
@@ -10607,14 +10739,15 @@ async function logRevision(pg, filePath, html){
     await apiCall('write_file',{path:'data/revisions.json',content:revIndex});
     await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html});
     dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html'}).catch(()=>{}); });
-    // GitHub mirror (durable version history in the repo). Non-blocking so a
-    // GitHub hiccup or rate-limit can never fail the page save.
-    const{repo,pat}=ghCfg();
-    if(repo&&pat){
-      ghWrite('data/rev_'+rid+'.html',html,null,'Fourge: revision snapshot '+rid).catch(e=>console.warn('GitHub revision snapshot failed:',e.message));
-      ghSHA('data/revisions.json').then(sha=>ghWrite('data/revisions.json',revIndex,sha,'Fourge: revision index')).catch(e=>console.warn('GitHub revision index failed:',e.message));
-      dropped.forEach(x=>{ ghDelete('data/rev_'+x.id+'.html','Fourge: prune old revision '+x.id).catch(()=>{}); });
-    }
+    // GitHub mirror (durable version history in the repo). Server-side push, so
+    // it runs for EVERY user — not just Architect sessions holding the PAT.
+    // Non-blocking so a GitHub hiccup or rate-limit can never fail the page save.
+    ghMirror('data/rev_'+rid+'.html',html,'Fourge: revision snapshot '+rid)
+      .then(g=>{ if(!g.ok&&g.error&&g.error!=='not_configured') console.warn('GitHub revision snapshot failed:',g.error); })
+      .catch(e=>console.warn('GitHub revision snapshot failed:',e.message));
+    ghMirror('data/revisions.json',revIndex,'Fourge: revision index')
+      .catch(e=>console.warn('GitHub revision index failed:',e.message));
+    dropped.forEach(x=>{ ghMirror('data/rev_'+x.id+'.html','','Fourge: prune old revision '+x.id,{delete:true}).catch(()=>{}); });
   }catch(e){ console.warn('Revision log failed:',e.message); }
 }
 
@@ -10653,16 +10786,14 @@ async function veSavePage(){
       serverErr='Server API not configured (Settings → Server API)';
     }
 
-    // 2. Push to GitHub
-    let savedGH=false;
-    const{repo,pat}=ghCfg();
-    if(repo&&pat){
-      try{
-        const sha=await ghSHA(pg.file);
-        await ghWrite(pg.file,html,sha,'Fourge: visual edit "'+pg.title+'"');
-        savedGH=true;
-      }catch(e){ console.warn('GitHub save failed:',e.message); }
-    }
+    // 2. Mirror to GitHub — server-side push (works for every user) with the
+    //    browser PAT as fallback; a real failure is SHOWN, not just logged.
+    let savedGH=false, ghErr='';
+    try{
+      const g=await ghMirror(pg.file,html,'Fourge: visual edit "'+pg.title+'"');
+      savedGH=g.ok;
+      if(!g.ok && g.error && g.error!=='not_configured'){ ghErr=g.error; console.warn('GitHub save failed:',g.error); }
+    }catch(e){ console.warn('GitHub save failed:',e.message); }
 
     _veHtml[_curPage]=html;
     _veOrigHtml[_curPage]=html;
@@ -10670,6 +10801,7 @@ async function veSavePage(){
     renderVePageList();
 
     if(savedServer&&savedGH) toast('Saved to server + GitHub ✓','ok');
+    else if(savedServer&&ghErr) toast('Saved to server ✓ — GitHub mirror failed: '+ghErr,'err');
     else if(savedServer) toast('Saved to server ✓ (GitHub not configured)','ok');
     else if(savedGH) toast('Pushed to GitHub ✓ (Server API not configured)','ok');
     else toast('NOT SAVED — '+(serverErr||'configure Server API or GitHub in Settings'),'err');
