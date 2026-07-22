@@ -1607,13 +1607,14 @@ textarea.fb-input{resize:vertical}
               <span id="si-headings-status" style="font-size:12px;color:var(--muted)"></span>
             </div>
           </div>
-          <div class="si-sec"><h2>Favicon</h2><div class="desc">The small icon shown in browser tabs, bookmarks, and history. Use a square PNG, SVG, or ICO — at least 32×32px (512×512 recommended).</div>
+          <div class="si-sec"><h2>Favicon</h2><div class="desc">The small icon shown in browser tabs, bookmarks, and search results. Upload a square image (512×512 PNG recommended; SVG, ICO, JPG, and WebP also work). It's saved to the site root as <code>/favicon</code>, the tab / Android / iPhone sizes are generated automatically, and it's applied to every page instantly — new pages pick it up when saved. Replacing it publishes under a fresh address, so browsers can't keep showing the old icon.</div>
             <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
               <div id="si-favicon-prev"></div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <button type="button" class="fd-btn-secondary" onclick="document.getElementById('si-favicon-file').click()"><i class="fa-solid fa-upload"></i> Upload favicon</button>
+                <button type="button" class="fd-btn-secondary" onclick="faviconApplyAll(false)" title="Re-stamp the favicon tags onto every page file"><i class="fa-solid fa-rotate"></i> Apply to all pages</button>
                 <button type="button" id="si-favicon-remove" class="fd-btn-secondary" style="display:none" onclick="faviconRemove()"><i class="fa-solid fa-trash-can"></i> Remove</button>
-                <input type="file" id="si-favicon-file" accept="image/png,image/svg+xml,image/x-icon,.ico,image/gif,image/jpeg" style="display:none" onchange="uploadFavicon(this.files[0])">
+                <input type="file" id="si-favicon-file" accept="image/png,image/svg+xml,image/x-icon,.ico,image/gif,image/jpeg,image/webp" style="display:none" onchange="uploadFavicon(this.files[0])">
               </div>
             </div>
           </div>
@@ -2243,7 +2244,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.71';
+const CMS_VERSION='1.14.72';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3551,6 +3552,9 @@ function expandFormShortcodes(html){
 function veFinalizePageHtml(html){
   html=expandFormShortcodes(html);
   if(/class=["'][^"']*foundry-form/.test(html)) html=ensureFormsRuntime(html);
+  // Every saved page carries the CURRENT favicon tags — pages created after the
+  // favicon was set used to miss out until someone re-ran "apply to all".
+  try{ html=faviconInjectIntoHtml(html); }catch(e){}
   return html;
 }
 
@@ -5994,56 +5998,147 @@ async function brandApplyAll(){
 }
 
 // ── FAVICON ───────────────────────────────────
+// The whole pipeline is built around four failure modes that made favicons
+// "not come through": (1) the old flow baked the ADMIN API's absolute origin
+// into every page (broke on www/non-www/http/https variants and on cloned
+// sites) — URLs are ROOT-RELATIVE now, and the file lives at the site root as
+// /favicon.<ext> where browsers also auto-look; (2) iOS can't use SVG/ICO for
+// apple-touch-icon (iPhones showed a blank tile) — PNG renditions (32/192/180)
+// are generated on upload; (3) browsers cache favicons for weeks, so a
+// replaced icon looked like a failed upload — every tag carries a ?v=stamp
+// that changes per upload; (4) pages created AFTER an apply never got the tag
+// — injection now also runs inside veFinalizePageHtml on every save.
 function faviconRender(){
-  const url=_site.favicon||'';
+  const url=(_site&&_site.favicon)||'';
+  const v=(_site&&_site.faviconVer)?('?v='+_site.faviconVer):'';
   const prev=document.getElementById('si-favicon-prev');
   if(prev) prev.innerHTML = url
-    ? `<img src="${esc(url)}" alt="Favicon" style="width:48px;height:48px;object-fit:contain;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:5px">`
+    ? `<div style="display:flex;align-items:center;gap:12px">
+        <img src="${esc(url+v)}" alt="Favicon" style="width:48px;height:48px;object-fit:contain;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:5px">
+        <div style="font-size:11px;color:var(--muted);line-height:1.7">Lives at <code style="font-size:10.5px">${esc(url)}</code>${(_site.faviconIcons&&_site.faviconIcons.apple)?'<br>Tab, Android, and iPhone sizes generated ✓':''}</div>
+      </div>`
     : `<div style="width:48px;height:48px;border:1.5px dashed var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><i class="fa-regular fa-image"></i></div>`;
   const rm=document.getElementById('si-favicon-remove'); if(rm) rm.style.display=url?'inline-flex':'none';
+}
+// Rasterize whatever was uploaded (PNG/JPG/SVG/ICO/WebP/GIF) to a square PNG.
+// flatten=true paints a white backdrop (iOS renders transparency as black on
+// home-screen tiles). Returns null when the browser can't decode the source —
+// callers just skip that rendition; the original still ships.
+async function faviconRasterize(file,size,flatten){
+  try{
+    let src=null;
+    try{ src=await createImageBitmap(file); }catch(e){}
+    if(!src){
+      src=await new Promise(res=>{
+        const u=URL.createObjectURL(file); const im=new Image();
+        im.onload=()=>{ URL.revokeObjectURL(u); res(im); };
+        im.onerror=()=>{ URL.revokeObjectURL(u); res(null); };
+        im.src=u;
+      });
+    }
+    if(!src) return null;
+    const w=src.width||src.naturalWidth, h=src.height||src.naturalHeight;
+    if(!w||!h) return null;
+    const c=document.createElement('canvas'); c.width=size; c.height=size;
+    const x=c.getContext('2d');
+    if(flatten){ x.fillStyle='#ffffff'; x.fillRect(0,0,size,size); }
+    x.imageSmoothingQuality='high';
+    const s=Math.min(size/w,size/h), dw=Math.max(1,Math.round(w*s)), dh=Math.max(1,Math.round(h*s));
+    x.drawImage(src,Math.round((size-dw)/2),Math.round((size-dh)/2),dw,dh);
+    return await new Promise(r=>c.toBlob(r,'image/png'));
+  }catch(e){ return null; }
 }
 async function uploadFavicon(file){
   if(!file) return;
   const{url,token}=getApiCfg();
   if(!url||!token){ toast('Configure Server API in Settings to upload','err'); return; }
+  const rawExt=(file.name.split('.').pop()||'').toLowerCase();
+  const ext=['png','svg','ico','jpg','jpeg','webp','gif'].includes(rawExt)?rawExt:'png';
   toast('Uploading favicon…');
   try{
-    const fd=new FormData();
-    fd.append('action','upload'); fd.append('token',token); fd.append('files',file);
-    const res=await fetch(url,{method:'POST',headers:authHeaders(),body:fd});
-    const d=await res.json(); if(d.error) throw new Error(d.error);
-    const result=d.results?.[0]; if(!result?.success) throw new Error(result?.error||'Upload failed');
-    const siteBase=url.replace(/\/admin\/api\.php.*/i,'').replace(/\/$/,'');
-    _site.favicon=siteBase+'/'+result.path;
+    const send=async(blob,name)=>{
+      const fd=new FormData();
+      fd.append('action','upload'); fd.append('token',token);
+      fd.append('files',new File([blob],name,{type:blob.type||file.type||'application/octet-stream'}));
+      const res=await fetch(url,{method:'POST',headers:authHeaders(),body:fd});
+      const d=await res.json(); if(d.error) throw new Error(d.error);
+      const r=d.results&&d.results[0]; if(!r||!r.success) throw new Error((r&&r.error)||'Upload failed');
+      return '/'+String(r.path||'').replace(/^\/+/,'');
+    };
+    // Primary at the site root under a stable name (no 'to' folder = web root).
+    const primary=await send(file,'favicon.'+ext);
+    // PNG renditions for the picky consumers: browser tabs (32), Android +
+    // Google search results (192), iPhone home screen (180, flattened white).
+    const icons={};
+    const r32=await faviconRasterize(file,32,false);   if(r32)  icons.i32=await send(r32,'favicon-32.png');
+    const r192=await faviconRasterize(file,192,false); if(r192) icons.i192=await send(r192,'favicon-192.png');
+    const r180=await faviconRasterize(file,180,true);  if(r180) icons.apple=await send(r180,'apple-touch-icon.png');
+    _site.favicon=primary;
+    _site.faviconIcons=icons;
+    _site.faviconVer=Date.now();   // cache-buster: replaced icons show up immediately
     await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)});
     faviconRender();
     await faviconApplyAll(true);   // publish to every page in one step (no separate "Apply" click)
+    toast('Favicon uploaded'+(icons.apple?' — tab, Android, and iPhone sizes generated':'')+' ✓','ok');
   }catch(e){ toast('Upload failed: '+e.message,'err'); }
 }
 async function faviconRemove(){
   if(!confirm('Clear the favicon from all pages?')) return;
-  _site.favicon='';
+  _site.favicon=''; _site.faviconIcons={}; _site.faviconVer=0;
   try{ await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}); }catch(e){}
   faviconRender();
   await faviconApplyAll(true);   // strip it from every page in one step
 }
-// Injects a managed <link rel="icon"> (idempotent — replaces any prior Fourge favicon nodes)
-function faviconInjectIntoHtml(html,url){
-  const doc=new DOMParser().parseFromString(html,'text/html');
-  const head=doc.head||doc.documentElement;
-  doc.querySelectorAll('[data-fourge-favicon]').forEach(el=>el.remove());
-  if(url){
-    const ext=(url.split(/[?#]/)[0].split('.').pop()||'').toLowerCase();
-    const type={svg:'image/svg+xml',png:'image/png',ico:'image/x-icon',gif:'image/gif',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'}[ext]||'';
-    const add=attrs=>{const el=doc.createElement('link');for(const k in attrs)el.setAttribute(k,attrs[k]);el.setAttribute('data-fourge-favicon','');head.appendChild(el);};
-    add(type?{rel:'icon',type:type,href:url}:{rel:'icon',href:url});
-    add({rel:'apple-touch-icon',href:url});
-  }
-  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+// Legacy site.json values from the old flow are absolute URLs carrying whatever
+// origin the admin API happened to be configured with. Root-relative is the
+// only form that survives www/non-www, http→https, and site cloning.
+function faviconNormalizeUrl(u){
+  u=String(u||'');
+  if(!/^https?:\/\//i.test(u)) return u;
+  try{
+    const{url}=getApiCfg();
+    const base=((url||'').replace(/\/admin\/api\.php.*/i,'').replace(/\/$/,'')).toLowerCase();
+    if(base && u.toLowerCase().indexOf(base)===0) return u.slice(base.length)||'/';
+    const p=new URL(u);
+    if(location.host && p.host.replace(/^www\./i,'').toLowerCase()===location.host.replace(/^www\./i,'').toLowerCase())
+      return p.pathname+(p.search||'');
+  }catch(e){}
+  return u;
+}
+// The managed tag block for the current favicon config. Root-relative hrefs,
+// per-upload ?v cache-buster, and apple-touch-icon ONLY when a PNG exists —
+// iOS silently ignores SVG/ICO there, which read as "favicon didn't work".
+function faviconTagsHtml(){
+  const url=faviconNormalizeUrl((_site&&_site.favicon)||'');
+  if(!url) return '';
+  const v=(_site&&_site.faviconVer)?('?v='+_site.faviconVer):'';
+  const ic=(_site&&_site.faviconIcons)||{};
+  const ext=(url.split(/[?#]/)[0].split('.').pop()||'').toLowerCase();
+  const type={svg:'image/svg+xml',png:'image/png',ico:'image/x-icon',gif:'image/gif',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'}[ext]||'';
+  const L=[];
+  L.push('<link rel="icon"'+(type?' type="'+type+'"':'')+' href="'+url+v+'" data-fourge-favicon>');
+  if(ic.i32)  L.push('<link rel="icon" type="image/png" sizes="32x32" href="'+ic.i32+v+'" data-fourge-favicon>');
+  if(ic.i192) L.push('<link rel="icon" type="image/png" sizes="192x192" href="'+ic.i192+v+'" data-fourge-favicon>');
+  const apple=ic.apple||((ext==='png'||ext==='jpg'||ext==='jpeg')?url:'');
+  if(apple) L.push('<link rel="apple-touch-icon" sizes="180x180" href="'+apple+v+'" data-fourge-favicon>');
+  return L.join('\n');
+}
+// Idempotent, STRING-based injection (no DOM parse/re-serialize round-trip):
+// strips every managed tag — including ones written by the old DOM flow — then
+// inserts the current block before </head>. Safe to run on every save.
+function faviconInjectIntoHtml(html){
+  let out=String(html||'');
+  out=out.replace(/[ \t]*<link\b[^>]*data-fourge-favicon[^>]*>[ \t]*\r?\n?/gi,'');
+  const tags=faviconTagsHtml();
+  if(!tags) return out;
+  if(/<\/head>/i.test(out)) return out.replace(/<\/head>/i, m=>tags+'\n'+m);
+  if(/<head\b[^>]*>/i.test(out)) return out.replace(/<head\b[^>]*>/i, m=>m+'\n'+tags);
+  return tags+'\n'+out;
 }
 async function faviconApplyAll(silent){
   if(!canCallApi()){ if(!silent) toast('Sign in again to apply','err'); return; }
-  const url=_site.favicon||'';
+  if(_site && _site.favicon) _site.favicon=faviconNormalizeUrl(_site.favicon);
+  const url=(_site&&_site.favicon)||'';
   if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList(); if(!pages.length){ if(!silent) toast('No pages found','err'); return; }
   if(!silent && !confirm((url?'Set the favicon on':'Remove the favicon from')+' all '+pages.length+' page file(s)?')) return;
@@ -6051,7 +6146,9 @@ async function faviconApplyAll(silent){
   for(const pg of pages){
     const fp=pg.path||pg.file; if(!fp) continue;
     try{ const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){failed++;continue;}
-      await apiCall('write_file',{path:fp,content:faviconInjectIntoHtml(html,url)}); done++;
+      const next=faviconInjectIntoHtml(html);
+      if(next!==html) await apiCall('write_file',{path:fp,content:next});
+      done++;
     }catch(e){ console.warn('Favicon apply failed for '+fp,e.message); failed++; }
   }
   toast(done?('Favicon '+(url?'set on':'removed from')+' '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated','ok');
