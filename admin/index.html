@@ -2243,7 +2243,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.68';
+const CMS_VERSION='1.14.69';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -10357,18 +10357,49 @@ function vipPaint(){
   const grid=document.getElementById('vip-grid'); if(!grid) return;
   grid.innerHTML = _vipItems.slice(0,_vipShown).map((m,i)=>
     '<div class="ve-img-picker-item'+(_imgPickerSel===m.url?' sel':'')+'" data-vip="'+i+'" onclick="vipPick('+i+')" ondblclick="vipPick('+i+');vePickerApply()" title="'+esc(m.name)+'">'
-      // Square tile via the padding-bottom trick — geometry that can't collapse in
-      // any engine (aspect-ratio proved unreliable on at least one live setup); the
-      // image sits absolutely inside with object-fit:contain, so the FULL image is
-      // always visible, framed on a visible backdrop even for ultra-wide banners.
-      +'<div class="vip-thumb" style="position:relative;width:100%;height:0;padding-bottom:100%;overflow:hidden;background:var(--surface-3)"><img src="'+esc(m.url)+'" loading="lazy" decoding="async" style="position:absolute;top:0;left:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain" onerror="vipImgFail(this)"></div>'
+      // Fixed-pixel tile height with !important — aspect-ratio AND the padding-
+      // bottom trick both got neutralized on at least one live setup (something
+      // there overrides tile heights), so the height is now explicit and, as a
+      // final backstop, re-asserted by vipEnforceTiles() after every paint. The
+      // image sits absolutely inside with object-fit:contain, so the FULL image
+      // is always visible on a visible backdrop.
+      +'<div class="vip-thumb" style="position:relative !important;display:block !important;width:100%;height:190px !important;min-height:190px !important;max-height:190px !important;overflow:hidden !important;background:var(--surface-3)"><img src="'+esc(m.url)+'" loading="lazy" decoding="async" style="position:absolute !important;top:0 !important;left:0 !important;width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;object-fit:contain !important" onerror="vipImgFail(this)"></div>'
       +'<div class="ve-img-picker-item-name">'+esc(m.name)+'</div>'
     +'</div>').join('')
     +(_vipShown<_vipItems.length
       ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:12px;font-size:13px" onclick="vipMore()">Show more — '+(_vipItems.length-_vipShown)+' more image'+((_vipItems.length-_vipShown)===1?'':'s')+'</button>'
       : '');
+  requestAnimationFrame(()=>vipEnforceTiles(grid,190));   // backstop: re-assert heights if anything collapsed them
 }
 function vipMore(){ _vipShown=Math.min(_vipShown+VIP_PAGE,_vipItems.length); vipPaint(); }
+// Backstop against environments where something overrides tile heights (an
+// extension / injected stylesheet neutralized both aspect-ratio and the
+// padding-bottom box on at least one live machine): measure every thumb right
+// after paint and, if anything collapsed it, re-assert the height via
+// JS-set inline !important — which outranks any stylesheet, hostile or not.
+// Leaves a console breadcrumb so a stubborn environment can be diagnosed.
+function vipEnforceTiles(scope,h){
+  const px=(h||190);
+  let fixed=0, sample=null;
+  (scope||document).querySelectorAll('.vip-thumb').forEach(t=>{
+    if(Math.abs(t.offsetHeight-px)<=4) return;   // any deviation (squashed OR inflated) gets re-asserted
+    if(!sample) sample={h:t.offsetHeight, disp:getComputedStyle(t).display};
+    t.style.setProperty('height',px+'px','important');
+    t.style.setProperty('min-height',px+'px','important');
+    t.style.setProperty('display','block','important');
+    t.style.setProperty('position','relative','important');
+    const im=t.querySelector('img');
+    if(im){
+      im.style.setProperty('position','absolute','important');
+      im.style.setProperty('top','0','important'); im.style.setProperty('left','0','important');
+      im.style.setProperty('width','100%','important'); im.style.setProperty('height','100%','important');
+      im.style.setProperty('max-width','none','important'); im.style.setProperty('max-height','none','important');
+      im.style.setProperty('object-fit','contain','important');
+    }
+    fixed++;
+  });
+  if(fixed) console.warn('Fourge picker: '+fixed+' tile(s) had collapsed (sample: '+JSON.stringify(sample)+') — heights re-asserted. Something in this browser overrides tile CSS; please report this line.');
+}
 function vipImgFail(img){
   const t=img&&img.closest?img.closest('.vip-thumb'):null;
   if(t) t.innerHTML='<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);text-align:center;line-height:1.4">preview<br>unavailable</div>';
@@ -10508,7 +10539,7 @@ function renderMediaGrid(keepShown){
         ? '<img src="'+esc(m.url)+'" alt="'+esc(m.name)+'" loading="lazy" decoding="async" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;display:block" onerror="this.parentElement.style.background=\'var(--bg-2)\';this.style.display=\'none\'">'
         : '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--muted)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:10px;font-weight:700;letter-spacing:.05em">'+ext+'</span></div>';
       return '<div style="border-radius:10px;overflow:hidden;border:1.5px solid var(--border);cursor:pointer;background:var(--surface);transition:all .12s" onclick="selMedia('+_media.indexOf(m)+')" onmouseover="this.style.borderColor=\'var(--ember)\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'none\';this.style.boxShadow=\'none\'">'
-        + '<div style="position:relative;width:100%;height:0;padding-bottom:75%;background:var(--bg);overflow:hidden">'+thumb+'</div>'
+        + '<div class="vip-thumb" style="position:relative !important;display:block !important;width:100%;height:150px !important;min-height:150px !important;max-height:150px !important;overflow:hidden !important;background:var(--bg)">'+thumb+'</div>'
         + '<div style="padding:8px 10px;border-top:1px solid var(--border)">'
         + '<div style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(m.name)+'">'+esc(m.name)+'</div>'
         + (size ? '<div style="font-size:10px;color:var(--muted);margin-top:2px">'+size+'</div>' : '')
@@ -10516,6 +10547,7 @@ function renderMediaGrid(keepShown){
     }).join('')
     + (shown<items.length ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:12px;font-size:13px" onclick="mediaGridMore()">Show more — '+(items.length-shown)+' more file'+((items.length-shown)===1?'':'s')+'</button>' : '')
     + '</div>';
+  requestAnimationFrame(()=>vipEnforceTiles(grid,150));   // backstop: re-assert heights if anything collapsed them
 }
 
 
