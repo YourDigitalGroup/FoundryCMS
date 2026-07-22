@@ -2243,7 +2243,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.67';
+const CMS_VERSION='1.14.68';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -7689,7 +7689,14 @@ async function initPages(){
 function renderVePageList(){
   // Hide Targeted Landing Pages from the sidebar — except the one currently open,
   // so you can still see what you're editing if you opened it from the TLP module.
-  const pages=getPageList().filter(p=>!(_pages[p.id]&&_pages[p.id].tlp)||p.id===_curPage);
+  // Sorted alphabetically (numeric-aware, case-insensitive) with Home pinned first,
+  // so a long page list is scannable instead of import-order soup.
+  const pages=getPageList().filter(p=>!(_pages[p.id]&&_pages[p.id].tlp)||p.id===_curPage)
+    .sort((a,b)=>{
+      if(a.id==='home') return -1;
+      if(b.id==='home') return 1;
+      return String(a.label||'').localeCompare(String(b.label||''),undefined,{numeric:true,sensitivity:'base'});
+    });
   const el=document.getElementById('ve-page-items');
   if(!el)return;
   if(!pages.length){
@@ -10350,7 +10357,11 @@ function vipPaint(){
   const grid=document.getElementById('vip-grid'); if(!grid) return;
   grid.innerHTML = _vipItems.slice(0,_vipShown).map((m,i)=>
     '<div class="ve-img-picker-item'+(_imgPickerSel===m.url?' sel':'')+'" data-vip="'+i+'" onclick="vipPick('+i+')" ondblclick="vipPick('+i+');vePickerApply()" title="'+esc(m.name)+'">'
-      +'<div class="vip-thumb" style="aspect-ratio:1/1;min-height:90px"><img src="'+esc(m.url)+'" loading="lazy" decoding="async" onerror="vipImgFail(this)"></div>'
+      // Square tile via the padding-bottom trick — geometry that can't collapse in
+      // any engine (aspect-ratio proved unreliable on at least one live setup); the
+      // image sits absolutely inside with object-fit:contain, so the FULL image is
+      // always visible, framed on a visible backdrop even for ultra-wide banners.
+      +'<div class="vip-thumb" style="position:relative;width:100%;height:0;padding-bottom:100%;overflow:hidden;background:var(--surface-3)"><img src="'+esc(m.url)+'" loading="lazy" decoding="async" style="position:absolute;top:0;left:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain" onerror="vipImgFail(this)"></div>'
       +'<div class="ve-img-picker-item-name">'+esc(m.name)+'</div>'
     +'</div>').join('')
     +(_vipShown<_vipItems.length
@@ -10360,7 +10371,7 @@ function vipPaint(){
 function vipMore(){ _vipShown=Math.min(_vipShown+VIP_PAGE,_vipItems.length); vipPaint(); }
 function vipImgFail(img){
   const t=img&&img.closest?img.closest('.vip-thumb'):null;
-  if(t) t.innerHTML='<div style="font-size:10px;color:var(--muted);text-align:center;line-height:1.4;padding:8px">preview<br>unavailable</div>';
+  if(t) t.innerHTML='<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);text-align:center;line-height:1.4">preview<br>unavailable</div>';
 }
 function vipPick(i){
   const m=_vipItems[i]; if(!m) return;
@@ -10494,10 +10505,10 @@ function renderMediaGrid(keepShown){
       const ext   = (m.ext || m.name.split('.').pop() || '').toUpperCase();
       const size  = m.size ? (m.size > 1048576 ? (m.size/1048576).toFixed(1)+' MB' : (m.size/1024).toFixed(0)+' KB') : '';
       const thumb = isImg
-        ? '<img src="'+esc(m.url)+'" alt="'+esc(m.name)+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.parentElement.style.background=\'var(--bg-2)\'">'
-        : '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:6px;color:var(--muted)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:10px;font-weight:700;letter-spacing:.05em">'+ext+'</span></div>';
+        ? '<img src="'+esc(m.url)+'" alt="'+esc(m.name)+'" loading="lazy" decoding="async" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;display:block" onerror="this.parentElement.style.background=\'var(--bg-2)\';this.style.display=\'none\'">'
+        : '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--muted)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:10px;font-weight:700;letter-spacing:.05em">'+ext+'</span></div>';
       return '<div style="border-radius:10px;overflow:hidden;border:1.5px solid var(--border);cursor:pointer;background:var(--surface);transition:all .12s" onclick="selMedia('+_media.indexOf(m)+')" onmouseover="this.style.borderColor=\'var(--ember)\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'none\';this.style.boxShadow=\'none\'">'
-        + '<div style="aspect-ratio:4/3;background:var(--bg);overflow:hidden">'+thumb+'</div>'
+        + '<div style="position:relative;width:100%;height:0;padding-bottom:75%;background:var(--bg);overflow:hidden">'+thumb+'</div>'
         + '<div style="padding:8px 10px;border-top:1px solid var(--border)">'
         + '<div style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(m.name)+'">'+esc(m.name)+'</div>'
         + (size ? '<div style="font-size:10px;color:var(--muted);margin-top:2px">'+size+'</div>' : '')
