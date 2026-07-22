@@ -698,7 +698,7 @@ html[data-theme="dark"] .ve-swatch-none{background:rgba(255,255,255,.14)}
 .ve-img-picker-item .vip-thumb{aspect-ratio:1/1;width:100%;display:flex;align-items:center;justify-content:center;background:var(--bg-2);overflow:hidden}
 .ve-img-picker-item .vip-thumb img{max-width:100%;max-height:100%;width:auto;height:auto;aspect-ratio:auto;object-fit:contain;display:block;background:transparent}
 .ve-img-picker-item-name{font-size:10px;color:var(--muted);padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface)}
-.ve-img-picker-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--muted);text-align:center;gap:10px;font-size:13px}
+.ve-img-picker-empty{grid-column:1/-1;width:100%;flex:1 1 100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--muted);text-align:center;gap:10px;font-size:13px}
 .ve-img-picker-foot{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;flex-shrink:0}
 .ve-img-url-preview{width:100%;aspect-ratio:1/1;max-height:240px;margin-bottom:10px;border-radius:8px;overflow:hidden;background:var(--bg-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center}
 .ve-img-url-preview img{max-width:100%;max-height:100%;object-fit:contain;display:block}
@@ -2243,7 +2243,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.70';
+const CMS_VERSION='1.14.71';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4901,7 +4901,7 @@ function openPostImgPicker(cb){
       +'<button class="ve-img-picker-close" onclick="document.getElementById(\'post-img-picker\').style.display=\'none\'">&times;</button></div>'
       +'<div class="ve-img-picker-toolbar"><input class="ve-img-picker-search" id="pip-search" placeholder="Filter images…" oninput="renderPostImgPicker(this.value)">'
       +'<label class="ve-img-picker-upload-btn"><input type="file" accept="image/*,.svg" style="display:none" onchange="postImgPickerUpload(this)"> Upload</label></div>'
-      +'<div id="pip-grid" style="flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px"></div>'
+      +'<div id="pip-grid" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-wrap:wrap;gap:10px;justify-content:space-evenly;align-content:flex-start;align-items:flex-start"></div>'
       +'</div>';
     document.body.appendChild(modal);
   }
@@ -4925,11 +4925,11 @@ function renderPostImgPicker(filter=''){
 let _pipItems=[], _pipShown=0;
 function pipPaint(){
   const grid=document.getElementById('pip-grid'); if(!grid) return;
-  grid.innerHTML=_pipItems.slice(0,_pipShown).map((m,i)=>'<div onclick="pipPick('+i+')" title="'+esc(m.name)+'" style="border-radius:8px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:var(--bg);transition:border-color .12s" onmouseover="this.style.borderColor=\'var(--ember)\'" onmouseout="this.style.borderColor=\'transparent\'">'
+  grid.innerHTML=_pipItems.slice(0,_pipShown).map((m,i)=>'<div onclick="pipPick('+i+')" title="'+esc(m.name)+'" style="flex:0 0 140px;width:140px;max-width:140px;border-radius:8px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:var(--bg);transition:border-color .12s" onmouseover="this.style.borderColor=\'var(--ember)\'" onmouseout="this.style.borderColor=\'transparent\'">'
     +vipThumb(100,0.75,vipImgTag(m.url))
     +'<div style="font-size:10px;color:var(--muted);padding:5px 7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div></div>').join('')
-    +(_pipShown<_pipItems.length?'<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:10px;font-size:12.5px" onclick="_pipShown+=80;pipPaint()">Show more — '+(_pipItems.length-_pipShown)+' more</button>':'');
-  vipGuard(grid,100);
+    +(_pipShown<_pipItems.length?'<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;width:100%;flex:1 1 100%;padding:10px;font-size:12.5px" onclick="_pipShown+=80;pipPaint()">Show more — '+(_pipItems.length-_pipShown)+' more</button>':'');
+  vipGuard(grid,100,140);
 }
 function pipPick(i){ const m=_pipItems[i]; if(m) postImgPicked(m.url); }
 // Legacy alias — older markup (or a stale cached tab) may still reference it.
@@ -5581,12 +5581,16 @@ let _pickMediaCtx=null, _pmShown=0;
 function pickMedia(blockId,fieldKey){ _pickMediaCtx={blockId,fieldKey}; _pmShown=Math.min(120,_media.length); pmPaint(); openM('m-media-pick'); }
 function pmPaint(){
   const grid=document.getElementById('media-pick-grid'); if(!grid) return;
-  grid.innerHTML=_media.slice(0,_pmShown).map((m,i)=>'<div class="mc" onclick="chooseMediaIdx('+i+')" title="'+esc(m.name)+'">'
+  // Same flex-wrap treatment as the main picker: the .mg class is a CSS grid,
+  // whose row tracks are attackable — inline flex sidesteps that entirely.
+  grid.style.display='flex'; grid.style.flexWrap='wrap'; grid.style.gap='8px';
+  grid.style.justifyContent='space-evenly'; grid.style.alignContent='flex-start'; grid.style.alignItems='flex-start';
+  grid.innerHTML=_media.slice(0,_pmShown).map((m,i)=>'<div class="mc" onclick="chooseMediaIdx('+i+')" title="'+esc(m.name)+'" style="flex:0 0 140px;width:140px;max-width:140px">'
     +vipThumb(110,0.75,vipImgTag(m.url),'var(--bg)')
     +'<div class="mc-nm">'+esc(m.name)+'</div></div>').join('')
-    +(_pmShown<_media.length?'<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:10px;font-size:12.5px" onclick="_pmShown+=120;pmPaint()">Show more — '+(_media.length-_pmShown)+' more</button>':'')
-    +'<div style="grid-column:1/-1;text-align:right;font-size:10px;color:var(--muted);padding-top:2px">engine v'+CMS_VERSION+'</div>';
-  vipGuard(grid,110);
+    +(_pmShown<_media.length?'<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;width:100%;flex:1 1 100%;padding:10px;font-size:12.5px" onclick="_pmShown+=120;pmPaint()">Show more — '+(_media.length-_pmShown)+' more</button>':'')
+    +'<div style="grid-column:1/-1;width:100%;flex:1 1 100%;text-align:right;font-size:10px;color:var(--muted);padding-top:2px">engine v'+CMS_VERSION+'</div>';
+  vipGuard(grid,110,140);
 }
 function chooseMediaIdx(i){ const m=_media[i]; if(m&&_pickMediaCtx) chooseMedia(_pickMediaCtx.blockId,_pickMediaCtx.fieldKey,m.url); }
 function chooseMedia(blockId,fieldKey,url){const el=document.getElementById('f-'+blockId+'-'+fieldKey);if(el)el.value=url;updateField(blockId,fieldKey,url);closeM('m-media-pick');}
@@ -10239,7 +10243,7 @@ async function veOpenImgPicker(forceBg){
             <input type="file" id="vip-file" accept="image/*,video/*,.svg" style="display:none" onchange="vePickerUpload(this.files[0])">
           </label>
         </div>
-        <div class="ve-img-picker-grid" id="vip-grid"></div>
+        <div class="ve-img-picker-grid" id="vip-grid" style="display:flex;flex-wrap:wrap;gap:14px;justify-content:space-evenly;align-content:flex-start;align-items:flex-start"></div>
         <div class="ve-img-picker-foot">
           <span style="margin-right:auto;align-self:center;font-size:10.5px;color:var(--muted)">engine v${CMS_VERSION}</span>
           <button class="fd-btn-secondary" onclick="document.getElementById('ve-img-picker-modal').style.display='none'">Cancel</button>
@@ -10369,14 +10373,19 @@ function veRenderImgPicker(filter=''){
 function vipPaint(){
   const grid=document.getElementById('vip-grid'); if(!grid) return;
   grid.innerHTML = _vipItems.slice(0,_vipShown).map((m,i)=>
-    '<div class="ve-img-picker-item'+(_imgPickerSel===m.url?' sel':'')+'" data-vip="'+i+'" onclick="vipPick('+i+')" ondblclick="vipPick('+i+');vePickerApply()" title="'+esc(m.name)+'">'
-      +vipThumb(190,1,vipImgTag(m.url))
+    // 250×250 tiles, full image contained inside — per spec. The container is
+    // FLEX-WRAP, not CSS grid: on the affected live machine the grid's ROW
+    // TRACKS were being collapsed (tiles measured fine while rows overpainted
+    // each other), and forced track sizes proved un-overridable in practice.
+    // Flex has no row tracks to attack; each item is a fixed 250px island.
+    '<div class="ve-img-picker-item'+(_imgPickerSel===m.url?' sel':'')+'" data-vip="'+i+'" onclick="vipPick('+i+')" ondblclick="vipPick('+i+');vePickerApply()" title="'+esc(m.name)+'" style="flex:0 0 250px;width:250px;max-width:250px">'
+      +vipThumb(250,1,vipImgTag(m.url),'var(--surface-3)',250)
       +'<div class="ve-img-picker-item-name">'+esc(m.name)+'</div>'
     +'</div>').join('')
     +(_vipShown<_vipItems.length
-      ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:12px;font-size:13px" onclick="vipMore()">Show more — '+(_vipItems.length-_vipShown)+' more image'+((_vipItems.length-_vipShown)===1?'':'s')+'</button>'
+      ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;width:100%;flex:1 1 100%;padding:12px;font-size:13px" onclick="vipMore()">Show more — '+(_vipItems.length-_vipShown)+' more image'+((_vipItems.length-_vipShown)===1?'':'s')+'</button>'
       : '');
-  vipGuard(grid,190);
+  vipGuard(grid,250,250);
 }
 function vipMore(){ _vipShown=Math.min(_vipShown+VIP_PAGE,_vipItems.length); vipPaint(); }
 // ── Collapse-proof tiles ────────────────────────────────────────────────────
@@ -10395,26 +10404,33 @@ function vipSpacer(ratio){
   const h=Math.round(400*(ratio||1));
   return '<img class="vip-space" alt="" aria-hidden="true" draggable="false" src="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'400\' height=\''+h+'\'%3E%3C/svg%3E" style="display:block;width:100%;height:auto;opacity:0;pointer-events:none">';
 }
-function vipThumb(px,ratio,inner,bg){
-  return '<div class="vip-thumb" style="position:relative !important;display:block !important;width:100%;height:'+px+'px !important;min-height:'+px+'px !important;max-height:'+px+'px !important;overflow:hidden !important;background:'+(bg||'var(--surface-3)')+'">'+vipSpacer(ratio)+inner+'</div>';
+function vipThumb(px,ratio,inner,bg,w){
+  const wCss=w?('width:'+w+'px !important;min-width:'+w+'px !important;max-width:'+w+'px !important;'):'width:100%;';
+  return '<div class="vip-thumb" style="position:relative !important;display:block !important;'+wCss+'height:'+px+'px !important;min-height:'+px+'px !important;max-height:'+px+'px !important;overflow:hidden !important;background:'+(bg||'var(--surface-3)')+'">'+vipSpacer(ratio)+inner+'</div>';
 }
 function vipImgTag(url){
   return '<img class="vip-img" src="'+esc(url)+'" loading="lazy" decoding="async" style="position:absolute !important;top:0 !important;left:0 !important;width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;object-fit:contain !important" onerror="vipImgFail(this)">';
 }
 // Measure every thumb and, if anything deviates, re-assert the geometry via
 // JS-set inline !important (outranks any AUTHOR stylesheet, hostile or not).
-// Returns how many tiles needed fixing; leaves a console breadcrumb.
+// Measurement uses getBoundingClientRect — the PAINTED size — so squashes done
+// with transforms or zoom (which layout metrics like offsetHeight never see)
+// are caught too. Returns how many tiles needed fixing; leaves a breadcrumb.
 function vipEnforceTiles(scope,h){
   const px=(h||190);
   let fixed=0, sample=null;
   (scope||document).querySelectorAll('.vip-thumb').forEach(t=>{
-    if(Math.abs(t.offsetHeight-px)<=6) return;   // any deviation (squashed OR inflated) gets re-asserted
-    if(!sample) sample={h:t.offsetHeight, disp:getComputedStyle(t).display};
+    if(Math.abs(t.getBoundingClientRect().height-px)<=6) return;   // any deviation (squashed OR inflated) gets re-asserted
+    if(!sample) sample={h:Math.round(t.getBoundingClientRect().height), disp:getComputedStyle(t).display};
     t.style.setProperty('height',px+'px','important');
     t.style.setProperty('min-height',px+'px','important');
     t.style.setProperty('max-height',px+'px','important');
     t.style.setProperty('display','block','important');
     t.style.setProperty('position','relative','important');
+    t.style.setProperty('transform','none','important');
+    t.style.setProperty('zoom','1','important');
+    t.style.setProperty('content-visibility','visible','important');
+    t.style.setProperty('contain','none','important');
     const im=t.querySelector('img.vip-img')||t.querySelector('img:not(.vip-space)');
     if(im){
       im.style.setProperty('position','absolute','important');
@@ -10435,20 +10451,78 @@ function vipEnforceTiles(scope,h){
   if(fixed) console.warn('Fourge picker: '+fixed+' tile(s) had collapsed (sample: '+JSON.stringify(sample)+') — heights re-asserted. Something in this browser overrides tile CSS; please report this line.');
   return fixed;
 }
+// The tiles were never the only target: on one live machine the GRID'S ROW
+// TRACKS were forced tiny, so full-height tiles painted stacked on top of each
+// other — every tile measured perfectly (no enforcement, no diagnostic) while
+// the picker looked like a wall of slivers. Worse, forced track sizes proved
+// un-overridable in practice (used row sizes ignored an inline !important
+// grid-auto-rows re-assert in Chromium), so the containers are flex-wrap now —
+// flex has no row tracks to attack. This checks for the symptom directly: if
+// any two same-column tiles overlap vertically, the flex layout and each
+// item's fixed footprint get re-asserted inline-!important. Returns true if it
+// had to intervene; records the overlap state for the diagnostic bar.
+function vipGridAssert(grid){
+  const items=[...grid.children].filter(el=>el.querySelector && el.querySelector('.vip-thumb'));
+  if(!items.length){ grid.__vipOverlap=false; return false; }
+  const px=grid.__vipPx||0;
+  const cols={};
+  let squashed=false;
+  items.forEach(el=>{
+    const r=el.getBoundingClientRect();
+    // An item box shorter than the tile it contains = rows/stretch squashed the
+    // box and the tile is overpainting its neighbors (boxes may not intersect,
+    // so this is NOT covered by the overlap check).
+    if(px && r.height<px-6) squashed=true;
+    const k=Math.round(r.left/10); (cols[k]=cols[k]||[]).push(r);
+  });
+  let overlap=false;
+  Object.values(cols).forEach(list=>{
+    list.sort((a,b)=>a.top-b.top);
+    for(let i=1;i<list.length;i++) if(list[i].top < list[i-1].bottom-6){ overlap=true; break; }
+  });
+  grid.__vipOverlap=overlap||squashed;
+  if(!overlap && !squashed) return false;
+  const s=grid.style;
+  s.setProperty('display','flex','important');
+  s.setProperty('flex-direction','row','important');
+  s.setProperty('flex-wrap','wrap','important');
+  s.setProperty('align-items','flex-start','important');
+  s.setProperty('align-content','flex-start','important');
+  s.setProperty('justify-content','space-evenly','important');
+  s.setProperty('transform','none','important');
+  s.setProperty('zoom','1','important');
+  const w=grid.__vipColW||0;
+  items.forEach(el=>{
+    if(w){
+      el.style.setProperty('flex','0 0 '+w+'px','important');
+      el.style.setProperty('width',w+'px','important');
+      el.style.setProperty('max-width',w+'px','important');
+    }
+    if(px){ el.style.setProperty('min-height',px+'px','important'); }
+    el.style.setProperty('height','auto','important');
+    el.style.setProperty('position','static','important');
+    el.style.setProperty('transform','none','important');
+    el.style.setProperty('margin','0','important');
+  });
+  return true;
+}
 // Installed after every paint: immediate + delayed enforcement passes (style
 // rewriters often apply late), plus a MutationObserver that re-asserts whenever
-// anything touches style/class attributes inside the grid. Our own writes make
-// the next measurement pass clean, so the observer settles naturally; a truly
-// unwinnable environment (user-origin !important) stops after 30 attempts and
-// falls back to the structural spacer, raising the in-grid diagnostic bar if
-// tiles are still squashed flat.
-function vipGuard(grid,px){
+// anything touches style/class attributes inside the grid. Every pass checks
+// BOTH the container's row layout and each tile's painted size. Our own writes
+// make the next measurement pass clean, so the observer settles naturally; a
+// truly unwinnable environment (user-origin !important) stops after 30
+// attempts and falls back to the structural spacer, raising the in-grid
+// diagnostic bar if tiles are still squashed or overlapping.
+function vipGuard(grid,px,colw){
   if(!grid) return;
-  grid.__vipPx=px; grid.__vipAsserts=0; grid.__vipGaveUp=false; grid.__vipDiag=false;
+  grid.__vipPx=px; grid.__vipColW=colw||grid.__vipColW||0;
+  grid.__vipAsserts=0; grid.__vipGaveUp=false; grid.__vipDiag=false;
   const pass=()=>{
     if(grid.__vipGaveUp || !grid.isConnected) return;
     if(!grid.getClientRects().length) return;   // picker hidden → nothing real to measure
-    if(vipEnforceTiles(grid,px)) grid.__vipAsserts++;
+    const gridFixed=vipGridAssert(grid);
+    if(vipEnforceTiles(grid,px) || gridFixed) grid.__vipAsserts++;
     if(grid.__vipAsserts>30) grid.__vipGaveUp=true;
     vipMaybeDiag(grid,px);
   };
@@ -10464,22 +10538,31 @@ function vipGuard(grid,px){
     grid.__vipMO.observe(grid,{attributes:true,attributeFilter:['style','class'],subtree:true});
   }
 }
-// If tiles measure squashed-flat even after enforcement, say so IN the grid —
-// with the numbers — so a screenshot is a complete bug report. Only fires on
-// genuine slivers; a spacer-held tile at a non-exact height is a working
-// fallback, not a failure.
+// If tiles paint squashed-flat — or grid rows keep overlapping — even after
+// enforcement, say so IN the grid with the numbers, so a screenshot is a
+// complete bug report. Only fires on genuine breakage; a spacer-held tile at a
+// non-exact height is a working fallback, not a failure.
 function vipMaybeDiag(grid,px){
   if(grid.__vipDiag) return;
   const ths=[...grid.querySelectorAll('.vip-thumb')];
   if(!ths.length) return;
-  const collapsed=ths.filter(t=>t.offsetHeight<Math.min(48,px*0.4));
-  if(collapsed.length<Math.min(3,ths.length)) return;
+  const collapsed=ths.filter(t=>t.getBoundingClientRect().height<Math.min(48,px*0.4));
+  const squashed=collapsed.length>=Math.min(3,ths.length);
+  const stuckOverlap=!!grid.__vipOverlap && (grid.__vipAsserts||0)>10;
+  if(!squashed && !stuckOverlap) return;
   grid.__vipDiag=true;
-  const t0=collapsed[0], cs=getComputedStyle(t0);
+  const t0=(collapsed[0]||ths[0]), cs=getComputedStyle(t0), gs=getComputedStyle(grid);
+  let pitch='n/a';
+  if(ths.length>1){
+    const a=ths[0].getBoundingClientRect(), rest=ths.slice(1).map(t=>t.getBoundingClientRect()).filter(r=>Math.abs(r.left-a.left)<10);
+    if(rest.length) pitch=Math.round(rest[0].top-a.top)+'px';
+  }
   const d=document.createElement('div');
   d.className='vip-diag';
-  d.setAttribute('style','grid-column:1/-1;background:#7f1d1d;color:#fff;font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px');
-  d.textContent='⚠ This browser is collapsing the image tiles (measured '+t0.offsetHeight+'px, expected '+px+'px; computed height "'+cs.height+'", display "'+cs.display+'"). A browser extension that rewrites page styles is the usual cause — try a private window or disable extensions for this site. Engine v'+CMS_VERSION+' — screenshot this bar when reporting.';
+  d.setAttribute('style','grid-column:1/-1;width:100%;flex:1 1 100%;background:#7f1d1d;color:#fff;font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px');
+  d.textContent='⚠ This browser is breaking the image grid ('
+    +(squashed?('tile painted '+Math.round(t0.getBoundingClientRect().height)+'px, expected '+px+'px; computed height "'+cs.height+'", display "'+cs.display+'"'):'rows keep overlapping after repeated fixes')
+    +'; container "'+gs.display+'/'+(gs.flexWrap||'')+'", row pitch '+pitch+'). A browser extension that rewrites page styles is the usual cause — try a private window or disable extensions for this site. Engine v'+CMS_VERSION+' — screenshot this bar when reporting.';
   grid.prepend(d);
 }
 function vipImgFail(img){
@@ -10619,7 +10702,7 @@ function renderMediaGrid(keepShown){
     return;
   }
 
-  grid.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px">'
+  grid.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:14px;justify-content:space-evenly;align-content:flex-start;align-items:flex-start">'
     + items.slice(0,shown).map((m,i) => {
       const isImg = /\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name);
       const isVid = /\.(mp4|webm|mov)$/i.test(m.name);
@@ -10628,17 +10711,17 @@ function renderMediaGrid(keepShown){
       const thumb = isImg
         ? vipImgTag(m.url)
         : '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--muted)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:10px;font-weight:700;letter-spacing:.05em">'+ext+'</span></div>';
-      return '<div style="border-radius:10px;overflow:hidden;border:1.5px solid var(--border);cursor:pointer;background:var(--surface);transition:all .12s" onclick="selMedia('+_media.indexOf(m)+')" onmouseover="this.style.borderColor=\'var(--ember)\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'none\';this.style.boxShadow=\'none\'">'
+      return '<div style="flex:0 0 180px;width:180px;max-width:180px;border-radius:10px;overflow:hidden;border:1.5px solid var(--border);cursor:pointer;background:var(--surface);transition:all .12s" onclick="selMedia('+_media.indexOf(m)+')" onmouseover="this.style.borderColor=\'var(--ember)\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'none\';this.style.boxShadow=\'none\'">'
         + vipThumb(150,0.75,thumb,'var(--bg)')
         + '<div style="padding:8px 10px;border-top:1px solid var(--border)">'
         + '<div style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(m.name)+'">'+esc(m.name)+'</div>'
         + (size ? '<div style="font-size:10px;color:var(--muted);margin-top:2px">'+size+'</div>' : '')
         + '</div></div>';
     }).join('')
-    + (shown<items.length ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:12px;font-size:13px" onclick="mediaGridMore()">Show more — '+(items.length-shown)+' more file'+((items.length-shown)===1?'':'s')+'</button>' : '')
-    + '<div style="grid-column:1/-1;text-align:right;font-size:10px;color:var(--muted);padding-top:2px">engine v'+CMS_VERSION+'</div>'
+    + (shown<items.length ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;width:100%;flex:1 1 100%;padding:12px;font-size:13px" onclick="mediaGridMore()">Show more — '+(items.length-shown)+' more file'+((items.length-shown)===1?'':'s')+'</button>' : '')
+    + '<div style="grid-column:1/-1;width:100%;flex:1 1 100%;text-align:right;font-size:10px;color:var(--muted);padding-top:2px">engine v'+CMS_VERSION+'</div>'
     + '</div>';
-  vipGuard(grid.firstElementChild||grid,150);
+  vipGuard(grid.firstElementChild||grid,150,180);
 }
 
 
