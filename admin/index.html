@@ -2243,7 +2243,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.66';
+const CMS_VERSION='1.14.67';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4917,9 +4917,23 @@ function renderPostImgPicker(filter=''){
     grid.innerHTML='<div class="ve-img-picker-empty"><strong>No images found</strong><span>Upload one with the button above.</span></div>';
     return;
   }
-  grid.innerHTML=items.map(m=>'<div onclick="postImgPicked(\''+esc(m.url)+'\')" title="'+esc(m.name)+'" style="border-radius:8px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:var(--bg);transition:border-color .12s" onmouseover="this.style.borderColor=\'var(--ember)\'" onmouseout="this.style.borderColor=\'transparent\'">'
-    +'<div style="width:100%;height:100px;overflow:hidden;background:var(--surface-3)"><img src="'+esc(m.url)+'" loading="lazy" style="width:100%!important;height:100px!important;object-fit:cover!important;display:block" onerror="this.parentElement.parentElement.style.display=\'none\'"></div>'
-    +'<div style="font-size:10px;color:var(--muted);padding:5px 7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div></div>').join('');
+  _pipItems=items; _pipShown=Math.min(80,items.length);
+  pipPaint();
+}
+// Index-based + paged for the same reasons as the editor picker (apostrophe-safe
+// selection, no DOM/network flood, failed previews stay visible + selectable).
+let _pipItems=[], _pipShown=0;
+function pipPaint(){
+  const grid=document.getElementById('pip-grid'); if(!grid) return;
+  grid.innerHTML=_pipItems.slice(0,_pipShown).map((m,i)=>'<div onclick="pipPick('+i+')" title="'+esc(m.name)+'" style="border-radius:8px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:var(--bg);transition:border-color .12s" onmouseover="this.style.borderColor=\'var(--ember)\'" onmouseout="this.style.borderColor=\'transparent\'">'
+    +'<div style="width:100%;height:100px;overflow:hidden;background:var(--surface-3)"><img src="'+esc(m.url)+'" loading="lazy" decoding="async" style="width:100%!important;height:100px!important;object-fit:cover!important;display:block" onerror="vipImgFail2(this)"></div>'
+    +'<div style="font-size:10px;color:var(--muted);padding:5px 7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div></div>').join('')
+    +(_pipShown<_pipItems.length?'<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:10px;font-size:12.5px" onclick="_pipShown+=80;pipPaint()">Show more — '+(_pipItems.length-_pipShown)+' more</button>':'');
+}
+function pipPick(i){ const m=_pipItems[i]; if(m) postImgPicked(m.url); }
+function vipImgFail2(img){
+  const box=img.parentElement;
+  if(box) box.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:10px;color:var(--muted)">preview unavailable</div>';
 }
 function postImgPicked(url){
   document.getElementById('post-img-picker').style.display='none';
@@ -5563,7 +5577,15 @@ async function optimizeAllImages(){
             :('Nothing to shrink — '+skipped+' image'+(skipped===1?' is':'s are')+' already optimized'+(failed?(' · '+failed+' failed'):'')), done||!failed?'ok':'err');
 }
 const OPT_ALL_LABEL='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Optimize All Images';
-function pickMedia(blockId,fieldKey){const grid=document.getElementById('media-pick-grid');if(grid)grid.innerHTML=_media.map(m=>`<div class="mc" onclick="chooseMedia('${blockId}','${fieldKey}','${esc(m.url)}')"><img src="${esc(m.url)}" alt="${esc(m.name)}" loading="lazy"><div class="mc-nm">${esc(m.name)}</div></div>`).join('');openM('m-media-pick');}
+// Index-based + paged (see veRenderImgPicker) — never inline the URL in onclick.
+let _pickMediaCtx=null, _pmShown=0;
+function pickMedia(blockId,fieldKey){ _pickMediaCtx={blockId,fieldKey}; _pmShown=Math.min(120,_media.length); pmPaint(); openM('m-media-pick'); }
+function pmPaint(){
+  const grid=document.getElementById('media-pick-grid'); if(!grid) return;
+  grid.innerHTML=_media.slice(0,_pmShown).map((m,i)=>'<div class="mc" onclick="chooseMediaIdx('+i+')"><img src="'+esc(m.url)+'" alt="'+esc(m.name)+'" loading="lazy" decoding="async" onerror="vipImgFail2(this)"><div class="mc-nm">'+esc(m.name)+'</div></div>').join('')
+    +(_pmShown<_media.length?'<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:10px;font-size:12.5px" onclick="_pmShown+=120;pmPaint()">Show more — '+(_media.length-_pmShown)+' more</button>':'');
+}
+function chooseMediaIdx(i){ const m=_media[i]; if(m&&_pickMediaCtx) chooseMedia(_pickMediaCtx.blockId,_pickMediaCtx.fieldKey,m.url); }
 function chooseMedia(blockId,fieldKey,url){const el=document.getElementById('f-'+blockId+'-'+fieldKey);if(el)el.value=url;updateField(blockId,fieldKey,url);closeM('m-media-pick');}
 
 // ── SEO ───────────────────────────────────────
@@ -10301,32 +10323,60 @@ async function veLoadMediaLib(){
   }catch{}
 }
 
+// Renders in PAGES (80 at a time + "Show more") so a library with thousands of
+// photos can't flood the DOM/network, and selection is INDEX-based — the image
+// URL is never inlined into an onclick attribute. (The old markup put the URL
+// inside onclick='…' via esc(), which doesn't escape apostrophes: one filename
+// like john's-photo.jpg corrupted every tile after it — the grid rendered as
+// unclickable slivers.) A failed thumbnail shows "preview unavailable" instead
+// of silently hiding the tile.
+const VIP_PAGE=80;
+let _vipItems=[], _vipShown=0;
 function veRenderImgPicker(filter=''){
   const grid = document.getElementById('vip-grid');
   if(!grid) return;
-  const items = (filter
+  _vipItems = (filter
     ? _media.filter(m=>m.name.toLowerCase().includes(filter.toLowerCase()))
     : _media
   ).filter(m=>/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name));
-
-  if(!items.length){
+  _vipShown = Math.min(VIP_PAGE, _vipItems.length);
+  if(!_vipItems.length){
     grid.innerHTML='<div class="ve-img-picker-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><strong>No images found</strong><span>Upload images using the button above, or run Site Foundry → Import to scan your server.</span></div>';
     return;
   }
-  grid.innerHTML = items.map((m,i)=>`
-    <div class="ve-img-picker-item${_imgPickerSel===m.url?' sel':''}" onclick="vePickerSelect('${esc(m.url)}',this)" title="${esc(m.name)}">
-      <div class="vip-thumb"><img src="${esc(m.url)}" loading="lazy" onerror="this.closest('.ve-img-picker-item').style.display='none'"></div>
-      <div class="ve-img-picker-item-name">${esc(m.name)}</div>
-    </div>`).join('');
+  vipPaint();
+}
+function vipPaint(){
+  const grid=document.getElementById('vip-grid'); if(!grid) return;
+  grid.innerHTML = _vipItems.slice(0,_vipShown).map((m,i)=>
+    '<div class="ve-img-picker-item'+(_imgPickerSel===m.url?' sel':'')+'" data-vip="'+i+'" onclick="vipPick('+i+')" ondblclick="vipPick('+i+');vePickerApply()" title="'+esc(m.name)+'">'
+      +'<div class="vip-thumb" style="aspect-ratio:1/1;min-height:90px"><img src="'+esc(m.url)+'" loading="lazy" decoding="async" onerror="vipImgFail(this)"></div>'
+      +'<div class="ve-img-picker-item-name">'+esc(m.name)+'</div>'
+    +'</div>').join('')
+    +(_vipShown<_vipItems.length
+      ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:12px;font-size:13px" onclick="vipMore()">Show more — '+(_vipItems.length-_vipShown)+' more image'+((_vipItems.length-_vipShown)===1?'':'s')+'</button>'
+      : '');
+}
+function vipMore(){ _vipShown=Math.min(_vipShown+VIP_PAGE,_vipItems.length); vipPaint(); }
+function vipImgFail(img){
+  const t=img&&img.closest?img.closest('.vip-thumb'):null;
+  if(t) t.innerHTML='<div style="font-size:10px;color:var(--muted);text-align:center;line-height:1.4;padding:8px">preview<br>unavailable</div>';
+}
+function vipPick(i){
+  const m=_vipItems[i]; if(!m) return;
+  _imgPickerSel=m.url;
+  document.querySelectorAll('#vip-grid .ve-img-picker-item').forEach(el=>el.classList.toggle('sel', +el.getAttribute('data-vip')===i));
+  const srcInput = document.getElementById('vp-src');
+  if(srcInput){ srcInput.value=m.url; veImgUrlPreview(m.url); }
 }
 
 function veFilterImgPicker(val){ veRenderImgPicker(val); }
 
+// Kept for compatibility with any older markup still calling it.
 function vePickerSelect(url, el){
   _imgPickerSel = url;
   document.querySelectorAll('.ve-img-picker-item').forEach(i=>i.classList.remove('sel'));
-  el.classList.add('sel');
-  // Preview in main field
+  if(el) el.classList.add('sel');
   const srcInput = document.getElementById('vp-src');
   if(srcInput){ srcInput.value=url; veImgUrlPreview(url); }
 }
@@ -10422,11 +10472,15 @@ function setMediaView(mode){
   renderMediaGrid();
 }
 
-function renderMediaGrid(){
+let _mediaGridShown=0;
+function mediaGridMore(){ _mediaGridShown+=120; renderMediaGrid(true); }
+function renderMediaGrid(keepShown){
   const grid = document.getElementById('media-body');
   if(!grid) return;
 
   const items = mediaFilteredItems();   // shared with the viewer so order matches
+  if(!keepShown) _mediaGridShown=120;   // reset paging on fresh render / filter change
+  const shown = Math.min(_mediaGridShown, items.length);
 
   if(!items.length){
     grid.innerHTML = '<div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><h3>No files found</h3><p>Try a different filter or click <strong>Scan Server</strong>.</p></div>';
@@ -10434,7 +10488,7 @@ function renderMediaGrid(){
   }
 
   grid.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px">'
-    + items.map((m,i) => {
+    + items.slice(0,shown).map((m,i) => {
       const isImg = /\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name);
       const isVid = /\.(mp4|webm|mov)$/i.test(m.name);
       const ext   = (m.ext || m.name.split('.').pop() || '').toUpperCase();
@@ -10449,6 +10503,7 @@ function renderMediaGrid(){
         + (size ? '<div style="font-size:10px;color:var(--muted);margin-top:2px">'+size+'</div>' : '')
         + '</div></div>';
     }).join('')
+    + (shown<items.length ? '<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;padding:12px;font-size:13px" onclick="mediaGridMore()">Show more — '+(items.length-shown)+' more file'+((items.length-shown)===1?'':'s')+'</button>' : '')
     + '</div>';
 }
 
