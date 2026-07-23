@@ -2245,7 +2245,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.75';
+const CMS_VERSION='1.14.76';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -7698,6 +7698,11 @@ async function doUpdate(st){
           await apiCall('write_file',{path:'admin/api.php',content:apiContent});
       }catch(e){ console.warn('api.php not auto-updated (site may not use config.secret.php):',e.message); }
     }
+    // The .htaccess self-heal is once-per-tab-session — but we just installed a
+    // NEW api.php whose installer may write more (e.g. the posts-feed CORS
+    // rule). Clear the gate so the post-update reload re-runs the self-heal
+    // against the fresh server code; otherwise it waits for the next fresh tab.
+    try{ sessionStorage.removeItem('fourge_cu_ok'); }catch(e){}
     return true;
   }catch(e){ toast('Update failed: '+e.message,'err'); return false; }
 }
