@@ -2245,7 +2245,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.73';
+const CMS_VERSION='1.14.74';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5289,17 +5289,23 @@ loadBlog();
 // every page that shows the list with no page regeneration. Paths are
 // root-relative so the block works at any folder depth; cards link into the
 // existing posts.html single-post view.
+// Card styling follows the classic blog-archive pattern (image on top,
+// uppercase date, bold title, excerpt, "Read more →"). It inherits the site's
+// fonts, and the Read-more accent picks up the site's brand color when the
+// page defines one (--brand-color-primary / --brand-primary), falling back to
+// the engine accent. Long excerpts clamp to four lines so cards stay even.
 function postsRuntimeCss(){
   return '<style id="fourge-posts-css">'
-    +'.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:28px;margin:24px 0}'
-    +'.fourge-posts .fp-card{display:block;border:1px solid rgba(0,0,0,.12);border-radius:14px;overflow:hidden;background:#fff;color:inherit;text-decoration:none;transition:transform .15s,box-shadow .15s}'
-    +'.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 12px 32px rgba(0,0,0,.10);text-decoration:none}'
+    +'.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px;margin:24px 0}'
+    +'.fourge-posts .fp-card{display:flex;flex-direction:column;background:#fff;border:1px solid rgba(0,0,0,.07);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:transform .15s,box-shadow .15s}'
+    +'.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(0,0,0,.10);text-decoration:none}'
     +'.fourge-posts .fp-thumb{aspect-ratio:16/9;background:rgba(0,0,0,.05);overflow:hidden}'
     +'.fourge-posts .fp-thumb img{width:100%;height:100%;object-fit:cover;display:block}'
-    +'.fourge-posts .fp-body{padding:20px}'
-    +'.fourge-posts .fp-date{font-size:12px;opacity:.65;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}'
-    +'.fourge-posts .fp-title{font-size:20px;font-weight:700;line-height:1.25;margin:0 0 8px}'
-    +'.fourge-posts .fp-x{font-size:14px;opacity:.7;margin:0}'
+    +'.fourge-posts .fp-body{padding:22px 24px 24px;display:flex;flex-direction:column;flex:1}'
+    +'.fourge-posts .fp-date{font-size:12px;opacity:.6;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}'
+    +'.fourge-posts .fp-title{font-size:21px;font-weight:700;line-height:1.3;margin:0 0 10px}'
+    +'.fourge-posts .fp-x{font-size:14.5px;opacity:.72;line-height:1.6;margin:0 0 14px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}'
+    +'.fourge-posts .fp-more{margin-top:auto;font-size:14.5px;font-weight:600;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)))}'
     +'.fourge-posts .fp-empty{grid-column:1/-1;text-align:center;opacity:.65;padding:40px 0}'
     +'</style>';
 }
@@ -5326,6 +5332,7 @@ function postsRuntimeAssets(){
     +'        +"<div class=\\"fp-body\\"><div class=\\"fp-date\\">"+esc(fd(p.date))+"</div>"\n'
     +'        +"<h3 class=\\"fp-title\\">"+esc(dec(p.title))+"</h3>"\n'
     +'        +(p.excerpt?"<p class=\\"fp-x\\">"+esc(dec(p.excerpt))+"</p>":"")\n'
+    +'        +"<span class=\\"fp-more\\">Read more \\u2192</span>"\n'
     +'        +"</div></a>";\n'
     +'    }).join("");\n'
     +'  });\n'
@@ -5367,6 +5374,18 @@ function veInsertPostList(){
   ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,html:postListSnippet(),css:postsRuntimeCss()},'*');
   document.getElementById('ve-unsaved')?.classList.add('on');
   toast('Post list added — Save the page and it will always show your published posts, newest first','ok');
+}
+// Swap an old hand-made posts section for the live archive in one move: select
+// the section, click Replace. Undo restores it until the page is left.
+function veReplaceWithPostList(){
+  const fid=_veCurSel?.fid;
+  if(!fid){ toast('Click the old posts section first, then Replace','err'); return; }
+  if(!confirm('Replace the selected element with the live post archive?\n\nThe selected element and everything inside it is removed — Undo brings it back until you leave the page.')) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'replaceHtml',fid,html:postListSnippet(),css:postsRuntimeCss()},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Replaced with the live post archive — Save the page to publish','ok');
 }
 // One-click path from the Posts panel: stamp the block onto an existing page
 // (end of its main content). The page keeps its own design and address — this
@@ -8841,7 +8860,10 @@ return '(function(){\n'
 +'      }else if(m.action==="insertHtml"){\n'
 // The shared stylesheet rides along so the inserted block renders styled in the
 // editor; it persists into the saved page too (veFinalizePageHtml re-normalizes).
-+'        if(m.css && !document.getElementById("foundry-forms-css")){ var cwrap=document.createElement("div"); cwrap.innerHTML=String(m.css); var cst=cwrap.firstElementChild; if(cst)(document.head||document.documentElement).appendChild(cst); }\n'
+// Dedupe by the stylesheet's OWN id (forms css, posts css, …) — the old guard
+// only knew about the forms stylesheet, so any other shared css sent along
+// with an insert was silently skipped once a form had been inserted.
++'        if(m.css){ var cwrap=document.createElement("div"); cwrap.innerHTML=String(m.css); var cst=cwrap.firstElementChild; if(cst && !(cst.id && document.getElementById(cst.id))) (document.head||document.documentElement).appendChild(cst); }\n'
 +'        var wrap=document.createElement("div");\n'
 +'        wrap.innerHTML=String(m.html||"");\n'
 +'        var kids=[].slice.call(wrap.childNodes);\n'
@@ -8853,6 +8875,19 @@ return '(function(){\n'
 +'          if(!firstEl&&nd.nodeType===1&&nd.tagName!=="STYLE") firstEl=nd;\n'
 +'        });\n'
 +'        if(firstEl){ selectEl(firstEl); try{firstEl.scrollIntoView({block:"center",behavior:"smooth"});}catch(e9){} }\n'
+// Replace the selected element with a block of real page markup — used to swap
+// an old hand-made posts section for the live post archive. History was pushed
+// above, so Undo restores the original section.
++'      }else if(m.action==="replaceHtml"){\n'
++'        if(m.css){ var rcw=document.createElement("div"); rcw.innerHTML=String(m.css); var rcs=rcw.firstElementChild; if(rcs && !(rcs.id && document.getElementById(rcs.id))) (document.head||document.documentElement).appendChild(rcs); }\n'
++'        var rwrap=document.createElement("div");\n'
++'        rwrap.innerHTML=String(m.html||"");\n'
++'        var rkids=[].slice.call(rwrap.childNodes), rfirst=null;\n'
++'        rkids.forEach(function(nd){ el.parentElement.insertBefore(nd, el); if(!rfirst&&nd.nodeType===1&&nd.tagName!=="STYLE") rfirst=nd; });\n'
++'        el.remove(); sel=null;\n'
++'        ov.style.display="none"; badge.style.display="none"; hbox.style.display="none";\n'
++'        if(rfirst){ selectEl(rfirst); try{rfirst.scrollIntoView({block:"center",behavior:"smooth"});}catch(e10){} }\n'
++'        else { veSetPaused(false); window.parent.postMessage({type:"ve-deselect"},"*"); }\n'
 +'      }\n'
 +'      return;\n'
 +'    }\n'
@@ -9294,7 +9329,8 @@ function veShowProps(info){
   const iconBtn = '<button class="ve-apply-btn" style="margin:10px 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openIconPicker()"><i class="fa-solid fa-icons"></i> Insert an icon</button>';
   const formBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openFormPicker()"><i class="fa-solid fa-rectangle-list"></i> Insert a form</button>';
   const postsBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertPostList()" title="A live list of your published posts, newest first — updates automatically whenever you publish"><i class="fa-solid fa-newspaper"></i> Insert post list</button>';
-  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + postsBtn + veAiPanel() + fields;
+  const postsRepBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veReplaceWithPostList()" title="Swap the selected element (e.g. an old hand-made posts section) for the live post archive"><i class="fa-solid fa-right-left"></i> Replace with post archive</button>';
+  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + postsBtn + postsRepBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
   if(_veAiChat && _veAiChat.sel && _veAiChat.sel.fid===info.fid && _veAiChat.log && _veAiChat.log.length){ veAiRenderLog(); }
 }
