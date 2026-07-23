@@ -2065,6 +2065,38 @@ HT;
     }
     return file_put_contents($htPath, $existing) !== false;
 }
+// data/posts.json is the site's public blog feed (the same file every blog
+// page already fetches). This opens it to CROSS-ORIGIN reads so other sites —
+// e.g. white-label group sites syndicating the flagship blog — can render it
+// with the post-list block's data-src option. Scope is deliberately tight:
+// GET-only CORS on exactly posts.json; nothing else in data/ is affected.
+// Managed-marker splice, so any existing data/.htaccess content is preserved.
+function fourgeWritePostsCorsHtaccess() {
+    $dir = PUBLIC_HTML . '/data';
+    if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+    if (!is_dir($dir)) return false;
+    $htPath   = $dir . '/.htaccess';
+    $existing = is_file($htPath) ? file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Posts CORS';
+    $end   = '# END Fourge Posts CORS';
+    $rules = <<<'HT'
+<IfModule mod_headers.c>
+  <FilesMatch "^posts\.json$">
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET"
+  </FilesMatch>
+</IfModule>
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
 function fourgeApiInstallCleanUrls($me) {
     if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
     if (!fourgeWriteCleanUrlHtaccess()) {
@@ -2072,7 +2104,11 @@ function fourgeApiInstallCleanUrls($me) {
         echo json_encode(['error' => 'Could not write .htaccess (check that the site root is writable by PHP)']);
         return;
     }
-    echo json_encode(['ok' => true]);
+    // Best-effort rider: same login self-heal also opens the public posts feed
+    // to cross-site reads. Never fails the clean-URL install.
+    $cors = false;
+    try { $cors = fourgeWritePostsCorsHtaccess(); } catch (Exception $e) { $cors = false; }
+    echo json_encode(['ok' => true, 'postsCors' => $cors]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
