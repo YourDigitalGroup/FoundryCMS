@@ -2245,7 +2245,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.74';
+const CMS_VERSION='1.14.75';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5316,26 +5316,37 @@ function postsRuntimeAssets(){
     +'function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}\n'
     +'function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}\n'
     +'function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}\n'
+    +'function media(u,src){ if(!u) return ""; if(/^https?:\\/\\//i.test(u)||u.indexOf("data:")===0) return u; if(u.charAt(0)==="/") return src+u; return src?(src+"/"+u):u; }\n'
+    +'function paint(box,posts,src){\n'
+    +'  var lim=parseInt(box.getAttribute("data-limit")||"0",10);\n'
+    +'  var list=(lim>0)?posts.slice(0,lim):posts;\n'
+    +'  if(!list.length){box.innerHTML="<div class=\\"fp-empty\\">No posts published yet — check back soon.</div>";return;}\n'
+    +'  box.innerHTML=list.map(function(p){\n'
+    +'    return "<a class=\\"fp-card\\" href=\\""+esc(src)+"/posts.html?p="+encodeURIComponent(p.slug||"")+"\\">"\n'
+    +'      +(p.featured?"<div class=\\"fp-thumb\\"><img src=\\""+esc(media(p.featured,src))+"\\" alt=\\""+esc(dec(p.title))+"\\" loading=\\"lazy\\"></div>":"")\n'
+    +'      +"<div class=\\"fp-body\\"><div class=\\"fp-date\\">"+esc(fd(p.date))+"</div>"\n'
+    +'      +"<h3 class=\\"fp-title\\">"+esc(dec(p.title))+"</h3>"\n'
+    +'      +(p.excerpt?"<p class=\\"fp-x\\">"+esc(dec(p.excerpt))+"</p>":"")\n'
+    +'      +"<span class=\\"fp-more\\">Read more \\u2192</span>"\n'
+    +'      +"</div></a>";\n'
+    +'  }).join("");\n'
+    +'}\n'
+    // data-src="https://other-site.com" points a block at ANOTHER site's posts
+    // feed (syndication) — boxes are grouped per source so each feed is fetched
+    // once, links go to the source site's article pages, and relative featured
+    // images are resolved against the source. No data-src = this site (as before).
     +'async function run(){\n'
-    +'  var boxes=document.querySelectorAll("[data-fourge-posts]"); if(!boxes.length) return;\n'
-    +'  var posts=[];\n'
-    +'  try{var r=await fetch("/data/posts.json?t="+Date.now());if(r.ok)posts=await r.json();}catch(e){}\n'
-    +'  posts=(Array.isArray(posts)?posts:[]).filter(function(p){return p&&p.published;});\n'
-    +'  posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});\n'
-    +'  boxes.forEach(function(box){\n'
-    +'    var lim=parseInt(box.getAttribute("data-limit")||"0",10);\n'
-    +'    var list=(lim>0)?posts.slice(0,lim):posts;\n'
-    +'    if(!list.length){box.innerHTML="<div class=\\"fp-empty\\">No posts published yet — check back soon.</div>";return;}\n'
-    +'    box.innerHTML=list.map(function(p){\n'
-    +'      return "<a class=\\"fp-card\\" href=\\"/posts.html?p="+encodeURIComponent(p.slug||"")+"\\">"\n'
-    +'        +(p.featured?"<div class=\\"fp-thumb\\"><img src=\\""+esc(p.featured)+"\\" alt=\\""+esc(dec(p.title))+"\\" loading=\\"lazy\\"></div>":"")\n'
-    +'        +"<div class=\\"fp-body\\"><div class=\\"fp-date\\">"+esc(fd(p.date))+"</div>"\n'
-    +'        +"<h3 class=\\"fp-title\\">"+esc(dec(p.title))+"</h3>"\n'
-    +'        +(p.excerpt?"<p class=\\"fp-x\\">"+esc(dec(p.excerpt))+"</p>":"")\n'
-    +'        +"<span class=\\"fp-more\\">Read more \\u2192</span>"\n'
-    +'        +"</div></a>";\n'
-    +'    }).join("");\n'
-    +'  });\n'
+    +'  var boxes=[].slice.call(document.querySelectorAll("[data-fourge-posts]")); if(!boxes.length) return;\n'
+    +'  var groups={};\n'
+    +'  boxes.forEach(function(b){ var s=(b.getAttribute("data-src")||"").replace(/\\/+$/,""); (groups[s]=groups[s]||[]).push(b); });\n'
+    +'  for(var src in groups){\n'
+    +'    var posts=[]; var u=src+"/data/posts.json?t="+Date.now();\n'
+    +'    try{var r=await fetch(u);if(r.ok)posts=await r.json();}catch(e){ if(src) console.warn("Fourge posts: could not load "+u+" — the source site must allow cross-site reads (sign in to its CMS once on engine 1.14.75+ to enable).", e); }\n'
+    +'    posts=(Array.isArray(posts)?posts:[]).filter(function(p){return p&&p.published;});\n'
+    +'    posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});\n'
+    +'    var bs=groups[src];\n'
+    +'    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);\n'
+    +'  }\n'
     +'}\n'
     +'window.fourgePostsRefresh=run;\n'
     +'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();\n'
@@ -5361,9 +5372,10 @@ function ensurePostsRuntime(html){
 // The insertable block. The preview card inside is what you see in the editor;
 // on the live page the runtime replaces the container's contents with the real
 // post list.
-function postListSnippet(){
-  return '<div data-fourge-posts class="fourge-posts">'
-    +'<div class="fp-card" style="pointer-events:none"><div class="fp-thumb"></div><div class="fp-body"><div class="fp-date">Post date</div><h3 class="fp-title">Your published posts appear here automatically</h3><p class="fp-x">Newest first, straight from the Blog tab. This preview is replaced by the live list on the published page.</p></div></div>'
+function postListSnippet(src){
+  src=String(src||'').trim().replace(/\/+$/,'');
+  return '<div data-fourge-posts class="fourge-posts"'+(src?' data-src="'+esc(src)+'"':'')+'>'
+    +'<div class="fp-card" style="pointer-events:none"><div class="fp-thumb"></div><div class="fp-body"><div class="fp-date">Post date</div><h3 class="fp-title">'+(src?'Posts from '+esc(src.replace(/^https?:\/\//i,''))+' appear here automatically':'Your published posts appear here automatically')+'</h3><p class="fp-x">Newest first, straight from the '+(src?'source site’s':'')+' Blog tab. This preview is replaced by the live list on the published page.</p></div></div>'
     +'</div>';
 }
 function veInsertPostList(){
@@ -5402,7 +5414,10 @@ async function openPostListPlacer(){
   m.innerHTML='<div class="ve-img-picker-box" style="width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column">'
     +'<div class="ve-img-picker-head"><h3>Add the post list to a page</h3><button class="ve-img-picker-close" onclick="document.getElementById(\'postlist-placer\').style.display=\'none\'">&times;</button></div>'
     +'<div style="padding:16px;overflow-y:auto">'
-    +'<div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px">Adds the live list of your published posts (newest first) to the end of the page you pick — the page keeps its own design and address. You can move the block in the page editor afterward, and delete any old hand-made post links.</div>'
+    +'<div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px">Adds the live list of published posts (newest first) to the end of the page you pick — the page keeps its own design and address. You can move the block in the page editor afterward, and delete any old hand-made post links.</div>'
+    +'<div style="margin-bottom:14px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Pull posts from a different site <span style="font-weight:400;color:var(--muted)">(optional — leave empty for this site’s own posts)</span></label>'
+    +'<input id="plp-src" type="url" placeholder="https://44idigital.com" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box">'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.5">Great for white-label sites that should auto-publish the flagship blog. The source site must run engine v1.14.75+ and have been signed into once (that enables cross-site reading of its posts). Cards link to the article on the source site.</div></div>'
     +(pages.length?pages.map(pg=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
       +'<div style="min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(decodeHtml(pg.label||pg.id))+'</div>'
       +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:12.5px;padding:7px 12px" onclick="placePostListOnPage(\''+esc(pg.id)+'\')">Add here →</button>'
@@ -5414,6 +5429,8 @@ async function placePostListOnPage(pid){
   const pg=_pages[pid]; const fp=pg&&(pg.path||pg.file);
   if(!fp){ toast('Page not found','err'); return; }
   if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  let src=(document.getElementById('plp-src')?.value||'').trim().replace(/\/+$/,'');
+  if(src && !/^https?:\/\/[^\s"'<>]+$/i.test(src)){ toast('The source must be a full address like https://44idigital.com','err'); return; }
   try{
     const d=await apiCall('read_file',{path:fp});
     let html=d.content||'';
@@ -5423,7 +5440,7 @@ async function placePostListOnPage(pid){
       const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
       return;
     }
-    const sec='\n<section class="fourge-posts-wrap" style="max-width:1180px;margin:0 auto;padding:40px 24px">'+postListSnippet()+'</section>\n';
+    const sec='\n<section class="fourge-posts-wrap" style="max-width:1180px;margin:0 auto;padding:40px 24px">'+postListSnippet(src)+'</section>\n';
     if(/<\/main>/i.test(html))        html=html.replace(/<\/main>/i,m=>sec+m);
     else if(/<footer\b/i.test(html))  html=html.replace(/<footer\b/i,m=>sec+m);
     else if(/<\/body>/i.test(html))   html=html.replace(/<\/body>/i,m=>sec+m);
