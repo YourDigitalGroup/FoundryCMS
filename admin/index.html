@@ -1346,7 +1346,8 @@ textarea.fb-input{resize:vertical}
           <button class="fd-btn-primary" onclick="openNewPost()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Post</button>
           <button class="btn btn-o btn-sm" onclick="publishBlogPage()" title="Generate posts.html so you can link it in your nav menu"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Publish Blog Page</button>
           <button class="btn btn-o btn-sm" onclick="openPagesToPosts()" title="Turn existing pages into blog posts — pages named blog… are detected automatically, and you can pick any page"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg> Convert pages to posts</button>
-          <span style="font-size:12px;color:var(--muted)">Link <code style="font-family:var(--font-mono);background:var(--surface-3);padding:2px 6px;border-radius:4px">posts.html</code> in your nav to show the blog.</span>
+          <button class="btn btn-o btn-sm" onclick="openPostListPlacer()" title="Show your published posts (newest first) on an existing page — e.g. your site's own Blog page. The list updates automatically whenever you publish."><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg> Add post list to a page</button>
+          <span style="font-size:12px;color:var(--muted)">Your posts show wherever the post list is placed — or link <code style="font-family:var(--font-mono);background:var(--surface-3);padding:2px 6px;border-radius:4px">posts.html</code> in your nav for the built-in blog page.</span>
         </div>
         <div id="posts-body"><div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg><h3>No posts yet</h3><p>Click New Post to write your first article.</p></div></div>
       </div>
@@ -2244,7 +2245,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.72';
+const CMS_VERSION='1.14.73';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3552,6 +3553,9 @@ function expandFormShortcodes(html){
 function veFinalizePageHtml(html){
   html=expandFormShortcodes(html);
   if(/class=["'][^"']*foundry-form/.test(html)) html=ensureFormsRuntime(html);
+  // Pages carrying a post-list block get the freshest list runtime on every
+  // save (and lose it cleanly if the block was deleted in the editor).
+  try{ html=ensurePostsRuntime(html); }catch(e){}
   // Every saved page carries the CURRENT favicon tags — pages created after the
   // favicon was set used to miss out until someone re-ran "apply to all".
   try{ html=faviconInjectIntoHtml(html); }catch(e){}
@@ -5277,6 +5281,141 @@ loadBlog();
 </html>`;
 }
 
+
+// ── POST LIST ON ANY PAGE ─────────────────────────────────────────
+// A [data-fourge-posts] container placed on any page (e.g. the site's own
+// styled Blog page) renders the LIVE list of published posts at view time —
+// fetched from /data/posts.json, newest first — so publishing a post updates
+// every page that shows the list with no page regeneration. Paths are
+// root-relative so the block works at any folder depth; cards link into the
+// existing posts.html single-post view.
+function postsRuntimeCss(){
+  return '<style id="fourge-posts-css">'
+    +'.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:28px;margin:24px 0}'
+    +'.fourge-posts .fp-card{display:block;border:1px solid rgba(0,0,0,.12);border-radius:14px;overflow:hidden;background:#fff;color:inherit;text-decoration:none;transition:transform .15s,box-shadow .15s}'
+    +'.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 12px 32px rgba(0,0,0,.10);text-decoration:none}'
+    +'.fourge-posts .fp-thumb{aspect-ratio:16/9;background:rgba(0,0,0,.05);overflow:hidden}'
+    +'.fourge-posts .fp-thumb img{width:100%;height:100%;object-fit:cover;display:block}'
+    +'.fourge-posts .fp-body{padding:20px}'
+    +'.fourge-posts .fp-date{font-size:12px;opacity:.65;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}'
+    +'.fourge-posts .fp-title{font-size:20px;font-weight:700;line-height:1.25;margin:0 0 8px}'
+    +'.fourge-posts .fp-x{font-size:14px;opacity:.7;margin:0}'
+    +'.fourge-posts .fp-empty{grid-column:1/-1;text-align:center;opacity:.65;padding:40px 0}'
+    +'</style>';
+}
+function postsRuntimeAssets(){
+  const sc='<'+'script', ec='<'+'/script>';
+  const js=sc+' id="fourge-posts-js">\n'
+    +'(function(){\n'
+    +'function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}\n'
+    +'function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}\n'
+    +'function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}\n'
+    +'async function run(){\n'
+    +'  var boxes=document.querySelectorAll("[data-fourge-posts]"); if(!boxes.length) return;\n'
+    +'  var posts=[];\n'
+    +'  try{var r=await fetch("/data/posts.json?t="+Date.now());if(r.ok)posts=await r.json();}catch(e){}\n'
+    +'  posts=(Array.isArray(posts)?posts:[]).filter(function(p){return p&&p.published;});\n'
+    +'  posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});\n'
+    +'  boxes.forEach(function(box){\n'
+    +'    var lim=parseInt(box.getAttribute("data-limit")||"0",10);\n'
+    +'    var list=(lim>0)?posts.slice(0,lim):posts;\n'
+    +'    if(!list.length){box.innerHTML="<div class=\\"fp-empty\\">No posts published yet — check back soon.</div>";return;}\n'
+    +'    box.innerHTML=list.map(function(p){\n'
+    +'      return "<a class=\\"fp-card\\" href=\\"/posts.html?p="+encodeURIComponent(p.slug||"")+"\\">"\n'
+    +'        +(p.featured?"<div class=\\"fp-thumb\\"><img src=\\""+esc(p.featured)+"\\" alt=\\""+esc(dec(p.title))+"\\" loading=\\"lazy\\"></div>":"")\n'
+    +'        +"<div class=\\"fp-body\\"><div class=\\"fp-date\\">"+esc(fd(p.date))+"</div>"\n'
+    +'        +"<h3 class=\\"fp-title\\">"+esc(dec(p.title))+"</h3>"\n'
+    +'        +(p.excerpt?"<p class=\\"fp-x\\">"+esc(dec(p.excerpt))+"</p>":"")\n'
+    +'        +"</div></a>";\n'
+    +'    }).join("");\n'
+    +'  });\n'
+    +'}\n'
+    +'window.fourgePostsRefresh=run;\n'
+    +'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();\n'
+    +'})();\n'
+    +ec;
+  return postsRuntimeCss()+'\n'+js;
+}
+// Keep the runtime current on every save: strip any prior copy, then re-insert
+// the latest ONLY if the page still carries a [data-fourge-posts] container —
+// deleting the block in the editor cleanly removes the runtime too.
+function ensurePostsRuntime(html){
+  html=String(html||'');
+  html=html.replace(/<style id="fourge-posts-css">[\s\S]*?<\/style>\s*/gi,'');
+  html=html.replace(/<script id="fourge-posts-js">[\s\S]*?<\/script>\s*/gi,'');
+  if(!/data-fourge-posts\b/.test(html)) return html;
+  const assets=postsRuntimeAssets();
+  const cut=assets.indexOf('</style>')+'</style>'.length;
+  const css=assets.slice(0,cut), js=assets.slice(cut).replace(/^\s+/,'');
+  html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
+  html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
+  return html;
+}
+// The insertable block. The preview card inside is what you see in the editor;
+// on the live page the runtime replaces the container's contents with the real
+// post list.
+function postListSnippet(){
+  return '<div data-fourge-posts class="fourge-posts">'
+    +'<div class="fp-card" style="pointer-events:none"><div class="fp-thumb"></div><div class="fp-body"><div class="fp-date">Post date</div><h3 class="fp-title">Your published posts appear here automatically</h3><p class="fp-x">Newest first, straight from the Blog tab. This preview is replaced by the live list on the published page.</p></div></div>'
+    +'</div>';
+}
+function veInsertPostList(){
+  const fid=_veCurSel?.fid;
+  if(!fid){ toast('Click where the post list should go first — a section or column works best','err'); return; }
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,html:postListSnippet(),css:postsRuntimeCss()},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Post list added — Save the page and it will always show your published posts, newest first','ok');
+}
+// One-click path from the Posts panel: stamp the block onto an existing page
+// (end of its main content). The page keeps its own design and address — this
+// is how a site's original Blog page starts feeding from the Posts tab.
+async function openPostListPlacer(){
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+  let m=document.getElementById('postlist-placer');
+  if(!m){
+    m=document.createElement('div'); m.id='postlist-placer'; m.className='ve-img-picker-modal';
+    m.addEventListener('click',e=>{ if(e.target===m) m.style.display='none'; });
+    document.body.appendChild(m);
+  }
+  const pages=getPageList();
+  m.innerHTML='<div class="ve-img-picker-box" style="width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column">'
+    +'<div class="ve-img-picker-head"><h3>Add the post list to a page</h3><button class="ve-img-picker-close" onclick="document.getElementById(\'postlist-placer\').style.display=\'none\'">&times;</button></div>'
+    +'<div style="padding:16px;overflow-y:auto">'
+    +'<div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px">Adds the live list of your published posts (newest first) to the end of the page you pick — the page keeps its own design and address. You can move the block in the page editor afterward, and delete any old hand-made post links.</div>'
+    +(pages.length?pages.map(pg=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
+      +'<div style="min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(decodeHtml(pg.label||pg.id))+'</div>'
+      +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:12.5px;padding:7px 12px" onclick="placePostListOnPage(\''+esc(pg.id)+'\')">Add here →</button>'
+      +'</div>').join(''):'<div class="empty" style="padding:20px"><h3>No pages found</h3></div>')
+    +'</div></div>';
+  m.style.display='flex';
+}
+async function placePostListOnPage(pid){
+  const pg=_pages[pid]; const fp=pg&&(pg.path||pg.file);
+  if(!fp){ toast('Page not found','err'); return; }
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  try{
+    const d=await apiCall('read_file',{path:fp});
+    let html=d.content||'';
+    if(!html) throw new Error('page file is empty');
+    if(/data-fourge-posts\b/.test(html)){
+      toast('That page already shows the post list ✓','ok');
+      const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
+      return;
+    }
+    const sec='\n<section class="fourge-posts-wrap" style="max-width:1180px;margin:0 auto;padding:40px 24px">'+postListSnippet()+'</section>\n';
+    if(/<\/main>/i.test(html))        html=html.replace(/<\/main>/i,m=>sec+m);
+    else if(/<footer\b/i.test(html))  html=html.replace(/<footer\b/i,m=>sec+m);
+    else if(/<\/body>/i.test(html))   html=html.replace(/<\/body>/i,m=>sec+m);
+    else html+=sec;
+    html=veFinalizePageHtml(html);   // posts runtime + favicon + forms pipeline in one pass
+    await apiCall('write_file',{path:fp,content:html});
+    try{ ghMirror(fp,html,'Fourge: add post list to '+fp); }catch(e){}
+    const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
+    toast('Post list added to “'+decodeHtml(pg.title||pid)+'” — it now shows every published post, newest first ✓','ok');
+  }catch(e){ toast('Could not add: '+e.message,'err'); }
+}
 
 // ── MEDIA ─────────────────────────────────────
 async function initMedia(){
@@ -9154,7 +9293,8 @@ function veShowProps(info){
   _veOrigStyles = st;
   const iconBtn = '<button class="ve-apply-btn" style="margin:10px 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openIconPicker()"><i class="fa-solid fa-icons"></i> Insert an icon</button>';
   const formBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openFormPicker()"><i class="fa-solid fa-rectangle-list"></i> Insert a form</button>';
-  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + veAiPanel() + fields;
+  const postsBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertPostList()" title="A live list of your published posts, newest first — updates automatically whenever you publish"><i class="fa-solid fa-newspaper"></i> Insert post list</button>';
+  body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + postsBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
   if(_veAiChat && _veAiChat.sel && _veAiChat.sel.fid===info.fid && _veAiChat.log && _veAiChat.log.length){ veAiRenderLog(); }
 }
