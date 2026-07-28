@@ -1775,10 +1775,7 @@ textarea.fb-input{resize:vertical}
 
         <div class="si-sec admin-only" style="display:none"><!-- moved to per-user in Users panel -->
           <div style="display:flex;flex-direction:column;gap:0;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg)">
-            <label style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;gap:16px">
-              <div><div style="font-size:13px;font-weight:600;color:var(--text)">SEO Panel</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Access to SEO settings and meta management</div></div>
-              <div class="fd-toggle" id="perm-toggle-seo" onclick="toggleEditorPerm('seo',this)"><div class="fd-toggle-knob"></div></div>
-            </label>
+            <!-- SEO toggle removed: SEO is always on for every role — filled-out SEO always applies. -->
             <label style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;gap:16px">
               <div><div style="font-size:13px;font-weight:600;color:var(--text)">General Markup (Page Editor)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Markup button in the visual editor toolbar</div></div>
               <div class="fd-toggle" id="perm-toggle-aiEdit" onclick="toggleEditorPerm('aiEdit',this)"><div class="fd-toggle-knob"></div></div>
@@ -2245,7 +2242,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.76';
+const CMS_VERSION='1.14.77';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2518,11 +2515,14 @@ function accessLevel(u){ return isArchitect(u) ? 4 : (ROLE_RANK[(u && u.role) ||
 // ── ROLE / PERMISSION SYSTEM ─────────────────────────────────────────────
 const ROLE_RANK = {superadmin:3, admin:2, editor:1};
 
-// Default capabilities per role
+// Default capabilities per role. SEO is deliberately NOT toggleable — filled-out
+// SEO must always reach the pages, so the panel is on for every role and
+// getEffectivePerms() force-enables it even for users saved with an old
+// per-user override.
 const ROLE_DEFAULTS = {
   superadmin: {pages:true,posts:true,forms:true,tlp:true,media:true,seo:true,design:true,plugins:true,siteFactory:true,settings:true,users:true,revisions:true,aiEdit:true},
   admin:      {pages:true,posts:true,forms:true,tlp:true,media:true,seo:true,design:true,plugins:false,siteFactory:true,settings:false,users:true,revisions:true,aiEdit:true},
-  editor:     {pages:true,posts:true,forms:true,tlp:false,media:true,seo:false,design:false,plugins:false,siteFactory:false,settings:false,users:false,revisions:true,aiEdit:false}
+  editor:     {pages:true,posts:true,forms:true,tlp:false,media:true,seo:true,design:false,plugins:false,siteFactory:false,settings:false,users:false,revisions:true,aiEdit:false}
 };
 
 // Modules admins can grant to editors (not shown for admin/superadmin since always-on)
@@ -2532,7 +2532,8 @@ const EDITOR_MODULES = [
   {key:'forms',       label:'Forms',            desc:'Build forms and view submissions'},
   {key:'tlp',         label:'Targeted Landing Pages', desc:'Generate city-targeted landing pages'},
   {key:'media',       label:'Media Library',    desc:'Upload and manage media files'},
-  {key:'seo',         label:'SEO Panel',        desc:'Manage meta titles, descriptions, and SEO settings'},
+  // 'seo' removed on purpose: the SEO panel is always on for every user — SEO,
+  // once filled out, must always apply and can't be switched off anywhere.
   {key:'aiEdit',      label:'General Markup',   desc:'Markup tools in the page editor toolbar'},
   {key:'revisions',   label:'Revisions',        desc:'View history and restore previous page versions'},
   {key:'siteFactory', label:'Site Foundry',     desc:'Import pages and scan server structure'},
@@ -2544,7 +2545,9 @@ function getEffectivePerms(user){
   const role = (user&&user.role)||'editor';
   const defaults = ROLE_DEFAULTS[role]||ROLE_DEFAULTS.editor;
   // User-specific overrides layered on top of role defaults
-  return Object.assign({}, defaults, user&&user.permissions||{});
+  const perms = Object.assign({}, defaults, user&&user.permissions||{});
+  perms.seo = true;   // SEO is always on — old saved per-user overrides can't hide it
+  return perms;
 }
 
 function applyRole(){
@@ -2566,7 +2569,8 @@ function applyRole(){
     'ni-forms':     perms.forms,
     'ni-tlp':       perms.tlp,
     'ni-media':     perms.media,
-    'ni-seo':       perms.seo,
+    'ni-seo':       true,   // SEO is always available — never gated
+
     'ni-factory':   perms.siteFactory,
     'ni-injections':perms.plugins,
     'ni-site':      perms.design || rank>=2,
@@ -2665,6 +2669,9 @@ async function initApp(){
   }
   // Pull any secrets this account may view (Architect: GitHub PAT, etc.).
   try{ await loadSecrets(); }catch{}
+  // SEO data loads at boot (non-blocking) so every page save can stamp the
+  // page's SEO — filled-out SEO always applies, no panel visit required.
+  try{ seoLoadData().catch(()=>{}); }catch(e){}
   await checkGH();
   await loadDash();
   localStorage.setItem('cd_version',CMS_VERSION);
@@ -3550,7 +3557,20 @@ function expandFormShortcodes(html){
 // Final pass before a page is written: expand form shortcodes, and when the page
 // carries a managed form make sure the shared forms runtime (CSS + submit JS) is
 // there — so a form dropped in via the editor or a shortcode works on the live page.
-function veFinalizePageHtml(html){
+function veFinalizePageHtml(html, pg){
+  // SEO first (it's a DOM round-trip; the string-splice injectors below run on
+  // its output). Stamped on every save so filled-out SEO can never be missing
+  // from a published page — but ONLY when this page has SEO data or carries a
+  // previous stamp: a page whose SEO was never filled out keeps its
+  // hand-written meta tags untouched.
+  try{
+    if(pg && _seoLoaded && _seo && typeof _seo==='object'){
+      const pid=pageIdFromPath(pg.path||pg.file)||pg.id;
+      const s=_seo[pid];
+      if((s && Object.keys(s).length) || /data-fourge-seo/.test(html))
+        html=seoInjectIntoHtml(html,pg,normSiteBase());
+    }
+  }catch(e){}
   html=expandFormShortcodes(html);
   if(/class=["'][^"']*foundry-form/.test(html)) html=ensureFormsRuntime(html);
   // Pages carrying a post-list block get the freshest list runtime on every
@@ -5808,11 +5828,12 @@ async function initSEO(){
   try{ const d=await apiCall('read_file',{path:'data/seo.json'}); _seo=JSON.parse(d.content||'{}'); }
   catch{ try{ const{content}=await ghRead(F_SEO); _seo=JSON.parse(content); }catch{ _seo={}; } }
   if(!_seo||typeof _seo!=='object'||Array.isArray(_seo)) _seo={};
+  _seoLoaded=true;
   if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList();
   const ta=document.getElementById('seo-ta');
-  if(ta) ta.innerHTML='<button class="fd-btn-primary" onclick="saveSEO()">Save</button>'
-    +'<button class="fd-btn-secondary" onclick="seoApplyAll()" title="Save your SEO settings onto every page and rebuild your sitemap">Apply to all pages</button>'
+  if(ta) ta.innerHTML='<button class="fd-btn-primary" onclick="saveSEO()" title="Saves your SEO and publishes it to every page, plus sitemap and robots — no separate apply step">Save &amp; Publish</button>'
+    +'<button class="fd-btn-secondary" onclick="seoApplyAll()" title="Re-stamp the saved SEO onto every page and rebuild the sitemap (Save already does this — use if a page looks out of date)">Re-apply to all pages</button>'
     +'<button class="fd-btn-secondary" onclick="genAllSEO()"><i class="fa-solid fa-wand-magic"></i> Generate All</button>';
   if(!pages.length){ document.getElementById('seo-body').innerHTML='<div class="empty"><h3>No pages yet</h3><p>Upload your .html pages and they appear here.</p></div>'; }
   else{
@@ -5954,12 +5975,47 @@ function renderSEOGlobal(){
 }
 
 // Save per-page + site-wide SEO to data/seo.json (server first, GitHub optional).
+// Light loader used at boot (and by the panel): reads data/seo.json into _seo
+// so page saves can stamp SEO without the panel ever having been opened.
+let _seoLoaded=false;
+async function seoLoadData(){
+  try{ const d=await apiCall('read_file',{path:'data/seo.json'}); _seo=JSON.parse(d.content||'{}'); }
+  catch(e){ try{ const r=await fetch('../data/seo.json?t='+Date.now()); if(r.ok) _seo=await r.json(); }catch(e2){} }
+  if(!_seo||typeof _seo!=='object'||Array.isArray(_seo)) _seo={};
+  _seoLoaded=true;
+  return _seo;
+}
+// Stamp the current SEO onto every page file + rebuild sitemap/robots. Shared
+// by Save (which now publishes automatically — SEO is always-on, there is no
+// separate "apply" step to forget) and the explicit re-apply button.
+async function seoStampAllPages(){
+  if(!canCallApi()) return {done:0,failed:0,skipped:true};
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+  const pages=getPageList(); const base=normSiteBase();
+  let done=0,failed=0;
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
+      const next=seoInjectIntoHtml(html,pg,base);
+      if(next!==html) await apiCall('write_file',{path:fp,content:next});
+      done++;
+    }catch(e){ console.warn('SEO apply failed for '+fp,e.message); failed++; }
+  }
+  try{ await seoWriteSitemap(); }catch(e){}
+  try{ await seoWriteRobots(false); }catch(e){}
+  try{ await ensureCleanUrlRewrite(); }catch(e){}
+  return {done,failed};
+}
 async function saveSEO(){
   const json=JSON.stringify(_seo,null,2); let ok=false;
   if(canCallApi()){ try{ await apiCall('write_file',{path:'data/seo.json',content:json}); ok=true; }catch(e){} }
   const{repo,pat}=ghCfg();
   if(repo&&pat){ try{ const sha=await ghSHA(F_SEO); await ghWrite(F_SEO,json,sha,'Fourge: SEO update'); ok=true; }catch(e){} }
-  toast(ok?'SEO saved ✓':'Save failed — configure Server API or GitHub', ok?'ok':'err');
+  if(!ok){ toast('Save failed — configure Server API or GitHub','err'); return; }
+  _seoLoaded=true;
+  const r=await seoStampAllPages();
+  toast('SEO saved'+(r&&!r.skipped?(' + applied to '+r.done+' page(s)'+(r.failed?(' ('+r.failed+' failed)'):'')+' — sitemap updated'):'')+' ✓','ok');
 }
 
 // Read a page's real visible text (for AI generation) — fixes the old bug where
@@ -6066,25 +6122,10 @@ async function ensureCleanUrlRewrite(){
 }
 async function seoApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply SEO','err'); return; }
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
   const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
-  if(!confirm('Apply your SEO settings to all '+pages.length+' page(s) and rebuild your sitemap?')) return;
-  await saveSEO();
-  const base=normSiteBase(); let done=0,failed=0;
-  const st=document.getElementById('seo-apply-status');
-  for(const pg of pages){
-    const fp=pg.path||pg.file; if(!fp){ continue; }
-    try{
-      const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
-      await apiCall('write_file',{path:fp,content:seoInjectIntoHtml(html,pg,base)});
-      done++;
-    }catch(e){ console.warn('SEO apply failed for '+fp,e.message); failed++; }
-  }
-  try{ await seoWriteSitemap(); }catch(e){}
-  try{ await seoWriteRobots(false); }catch(e){}
-  const cu=await ensureCleanUrlRewrite();
-  let msg = done?('SEO applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'')+' + sitemap/robots updated'):'Nothing applied';
-  if(done) msg += cu.ok ? '. Clean-URL server rule is active.' : '. Update admin/api.php to finish clean URLs.';
-  toast(msg,'ok');
+  if(!confirm('Re-apply your SEO settings to all '+pages.length+' page(s) and rebuild your sitemap?')) return;
+  await saveSEO();   // saving publishes: pages + sitemap + robots + clean-URL rule
 }
 // ── Sitemap + robots.txt ────────────────────────────────────────────────────
 function seoBuildSitemap(){
@@ -11267,7 +11308,7 @@ function toggleEditorPerm(key, toggleEl){
 
 function initPermissionToggles(){
   const perms = (_site&&_site.editorPermissions)||{};
-  ['seo','aiEdit','siteFactory','revisions'].forEach(key=>{
+  ['aiEdit','siteFactory','revisions'].forEach(key=>{
     const el=document.getElementById('perm-toggle-'+key);
     if(el) el.classList.toggle('on', perms[key]===true);
   });
@@ -11328,7 +11369,7 @@ async function veSavePage(){
   if(_veMode==='code' && _cmEditor){ html=_cmEditor.getValue(); }
   else { html=veSerializeClean(); if(html==null){ toast('Page not loaded yet','err'); return; } }
   html=pageInjectCustom(html, pg);   // per-page custom CSS/JS (Page Settings)
-  html=veFinalizePageHtml(html);     // expand [form id=…] + ensure the forms runtime
+  html=veFinalizePageHtml(html, pg); // SEO stamp + [form id=…] + runtimes + favicon
 
   const btn=document.getElementById('ve-save-btn');
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
