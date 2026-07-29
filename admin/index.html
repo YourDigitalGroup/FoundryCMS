@@ -2242,7 +2242,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.77';
+const CMS_VERSION='1.14.78';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5975,6 +5975,31 @@ function renderSEOGlobal(){
 }
 
 // Save per-page + site-wide SEO to data/seo.json (server first, GitHub optional).
+// ── WRITE SAFETY ────────────────────────────────────────────────────────────
+// A write that shrinks a page's <body> to a fraction of its previous size
+// almost always means something upstream broke (truncated read, failed parse,
+// gutted editor state) — persisting it destroys the page. These guards are
+// what would have prevented a live homepage being reduced to an empty <body>
+// during a 779-page bulk apply.
+function fourgeBodyLen(html){
+  const m=String(html||'').match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  return (m?m[1]:String(html||'')).replace(/\s+/g,' ').length;
+}
+// null = safe; otherwise {from,to,pct} describing the suspicious shrink.
+function fourgeShrinkAlarm(prevHtml,nextHtml){
+  const a=fourgeBodyLen(prevHtml), b=fourgeBodyLen(nextHtml);
+  if(a<2000) return null;          // tiny pages have no meaningful baseline
+  if(b>=a*0.2) return null;
+  return {from:a, to:b, pct:Math.round((1-b/a)*100)};
+}
+// A read with no closing </html> (or </body>) is truncated or partial —
+// transforming it and writing it back would amputate the page.
+function fourgeLooksTruncated(html){
+  const s=String(html||'');
+  if(!s.trim()) return true;
+  return !(/<\/html>/i.test(s) || /<\/body>/i.test(s));
+}
+
 // Light loader used at boot (and by the panel): reads data/seo.json into _seo
 // so page saves can stamp SEO without the panel ever having been opened.
 let _seoLoaded=false;
@@ -5988,24 +6013,43 @@ async function seoLoadData(){
 // Stamp the current SEO onto every page file + rebuild sitemap/robots. Shared
 // by Save (which now publishes automatically — SEO is always-on, there is no
 // separate "apply" step to forget) and the explicit re-apply button.
+// Bulk safety, in order: truncated reads are refused (a partial read written
+// back = amputated page), unchanged files are skipped (re-running IS the
+// resume mechanism), suspicious body-shrinks are hard-blocked, every changed
+// file's previous version is copied to data/bak/ first (one generation), the
+// loop yields so the tab stays alive, live progress is shown, and a per-file
+// report lands in the console + window._seoLastApplyReport.
 async function seoStampAllPages(){
   if(!canCallApi()) return {done:0,failed:0,skipped:true};
   if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
   const pages=getPageList(); const base=normSiteBase();
-  let done=0,failed=0;
+  const st=document.getElementById('seo-apply-status');
+  const report=[]; let done=0,failed=0,guarded=0,i=0;
   for(const pg of pages){
+    i++;
+    if(st) st.textContent='Applying SEO… '+i+'/'+pages.length+(failed?(' · '+failed+' skipped/failed'):'');
+    if(i%8===0) await new Promise(r=>setTimeout(r,0));   // yield: keep the UI responsive on 700+ page sites
     const fp=pg.path||pg.file; if(!fp) continue;
     try{
-      const d=await apiCall('read_file',{path:fp}); const html=d.content||''; if(!html){ failed++; continue; }
+      const d=await apiCall('read_file',{path:fp}); const html=d.content||'';
+      if(fourgeLooksTruncated(html)){ failed++; report.push({page:fp,status:'refused',reason:'read looked empty/truncated — nothing written'}); continue; }
       const next=seoInjectIntoHtml(html,pg,base);
-      if(next!==html) await apiCall('write_file',{path:fp,content:next});
-      done++;
-    }catch(e){ console.warn('SEO apply failed for '+fp,e.message); failed++; }
+      if(next===html){ done++; report.push({page:fp,status:'unchanged'}); continue; }
+      const alarm=fourgeShrinkAlarm(html,next);
+      if(alarm){ guarded++; failed++; report.push({page:fp,status:'BLOCKED',reason:'output body shrank '+alarm.pct+'% ('+alarm.from+'→'+alarm.to+' chars) — write refused'}); continue; }
+      try{ await apiCall('write_file',{path:'data/bak/'+fp.replace(/[\/\\]+/g,'__'),content:html}); }catch(e){}
+      await apiCall('write_file',{path:fp,content:next});
+      done++; report.push({page:fp,status:'updated'});
+    }catch(e){ failed++; report.push({page:fp,status:'failed',reason:e.message}); console.warn('SEO apply failed for '+fp,e.message); }
   }
   try{ await seoWriteSitemap(); }catch(e){}
   try{ await seoWriteRobots(false); }catch(e){}
   try{ await ensureCleanUrlRewrite(); }catch(e){}
-  return {done,failed};
+  if(st) st.textContent='';
+  const bad=report.filter(r=>r.status!=='updated'&&r.status!=='unchanged');
+  if(bad.length){ console.warn('Fourge SEO apply — pages needing attention:'); console.table(bad); }
+  window._seoLastApplyReport=report;
+  return {done,failed,guarded};
 }
 async function saveSEO(){
   const json=JSON.stringify(_seo,null,2); let ok=false;
@@ -6015,7 +6059,11 @@ async function saveSEO(){
   if(!ok){ toast('Save failed — configure Server API or GitHub','err'); return; }
   _seoLoaded=true;
   const r=await seoStampAllPages();
-  toast('SEO saved'+(r&&!r.skipped?(' + applied to '+r.done+' page(s)'+(r.failed?(' ('+r.failed+' failed)'):'')+' — sitemap updated'):'')+' ✓','ok');
+  if(r && r.guarded){
+    toast('SEO saved — applied to '+r.done+' page(s), but '+r.guarded+' write(s) were BLOCKED by the safety guard (see the browser console for the list). Nothing was damaged.','err');
+  } else {
+    toast('SEO saved'+(r&&!r.skipped?(' + applied to '+r.done+' page(s)'+(r.failed?(' ('+r.failed+' skipped/failed — see console)'):'')+' — sitemap updated'):'')+' ✓','ok');
+  }
 }
 
 // Read a page's real visible text (for AI generation) — fixes the old bug where
@@ -9059,7 +9107,10 @@ function veRenderHtml(id,html){
   const pg=_pages[id];
   const siteBase=normSiteBase();
 
-  // Fix relative asset paths with <base> tag
+  // Fix relative asset paths with an EDITOR-ONLY <base> tag. It is marked
+  // data-fourge-editor and removed again by veSerializeClean() — an unmarked
+  // copy used to leak into every saved file (and, resolving relative URLs
+  // against the wrong directory, helped corrupt asset paths).
   let processed=html;
   if(siteBase){
     // Remove any existing base tag first, then inject ours
@@ -9067,11 +9118,11 @@ function veRenderHtml(id,html){
     const filePath=pg?.path||pg?.file||'';
     const dir=filePath.includes('/')?filePath.replace(/\/[^/]+$/,''):'';
     const base=siteBase+(dir?'/'+dir:'')+(dir?'/':'/');
-    processed=processed.replace(/<head([^>]*)>/i,'<head$1><base href="'+base+'">');
+    processed=processed.replace(/<head([^>]*)>/i,'<head$1><base data-fourge-editor href="'+base+'">');
   } else {
     // Fallback: use relative path from admin/
     processed=processed.replace(/<base[^>]*>/gi,'');
-    processed=processed.replace(/<head([^>]*)>/i,'<head$1><base href="../">');
+    processed=processed.replace(/<head([^>]*)>/i,'<head$1><base data-fourge-editor href="../">');
   }
 
   // Remove any existing admin-related scripts from the fetched HTML
@@ -9091,6 +9142,25 @@ function veRenderHtml(id,html){
     const gaBlockRe=new RegExp(gaEscRe(GA_HEAD_START)+'[\\s\\S]*?'+gaEscRe(GA_HEAD_END),'g');
     processed=processed.replace(gaBlockRe,m=>m.replace(/<script(\s|>)/gi,'<script type="text/foundry-ga"$1'));
   }catch(e){}
+
+  // Neutralize EVERY remaining executable script for the editing session — not
+  // just analytics. Third-party runtime (GTM self-spawning script tags, the
+  // reCAPTCHA badge, accessibility widgets building their whole panel, custom
+  // redirect snippets) used to RUN inside the editor iframe, mutate the DOM,
+  // and get baked into the file on save — compounding on every save cycle
+  // (measured live: one page grew 70KB→195KB, 17 GTM copies). The original
+  // type is kept in data-fourge-orig-type; veSerializeClean() restores it, so
+  // saved files are byte-faithful to the authored scripts. Non-executable
+  // types (application/ld+json etc.) are left alone.
+  processed=processed.replace(/<script\b([^>]*)>/gi,(m,attrs)=>{
+    if(/data-fourge-orig-type=/.test(attrs)) return m;                     // already paused
+    if(/type\s*=\s*["']text\/foundry-ga["']/i.test(attrs)) return m;      // GA path has its own restore
+    const tm=attrs.match(/\stype\s*=\s*("([^"]*)"|'([^']*)')/i);
+    const t=((tm?(tm[2]!==undefined?tm[2]:tm[3]):'')||'').toLowerCase();
+    if(t && t!=='text/javascript' && t!=='application/javascript' && t!=='module') return m; // json-ld, templates…
+    const rest=tm?attrs.replace(tm[0],''):attrs;
+    return '<script type="text/fourge-paused" data-fourge-orig-type="'+(t||'__none__')+'"'+rest+'>';
+  });
 
   // Inject editor bridge — uses concatenated vars so the HTML parser never sees a closing script tag
   const sc_o='<'+'script id="__foundry_bridge__">';
@@ -9954,6 +10024,24 @@ function veSerializeClean(){
   root.querySelectorAll('[data-fe-editing]').forEach(el=>{ el.removeAttribute('data-fe-editing'); el.removeAttribute('contenteditable'); el.style.removeProperty('outline'); el.style.removeProperty('outline-offset'); });
   root.querySelectorAll('[data-fid],[data-feid]').forEach(el=>{ el.removeAttribute('data-fid'); el.removeAttribute('data-feid'); });
   root.querySelectorAll('.fe-sel,.fe-hover').forEach(el=>{ el.classList.remove('fe-sel','fe-hover'); });
+  // Un-pause the scripts veRenderHtml neutered: restore each one's original
+  // type so the SAVED file is byte-faithful to what was authored.
+  root.querySelectorAll('script[type="text/fourge-paused"]').forEach(s=>{
+    const ot=s.getAttribute('data-fourge-orig-type');
+    if(ot && ot!=='__none__') s.setAttribute('type',ot); else s.removeAttribute('type');
+    s.removeAttribute('data-fourge-orig-type');
+  });
+  // The editor's own <base> must never reach the saved file.
+  root.querySelectorAll('base[data-fourge-editor]').forEach(el=>el.remove());
+  // Self-heal: strip RUNTIME artifacts that older engine versions baked into
+  // saved files (third-party scripts used to execute in the editor iframe and
+  // their DOM got serialized) — the accessibility widget's panel, the
+  // reCAPTCHA badge, runtime-spawned reCAPTCHA loaders (the authored loader is
+  // marked data-fourge-rc and is kept), and src-less hidden iframes those
+  // widgets leave behind. Every save scrubs a polluted page a little cleaner.
+  root.querySelectorAll('#adaptify-root,#adaptify-style,style#adaptify-dyn,#adaptify-guide,#adaptify-mag,.adaptify-mask,.grecaptcha-badge,textarea.g-recaptcha-response').forEach(el=>el.remove());
+  root.querySelectorAll('script[src*="gstatic.com/recaptcha"]:not([data-fourge-rc])').forEach(el=>el.remove());
+  root.querySelectorAll('iframe:not([src])').forEach(el=>{ if((el.getAttribute('style')||'').replace(/\s/g,'').includes('display:none') && !el.getAttribute('srcdoc')) el.remove(); });
   return ('<!DOCTYPE html>\n'+root.outerHTML).replace(/<script type="text\/foundry-ga"/gi,'<script');
 }
 
@@ -11370,6 +11458,15 @@ async function veSavePage(){
   else { html=veSerializeClean(); if(html==null){ toast('Page not loaded yet','err'); return; } }
   html=pageInjectCustom(html, pg);   // per-page custom CSS/JS (Page Settings)
   html=veFinalizePageHtml(html, pg); // SEO stamp + [form id=…] + runtimes + favicon
+
+  // Safety net: a save that guts the page body is almost always a broken load
+  // or serialization, not an intentional edit. Editors get an override (they
+  // may genuinely be emptying a page); nothing is written without a yes.
+  const alarm=fourgeShrinkAlarm(_veOrigHtml[_curPage]||'', html);
+  if(alarm && !confirm('⚠ This save would shrink the page body by '+alarm.pct+'% ('+alarm.from+' → '+alarm.to+' characters).\n\nThat usually means the page did not load fully or the layout was gutted by mistake. Save anyway?')){
+    toast('Save cancelled — nothing was written','ok');
+    return;
+  }
 
   const btn=document.getElementById('ve-save-btn');
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
