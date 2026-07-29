@@ -2242,7 +2242,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.78';
+const CMS_VERSION='1.14.79';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3548,10 +3548,18 @@ function buildCssFromComputed(win, formEl, scope){
 // as literal text, which is why "the form isn't applying". A shortcode that is
 // a <p>'s sole content swallows the wrapper too (editors paste into paragraphs);
 // an unknown id is left as typed so the author can see and fix it.
+// [form id=xyz] renders the managed form. Optional per-placement attributes:
+// [form id=xyz source_page=tv_radio] pins the form's hidden source field for
+// THIS placement (data-fourge-fixed stops the runtime's per-page auto value
+// from overriding it).
 function expandFormShortcodes(html){
-  return String(html||'').replace(/<p[^>]*>\s*\[form id=([\w-]+)\]\s*<\/p>|\[form id=([\w-]+)\]/gi,(m,a,b)=>{
+  return String(html||'').replace(/<p[^>]*>\s*\[form id=([\w-]+)((?:\s+[\w-]+=[\w./-]+)*)\]\s*<\/p>|\[form id=([\w-]+)((?:\s+[\w-]+=[\w./-]+)*)\]/gi,(m,a,aAttrs,b,bAttrs)=>{
     const f=(_forms||[]).find(x=>x.id===(a||b));
-    return f?renderFormHtml(f):m;
+    if(!f) return m;
+    let out=renderFormHtml(f);
+    const sp=String(aAttrs||bAttrs||'').match(/source_page=([\w./-]+)/i);
+    if(sp) out=out.replace(/(<input type="hidden" name="[^"]*source[^"]*")( value=")[^"]*(")/i,'$1 data-fourge-fixed$2'+esc(sp[1])+'$3');
+    return out;
   });
 }
 // Final pass before a page is written: expand form shortcodes, and when the page
@@ -3906,28 +3914,34 @@ function renderFormHtml(form){
     const reqMark=f.required?' <span class="ff-req">*</span>':'';
     const condAttr=(f.cond&&f.cond.enabled&&f.cond.field)?' data-cond-field="'+esc(f.cond.field)+'" data-cond-op="'+esc(f.cond.op||'is')+'" data-cond-val="'+esc(f.cond.value||'')+'" style="display:none"':'';
     let inner='';
-    const lbl='<label class="ff-label">'+esc(f.label||'')+reqMark+'</label>';
+    // Accessibility (WCAG 1.3.1 / 3.3.2): every control gets a stable id and
+    // its visible label is programmatically associated — <label for> on single
+    // controls, aria-labelledby on grouped ones, aria-label on sub-inputs.
+    const fldId='ff-'+form.id+'-'+f.id;
+    const lblId=fldId+'-l';
+    const lblFor='<label class="ff-label" id="'+lblId+'" for="'+fldId+'">'+esc(f.label||'')+reqMark+'</label>';
+    const lblGrp='<label class="ff-label" id="'+lblId+'">'+esc(f.label||'')+reqMark+'</label>';
     const ph=f.placeholder||(hideLabels?(f.label||''):'');   // when labels are hidden, fall back to the label as placeholder
     if(f.type==='text'||f.type==='email'||f.type==='phone'||f.type==='number'||f.type==='website'){
       const itype=f.type==='website'?'url':(f.type==='phone'?'tel':f.type);
-      inner=lbl+'<input type="'+itype+'" name="'+esc(name)+'" placeholder="'+esc(ph)+'"'+req+' data-fid="'+f.id+'">';
+      inner=lblFor+'<input type="'+itype+'" id="'+fldId+'" name="'+esc(name)+'" placeholder="'+esc(ph)+'"'+req+' data-fid="'+f.id+'">';
     }else if(f.type==='textarea'){
-      inner=lbl+'<textarea name="'+esc(name)+'" placeholder="'+esc(ph)+'" rows="4"'+req+' data-fid="'+f.id+'"></textarea>';
+      inner=lblFor+'<textarea id="'+fldId+'" name="'+esc(name)+'" placeholder="'+esc(ph)+'" rows="4"'+req+' data-fid="'+f.id+'"></textarea>';
     }else if(f.type==='select'){
-      inner=lbl+'<select name="'+esc(name)+'"'+req+' data-fid="'+f.id+'"><option value="">Select…</option>'+(f.choices||[]).map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('')+'</select>';
+      inner=lblFor+'<select id="'+fldId+'" name="'+esc(name)+'"'+req+' data-fid="'+f.id+'"><option value="">Select…</option>'+(f.choices||[]).map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('')+'</select>';
     }else if(f.type==='radio'){
-      inner=lbl+'<div class="ff-choices" data-fid="'+f.id+'">'+(f.choices||[]).map((c,ci)=>'<label class="ff-choice"><input type="radio" name="'+esc(name)+'" value="'+esc(c)+'"'+(ci===0&&f.required?req:'')+'> '+esc(c)+'</label>').join('')+'</div>';
+      inner=lblGrp+'<div class="ff-choices" role="radiogroup" aria-labelledby="'+lblId+'" data-fid="'+f.id+'">'+(f.choices||[]).map((c,ci)=>'<label class="ff-choice"><input type="radio" name="'+esc(name)+'" value="'+esc(c)+'"'+(ci===0&&f.required?req:'')+'> '+esc(c)+'</label>').join('')+'</div>';
     }else if(f.type==='checkbox'){
-      inner=lbl+'<div class="ff-choices" data-fid="'+f.id+'">'+(f.choices||[]).map(c=>'<label class="ff-choice"><input type="checkbox" name="'+esc(name)+'[]" value="'+esc(c)+'"> '+esc(c)+'</label>').join('')+'</div>';
+      inner=lblGrp+'<div class="ff-choices" role="group" aria-labelledby="'+lblId+'" data-fid="'+f.id+'">'+(f.choices||[]).map(c=>'<label class="ff-choice"><input type="checkbox" name="'+esc(name)+'[]" value="'+esc(c)+'"> '+esc(c)+'</label>').join('')+'</div>';
     }else if(f.type==='date'){
-      inner=lbl+'<input type="date" name="'+esc(name)+'"'+req+' data-fid="'+f.id+'">';
+      inner=lblFor+'<input type="date" id="'+fldId+'" name="'+esc(name)+'"'+req+' data-fid="'+f.id+'">';
     }else if(f.type==='name'){
-      inner=lbl+'<div class="ff-row"><input type="text" name="'+esc(name)+'-first" placeholder="First"'+req+' data-fid="'+f.id+'"><input type="text" name="'+esc(name)+'-last" placeholder="Last"'+req+'></div>';
+      inner=lblGrp+'<div class="ff-row" role="group" aria-labelledby="'+lblId+'"><input type="text" id="'+fldId+'" aria-label="'+esc((f.label||'Name')+' — first')+'" name="'+esc(name)+'-first" placeholder="First"'+req+' data-fid="'+f.id+'"><input type="text" aria-label="'+esc((f.label||'Name')+' — last')+'" name="'+esc(name)+'-last" placeholder="Last"'+req+'></div>';
     }else if(f.type==='address'){
-      inner=lbl+'<div class="ff-addr"><input type="text" name="'+esc(name)+'-street" placeholder="Street Address"'+req+' data-fid="'+f.id+'">'
-        +'<div class="ff-row"><input type="text" name="'+esc(name)+'-city" placeholder="City"><input type="text" name="'+esc(name)+'-state" placeholder="State"><input type="text" name="'+esc(name)+'-zip" placeholder="ZIP"></div></div>';
+      inner=lblGrp+'<div class="ff-addr" role="group" aria-labelledby="'+lblId+'"><input type="text" id="'+fldId+'" aria-label="Street address" name="'+esc(name)+'-street" placeholder="Street Address"'+req+' data-fid="'+f.id+'">'
+        +'<div class="ff-row"><input type="text" aria-label="City" name="'+esc(name)+'-city" placeholder="City"><input type="text" aria-label="State" name="'+esc(name)+'-state" placeholder="State"><input type="text" aria-label="ZIP code" name="'+esc(name)+'-zip" placeholder="ZIP"></div></div>';
     }else if(f.type==='file'){
-      inner=lbl+'<input type="file" name="'+esc(name)+'" data-fid="'+f.id+'">';
+      inner=lblFor+'<input type="file" id="'+fldId+'" name="'+esc(name)+'" data-fid="'+f.id+'">';
     }else if(f.type==='hidden'){
       return '<input type="hidden" name="'+esc(f.label||name)+'" value="'+esc(f.value||'')+'">';
     }else if(f.type==='html'){
@@ -4054,6 +4068,12 @@ function formsRuntimeAssets(){
     +'document.addEventListener("input",function(e){var f=e.target.closest(".foundry-form");if(f)ffEvalCond(f);});'
     +'document.addEventListener("change",function(e){var f=e.target.closest(".foundry-form");if(f)ffEvalCond(f);});'
     +'document.querySelectorAll(".foundry-form").forEach(function(f){ffEvalCond(f);});'
+    // Per-page lead source: hidden "source…" fields resolve to THIS page's slug
+    // at view time, so a form shared across 700 pages reports where each lead
+    // actually came from. A placement pinned via [form … source_page=x]
+    // carries data-fourge-fixed and keeps its explicit value.
+    +'function ffPageSlug(){var p=(location.pathname||"").replace(/\\/+$/,"").split("/").pop()||"";p=p.replace(/\\.html?$/i,"");if(!p||p.toLowerCase()==="index")p="home";return p.toLowerCase().replace(/[^a-z0-9_-]+/g,"-");}'
+    +'document.querySelectorAll(".foundry-form input[type=hidden]").forEach(function(h){var n=(h.getAttribute("name")||"").toLowerCase();if(n.indexOf("source")<0)return;if(h.hasAttribute("data-fourge-fixed"))return;h.value=ffPageSlug();});'
     +'function ffPage(f,dir){var pages=f.querySelectorAll(".ff-page");var cur=0;pages.forEach(function(p,i){if(p.style.display!=="none")cur=i;});'
     +'var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display="none";pages[nx].style.display="";'
     +'f.querySelector(".ff-prev").style.display=nx>0?"":"none";f.querySelector(".ff-next").style.display=nx<pages.length-1?"":"none";f.querySelector(".ff-submit").style.display=nx===pages.length-1?"":"none";}'
@@ -4091,11 +4111,13 @@ function ensureFormsRuntime(html){
   const css=formsRuntimeCss();
   html = /<\/head>/i.test(html) ? html.replace(/<\/head>/i, css+'\n</head>')
        : (/<\/body>/i.test(html) ? html.replace(/<\/body>/i, css+'\n</body>') : (html+css));
-  if(!/function ffSubmit/.test(html)){                       // runtime JS (submit/paging/conditional)
-    const full=formsRuntimeAssets();
-    const js=full.slice(full.indexOf('</style>')+'</style>'.length);   // assets minus the CSS block
-    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, js+'\n</body>') : (html+js);
-  }
+  // Runtime JS: strip EVERY existing copy (also dedupes legacy compounded
+  // duplicates) and insert the current version, so runtime improvements reach
+  // already-published pages on their next save instead of only new ones.
+  html=html.replace(/<script>function ffApiBase\(\)\{[\s\S]*?<\/script>\s*/gi,'');
+  const full=formsRuntimeAssets();
+  const js=full.slice(full.indexOf('</style>')+'</style>'.length);   // assets minus the CSS block
+  html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, m=>js+'\n'+m) : (html+js);
   return html;
 }
 
@@ -5205,18 +5227,20 @@ function ffRenderForm(form){
     var req=f.required?' required':'';
     var rm=f.required?' <span class=\"ff-req\">*</span>':'';
     var cond=(f.cond&&f.cond.enabled&&f.cond.field)?' data-cond-field=\"'+f.cond.field+'\" data-cond-op=\"'+(f.cond.op||'is')+'\" data-cond-val=\"'+esc(f.cond.value||'')+'\" style=\"display:none\"':'';
-    var lbl='<label class=\"ff-label\">'+esc(f.label||'')+rm+'</label>';
+    var fldId='ff-'+form.id+'-'+f.id, lblId=fldId+'-l';
+    var lbl='<label class=\"ff-label\" id=\"'+lblId+'\" for=\"'+fldId+'\">'+esc(f.label||'')+rm+'</label>';
+    var lblGrp='<label class=\"ff-label\" id=\"'+lblId+'\">'+esc(f.label||'')+rm+'</label>';
     var inner='';
     var pph=f.placeholder||(hideLabels?(f.label||''):'');
-    if(['text','email','phone','number','website'].indexOf(f.type)>=0){var it=f.type==='website'?'url':(f.type==='phone'?'tel':f.type);inner=lbl+'<input type=\"'+it+'\" name=\"'+name+'\" placeholder=\"'+esc(pph)+'\"'+req+' data-fid=\"'+f.id+'\">';}
-    else if(f.type==='textarea'){inner=lbl+'<textarea name=\"'+name+'\" placeholder=\"'+esc(pph)+'\" rows=\"4\"'+req+' data-fid=\"'+f.id+'\"></textarea>';}
-    else if(f.type==='select'){inner=lbl+'<select name=\"'+name+'\"'+req+' data-fid=\"'+f.id+'\"><option value=\"\">Select…</option>'+(f.choices||[]).map(function(c){return '<option value=\"'+esc(c)+'\">'+esc(c)+'</option>';}).join('')+'</select>';}
-    else if(f.type==='radio'){inner=lbl+'<div class=\"ff-choices\" data-fid=\"'+f.id+'\">'+(f.choices||[]).map(function(c){return '<label class=\"ff-choice\"><input type=\"radio\" name=\"'+name+'\" value=\"'+esc(c)+'\"> '+esc(c)+'</label>';}).join('')+'</div>';}
-    else if(f.type==='checkbox'){inner=lbl+'<div class=\"ff-choices\" data-fid=\"'+f.id+'\">'+(f.choices||[]).map(function(c){return '<label class=\"ff-choice\"><input type=\"checkbox\" name=\"'+name+'[]\" value=\"'+esc(c)+'\"> '+esc(c)+'</label>';}).join('')+'</div>';}
-    else if(f.type==='date'){inner=lbl+'<input type=\"date\" name=\"'+name+'\"'+req+' data-fid=\"'+f.id+'\">';}
-    else if(f.type==='name'){inner=lbl+'<div class=\"ff-row\"><input type=\"text\" name=\"'+name+'-first\" placeholder=\"First\"'+req+' data-fid=\"'+f.id+'\"><input type=\"text\" name=\"'+name+'-last\" placeholder=\"Last\"'+req+'></div>';}
-    else if(f.type==='address'){inner=lbl+'<div class=\"ff-addr\"><input type=\"text\" name=\"'+name+'-street\" placeholder=\"Street Address\"'+req+' data-fid=\"'+f.id+'\"><div class=\"ff-row\"><input type=\"text\" name=\"'+name+'-city\" placeholder=\"City\"><input type=\"text\" name=\"'+name+'-state\" placeholder=\"State\"><input type=\"text\" name=\"'+name+'-zip\" placeholder=\"ZIP\"></div></div>';}
-    else if(f.type==='file'){inner=lbl+'<input type=\"file\" name=\"'+name+'\" data-fid=\"'+f.id+'\">';}
+    if(['text','email','phone','number','website'].indexOf(f.type)>=0){var it=f.type==='website'?'url':(f.type==='phone'?'tel':f.type);inner=lbl+'<input type=\"'+it+'\" id=\"'+fldId+'\" name=\"'+name+'\" placeholder=\"'+esc(pph)+'\"'+req+' data-fid=\"'+f.id+'\">';}
+    else if(f.type==='textarea'){inner=lbl+'<textarea id=\"'+fldId+'\" name=\"'+name+'\" placeholder=\"'+esc(pph)+'\" rows=\"4\"'+req+' data-fid=\"'+f.id+'\"></textarea>';}
+    else if(f.type==='select'){inner=lbl+'<select id=\"'+fldId+'\" name=\"'+name+'\"'+req+' data-fid=\"'+f.id+'\"><option value=\"\">Select…</option>'+(f.choices||[]).map(function(c){return '<option value=\"'+esc(c)+'\">'+esc(c)+'</option>';}).join('')+'</select>';}
+    else if(f.type==='radio'){inner=lblGrp+'<div class=\"ff-choices\" role=\"radiogroup\" aria-labelledby=\"'+lblId+'\" data-fid=\"'+f.id+'\">'+(f.choices||[]).map(function(c){return '<label class=\"ff-choice\"><input type=\"radio\" name=\"'+name+'\" value=\"'+esc(c)+'\"> '+esc(c)+'</label>';}).join('')+'</div>';}
+    else if(f.type==='checkbox'){inner=lblGrp+'<div class=\"ff-choices\" role=\"group\" aria-labelledby=\"'+lblId+'\" data-fid=\"'+f.id+'\">'+(f.choices||[]).map(function(c){return '<label class=\"ff-choice\"><input type=\"checkbox\" name=\"'+name+'[]\" value=\"'+esc(c)+'\"> '+esc(c)+'</label>';}).join('')+'</div>';}
+    else if(f.type==='date'){inner=lbl+'<input type=\"date\" id=\"'+fldId+'\" name=\"'+name+'\"'+req+' data-fid=\"'+f.id+'\">';}
+    else if(f.type==='name'){inner=lblGrp+'<div class=\"ff-row\" role=\"group\" aria-labelledby=\"'+lblId+'\"><input type=\"text\" id=\"'+fldId+'\" aria-label=\"'+esc((f.label||'Name')+' — first')+'\" name=\"'+name+'-first\" placeholder=\"First\"'+req+' data-fid=\"'+f.id+'\"><input type=\"text\" aria-label=\"'+esc((f.label||'Name')+' — last')+'\" name=\"'+name+'-last\" placeholder=\"Last\"'+req+'></div>';}
+    else if(f.type==='address'){inner=lblGrp+'<div class=\"ff-addr\" role=\"group\" aria-labelledby=\"'+lblId+'\"><input type=\"text\" id=\"'+fldId+'\" aria-label=\"Street address\" name=\"'+name+'-street\" placeholder=\"Street Address\"'+req+' data-fid=\"'+f.id+'\"><div class=\"ff-row\"><input type=\"text\" aria-label=\"City\" name=\"'+name+'-city\" placeholder=\"City\"><input type=\"text\" aria-label=\"State\" name=\"'+name+'-state\" placeholder=\"State\"><input type=\"text\" aria-label=\"ZIP code\" name=\"'+name+'-zip\" placeholder=\"ZIP\"></div></div>';}
+    else if(f.type==='file'){inner=lbl+'<input type=\"file\" id=\"'+fldId+'\" name=\"'+name+'\" data-fid=\"'+f.id+'\">';}
     else if(f.type==='hidden'){return '<input type=\"hidden\" name=\"'+esc(f.label||name)+'\" value=\"'+esc(f.value||'')+'\">';}
     else if(f.type==='html'){return '<div class=\"ff-html\"'+cond+'>'+(f.content||'')+'</div>';}
     else if(f.type==='heading'){return '<div class=\"ff-heading\"'+cond+'><h3>'+esc(f.label||'')+'</h3></div>';}
@@ -5271,6 +5295,29 @@ async function loadBlog(){
     var post=posts.find(function(p){return p.slug===slug;});
     if(!post){root.innerHTML='<div class="empty-state"><h2>Post not found</h2><p><a href="posts.html">&larr; Back to all posts</a></p></div>';return;}
     document.title=decodeEntities(post.title)+' — ${siteName}';
+    // Per-post SEO: meta description from the excerpt (posts already have
+    // well-shaped excerpts), OG/Twitter tags, canonical, and Article schema.
+    (function(){
+      var desc=decodeEntities(post.excerpt||'').replace(/\\s+/g,' ').trim().slice(0,300);
+      var canon=location.origin+'/posts.html?p='+encodeURIComponent(post.slug||'');
+      function meta(attr,key,val){if(!val)return;var el=document.head.querySelector('meta['+attr+'="'+key+'"]');if(!el){el=document.createElement('meta');el.setAttribute(attr,key);document.head.appendChild(el);}el.setAttribute('content',val);}
+      meta('name','description',desc);
+      meta('property','og:title',decodeEntities(post.title));
+      meta('property','og:description',desc);
+      if(post.featured)meta('property','og:image',post.featured);
+      meta('property','og:type','article');
+      meta('property','og:url',canon);
+      meta('name','twitter:card','summary_large_image');
+      meta('name','twitter:title',decodeEntities(post.title));
+      if(desc)meta('name','twitter:description',desc);
+      var lk=document.head.querySelector('link[rel="canonical"]');if(!lk){lk=document.createElement('link');lk.setAttribute('rel','canonical');document.head.appendChild(lk);}lk.setAttribute('href',canon);
+      var art={'@context':'https://schema.org','@type':'Article',headline:decodeEntities(post.title)};
+      if(desc)art.description=desc;
+      if(post.date)art.datePublished=post.date;
+      if(post.author)art.author={'@type':'Person',name:decodeEntities(post.author)};
+      if(post.featured)art.image=post.featured;
+      var ld=document.createElement('script');ld.type='application/ld+json';ld.textContent=JSON.stringify(art);document.head.appendChild(ld);
+    })();
     var body=renderShortcodes((post.blocks||[]).map(blockToHtml).join(''));
     root.innerHTML='<article class="single">'
       +'<a class="back" href="posts.html">&larr; All posts</a>'
@@ -6123,7 +6170,27 @@ function seoBuildSchema(pg,s,canon){
     graph.push(org);
   }
   const type=s.schemaType||'WebPage';
-  if(type&&type!=='none'){ const node={'@type':type, name:s.title||pg.label||pg.title||''}; if(canon)node.url=canon; if(s.description)node.description=s.description; graph.push(node); }
+  if(type&&type!=='none'){
+    const node={'@type':type, name:s.title||pg.label||pg.title||''};
+    if(canon)node.url=canon;
+    if(s.description)node.description=s.description;
+    // AEO (answer-engine) fields: a direct answer becomes the page's abstract,
+    // topics become about/keywords entities. Stored per page in seo.json as
+    // aeoAnswer (string) and aeoTopics (array or comma string).
+    if(s.aeoAnswer && String(s.aeoAnswer).trim()) node.abstract=String(s.aeoAnswer).trim();
+    const topics=Array.isArray(s.aeoTopics)?s.aeoTopics.map(t=>String(t).trim()).filter(Boolean)
+                : String(s.aeoTopics||'').split(',').map(t=>t.trim()).filter(Boolean);
+    if(topics.length){ node.about=topics.map(t=>({'@type':'Thing',name:t})); node.keywords=topics.join(', '); }
+    graph.push(node);
+  }
+  // FAQPage from aeoFAQs: [{question,answer}] (or {q,a}) — rendered only when
+  // real Q&A pairs exist.
+  const faqs=(Array.isArray(s.aeoFAQs)?s.aeoFAQs:[]).map(f=>({
+    q:String((f&&(f.question||f.q))||'').trim(), a:String((f&&(f.answer||f.a))||'').trim()
+  })).filter(f=>f.q&&f.a);
+  if(faqs.length){
+    graph.push({'@type':'FAQPage', mainEntity:faqs.map(f=>({'@type':'Question', name:f.q, acceptedAnswer:{'@type':'Answer', text:f.a}}))});
+  }
   return graph.length?{'@context':'https://schema.org','@graph':graph}:null;
 }
 function seoInjectIntoHtml(html,pg,base){
@@ -6179,14 +6246,36 @@ async function seoApplyAll(){
 function seoBuildSitemap(){
   const base=normSiteBase(); if(!base) return null;
   const seen=new Set(), urls=[];
-  getPageList().forEach(p=>{ const pid=pageIdFromPath(p.path||p.file); if((_seo[pid]||{}).noindex || (_pages[pid]&&_pages[pid].draft)) return;
-    let u=base+'/'+cleanUrlPath(p.path||p.file); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
-  (_posts||[]).forEach(po=>{ const path=po.path||(po.slug?('blog/'+po.slug):''); if(!path) return; const u=base+'/'+cleanUrlPath(path); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
+  getPageList().forEach(p=>{ const fp=p.path||p.file, pid=pageIdFromPath(fp);
+    if((_seo[pid]||{}).noindex || (_pages[pid]&&_pages[pid].draft)) return;
+    if(/^uploads\//i.test(String(fp||''))) return;   // stray files under uploads/ are not site pages
+    let u=base+'/'+cleanUrlPath(fp); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
+  // Posts: only URLs that actually exist. A post with its own page file uses
+  // it; otherwise its canonical address is the posts.html single-post view.
+  // (The old fallback emitted /blog/{slug} — a URL form this CMS never served —
+  // which fed crawlers dead links.) Drafts are excluded.
+  (_posts||[]).forEach(po=>{
+    if(!po || !po.published) return;
+    let u='';
+    if(po.path) u=base+'/'+cleanUrlPath(po.path);
+    else if(po.slug) u=base+'/posts.html?p='+encodeURIComponent(po.slug);
+    if(u && !seen.has(u)){ seen.add(u); urls.push(u); }
+  });
   const lastmod=new Date().toISOString().slice(0,10);
   return '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
     +urls.map(u=>'  <url><loc>'+u.replace(/&/g,'&amp;')+'</loc><lastmod>'+lastmod+'</lastmod></url>').join('\n')+'\n</urlset>\n';
 }
-async function seoWriteSitemap(){ const xml=seoBuildSitemap(); if(!xml){ throw new Error('Set Website URL in Design → General first'); } await apiCall('write_file',{path:'sitemap.xml',content:xml}); }
+async function seoWriteSitemap(){
+  // With no configured Website URL the base falls back to whatever host this
+  // admin tab was opened on — which may be the non-www variant of the domain.
+  // Warn once per session so canonical/sitemap hosts get pinned deliberately.
+  if(!((_site&&_site.website)||'').trim() && !window.__fourgeBaseWarned){
+    window.__fourgeBaseWarned=true;
+    toast('Tip: set Design → Website URL so your sitemap and canonical links always use your preferred domain (www vs non-www). Using '+normSiteBase()+' for now.','err');
+  }
+  const xml=seoBuildSitemap(); if(!xml){ throw new Error('Set Website URL in Design → General first'); }
+  await apiCall('write_file',{path:'sitemap.xml',content:xml});
+}
 async function seoGenerateSitemap(){
   const st=document.getElementById('seo-sitemap-status');
   try{ if(!Object.keys(_pages).length) await loadPages(); await seoWriteSitemap(); const n=(seoBuildSitemap().match(/<url>/g)||[]).length;

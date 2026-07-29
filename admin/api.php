@@ -736,6 +736,23 @@ function cmsGhlMapContact($fields, $locationId, $formName, $siteUrl, $mapping = 
     if ($mapping && !empty($mapping['mapped'])) {
         foreach (($mapping['contact'] ?? []) as $k => $v) { if ($v !== '' && $v !== null) $contact[$k] = $v; }
         if (!empty($mapping['custom'])) $contact['customFields'] = $mapping['custom'];
+        // A single "Name" field mapped to the CRM's first_name arrives as the
+        // FULL name. Without this, firstName became the whole string while the
+        // heuristic's split lastName survived underneath — every contact came
+        // out like "Amy Jenson" / "Jenson". When the mapping supplies
+        // first_name but no last_name: drop any heuristic lastName, and if the
+        // mapped value contains whitespace, split it (first token → firstName,
+        // remainder → lastName; single-token names keep lastName empty).
+        $mc = $mapping['contact'] ?? [];
+        if (!empty($mc['firstName']) && empty($mc['lastName'])) {
+            unset($contact['lastName']);
+            $fn = trim((string)$mc['firstName']);
+            if (preg_match('/\s/', $fn)) {
+                $p = preg_split('/\s+/', $fn, 2);
+                $contact['firstName'] = $p[0];
+                if (isset($p[1]) && trim($p[1]) !== '') $contact['lastName'] = trim($p[1]);
+            }
+        }
     }
     $note = 'New website form submission' . ($formName ? " — {$formName}" : '') . "\n\n" . implode("\n", $noteLines);
     if ($siteUrl) $note .= "\n\nPage: " . $siteUrl;
