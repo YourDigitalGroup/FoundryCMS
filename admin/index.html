@@ -1613,6 +1613,7 @@ textarea.fb-input{resize:vertical}
               <div id="si-favicon-prev"></div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <button type="button" class="fd-btn-secondary" onclick="document.getElementById('si-favicon-file').click()"><i class="fa-solid fa-upload"></i> Upload favicon</button>
+                <button type="button" class="fd-btn-secondary" onclick="faviconDetectClick()" title="Search this site for a favicon it already has (the homepage's icon link, /favicon.ico, or the media library) and use it"><i class="fa-solid fa-wand-magic-sparkles"></i> Find existing</button>
                 <button type="button" class="fd-btn-secondary" onclick="faviconApplyAll(false)" title="Re-stamp the favicon tags onto every page file"><i class="fa-solid fa-rotate"></i> Apply to all pages</button>
                 <button type="button" id="si-favicon-remove" class="fd-btn-secondary" style="display:none" onclick="faviconRemove()"><i class="fa-solid fa-trash-can"></i> Remove</button>
                 <input type="file" id="si-favicon-file" accept="image/png,image/svg+xml,image/x-icon,.ico,image/gif,image/jpeg,image/webp" style="display:none" onchange="uploadFavicon(this.files[0])">
@@ -1789,6 +1790,18 @@ textarea.fb-input{resize:vertical}
               <div class="fd-toggle" id="perm-toggle-revisions" onclick="toggleEditorPerm('revisions',this)"><div class="fd-toggle-knob"></div></div>
             </label>
           </div>
+        </div>
+
+        <div class="si-sec"><h2>Launch: Domain Find &amp; Replace</h2>
+          <div class="desc">Going live? Swap every reference to the old (dev) address for the new domain — across all pages, blog posts, forms, SEO data, plugins, and site settings, in one pass. <strong>Scan first</strong> to preview exactly which files change and how many times; nothing is written until you approve it. Changed files are backed up to <code>data/bak/</code>, and the sitemap + robots file are rebuilt afterward. Tip: enter addresses without <code>https://</code> (e.g. <code>dev-client.44interactive.com</code> → <code>www.clientdomain.com</code>) so every form of the link is caught.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+            <div style="flex:1;min-width:220px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Find (old address)</label><input id="ur-find" placeholder="dev-client.44interactive.com" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box;font-family:var(--font-mono)"></div>
+            <div style="flex:1;min-width:220px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Replace with (new address)</label><input id="ur-replace" placeholder="www.clientdomain.com" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box;font-family:var(--font-mono)"></div>
+            <button type="button" class="fd-btn-secondary" onclick="urlReplaceScan()"><i class="fa-solid fa-magnifying-glass"></i> Scan</button>
+            <button type="button" class="fd-btn-primary" id="ur-apply" style="display:none" onclick="urlReplaceApply()">Replace…</button>
+          </div>
+          <div id="ur-status" style="font-size:12px;color:var(--muted);margin-top:10px"></div>
+          <div id="ur-results" style="margin-top:10px"></div>
         </div>
 
         <div class="si-sec"><h2>Change Password</h2>
@@ -2242,7 +2255,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.79';
+const CMS_VERSION='1.14.80';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6442,6 +6455,52 @@ async function faviconRemove(){
   faviconRender();
   await faviconApplyAll(true);   // strip it from every page in one step
 }
+// Search the site for an already-existing favicon to default to: the
+// homepage's own <link rel=icon> declaration first (hand-built sites almost
+// always have one), then the conventional root files, then anything in the
+// media library named like a favicon. Returns a path/URL or ''.
+async function faviconDetect(){
+  try{
+    if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+    const home=_pages['home']||Object.values(_pages||{}).find(p=>/^index\.html?$/i.test(String(p.file||p.path||'')));
+    const fp=home&&(home.path||home.file);
+    if(fp && canCallApi()){
+      const d=await apiCall('read_file',{path:fp});
+      const tags=String(d.content||'').match(/<link\b[^>]*rel=["'][^"']*icon[^"']*["'][^>]*>/gi)||[];
+      for(const tag of tags){
+        if(/apple-touch/i.test(tag)) continue;             // prefer the plain icon
+        const h=tag.match(/href=["']([^"']+)["']/i);
+        if(h&&h[1]&&!/^data:/i.test(h[1])) return h[1];
+      }
+      for(const tag of tags){ const h=tag.match(/href=["']([^"']+)["']/i); if(h&&h[1]&&!/^data:/i.test(h[1])) return h[1]; }
+    }
+  }catch(e){}
+  const base=normSiteBase();
+  for(const cand of ['favicon.ico','favicon.png','favicon.svg','apple-touch-icon.png']){
+    try{ const r=await fetch(base+'/'+cand,{method:'HEAD'}); if(r&&r.ok) return '/'+cand; }catch(e){}
+  }
+  try{ const hit=(_media||[]).find(mm=>/favicon|site-?icon/i.test(String(mm.name||''))); if(hit) return hit.url||('/'+String(hit.path||'')); }catch(e){}
+  return '';
+}
+// "Find existing" button: locate a favicon already on the site and run it
+// through the standard upload pipeline (root copy, tab/Android/iPhone
+// renditions, cache-buster, apply to every page).
+async function faviconDetectClick(){
+  toast('Searching the site for an existing favicon…');
+  const found=await faviconDetect();
+  if(!found){ toast('No existing favicon found on the site — upload one instead','err'); return; }
+  if(!confirm('Found an existing favicon:\n\n  '+found+'\n\nUse it as this site’s favicon? It is copied to /favicon at the site root, the tab / Android / iPhone sizes are generated, and it applies to every page.')) return;
+  try{
+    const base=normSiteBase();
+    const abs=/^https?:\/\//i.test(found)?found:(base+'/'+String(found).replace(/^\/+/,''));
+    const r=await fetch(abs+(abs.indexOf('?')>=0?'&':'?')+'t='+Date.now());
+    if(!r.ok) throw new Error('could not fetch '+found);
+    const blob=await r.blob();
+    const rawExt=(String(found).split(/[?#]/)[0].split('.').pop()||'png').toLowerCase();
+    const ext=['png','svg','ico','jpg','jpeg','webp','gif'].includes(rawExt)?rawExt:'png';
+    await uploadFavicon(new File([blob],'favicon.'+ext,{type:blob.type||''}));
+  }catch(e){ toast('Could not use the found favicon: '+e.message,'err'); }
+}
 // Legacy site.json values from the old flow are absolute URLs carrying whatever
 // origin the admin API happened to be configured with. Root-relative is the
 // only form that survives www/non-www, http→https, and site cloning.
@@ -6505,6 +6564,104 @@ async function faviconApplyAll(silent){
     }catch(e){ console.warn('Favicon apply failed for '+fp,e.message); failed++; }
   }
   toast(done?('Favicon '+(url?'set on':'removed from')+' '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated','ok');
+}
+
+// ── LAUNCH: DOMAIN FIND & REPLACE ───────────────────────────────────────────
+// Site-wide literal find/replace for going live: swap the dev address for the
+// production domain across every page file and the data files that can carry
+// URLs. Two-step by design — Scan is a pure dry-run (per-file match counts,
+// zero writes); Replace only runs on the scanned plan after an explicit
+// confirm. Writes are guarded like every other bulk op: truncated reads are
+// refused, JSON files are parse-validated after replacement (a bad result is
+// refused, never written), every changed file is backed up to data/bak/
+// first, the loop yields to keep the tab alive, and a per-file report lands
+// in the console + window._urlReplaceReport. Sitemap + robots regenerate at
+// the end so they carry the new domain.
+let _urScan=null;
+function urlReplaceTargets(){
+  const files=[];
+  getPageList().forEach(pg=>{ const fp=pg.path||pg.file; if(fp) files.push({path:fp,kind:'page'}); });
+  ['data/posts.json','data/seo.json','data/forms.json','data/injections.json','data/site.json'].forEach(p=>files.push({path:p,kind:'json'}));
+  ['settings.css','interior.css','posts.html'].forEach(p=>files.push({path:p,kind:'text'}));
+  const seen=new Set();
+  return files.filter(f=>{ if(seen.has(f.path)) return false; seen.add(f.path); return true; });
+}
+function urCount(hay,needle){ let n=0,i=0; while((i=hay.indexOf(needle,i))!==-1){ n++; i+=needle.length; } return n; }
+async function urlReplaceScan(){
+  const find=(document.getElementById('ur-find')?.value||'').trim();
+  const repl=(document.getElementById('ur-replace')?.value||'').trim();
+  const st=document.getElementById('ur-status'), res=document.getElementById('ur-results'), applyBtn=document.getElementById('ur-apply');
+  _urScan=null; if(applyBtn) applyBtn.style.display='none'; if(res) res.innerHTML='';
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  if(find.length<4){ toast('Enter at least 4 characters to find — very short strings are dangerous to replace site-wide','err'); return; }
+  if(!repl){ toast('Enter the replacement address','err'); return; }
+  if(find===repl){ toast('Find and Replace are identical — nothing to do','err'); return; }
+  if(repl.indexOf(find)>=0){ toast('The replacement contains the text being found — running this twice would corrupt addresses (e.g. www.www.…). Adjust one of them.','err'); return; }
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+  const targets=urlReplaceTargets();
+  const rows=[]; let total=0, i=0;
+  for(const t of targets){
+    i++;
+    if(st) st.textContent='Scanning… '+i+'/'+targets.length;
+    if(i%10===0) await new Promise(r=>setTimeout(r,0));
+    try{
+      const d=await apiCall('read_file',{path:t.path}); const content=d.content||'';
+      if(!content) continue;
+      const n=urCount(content,find);
+      if(n){ rows.push({path:t.path,kind:t.kind,n}); total+=n; }
+    }catch(e){}
+  }
+  if(st) st.textContent='';
+  if(!rows.length){ if(res) res.innerHTML='<div style="font-size:12.5px;color:var(--muted)">No matches for “'+esc(find)+'” anywhere on the site — nothing to replace.</div>'; return; }
+  _urScan={find,repl,rows,total};
+  if(res) res.innerHTML='<div style="font-size:12.5px;font-weight:600;margin-bottom:6px">'+total+' match'+(total===1?'':'es')+' in '+rows.length+' file'+(rows.length===1?'':'s')+' — review, then click Replace:</div>'
+    +'<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;font-family:var(--font-mono);background:var(--surface-2)">'
+    +rows.map(r=>'<div style="display:flex;justify-content:space-between;gap:12px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.path)+'</span><span style="color:var(--muted);flex-shrink:0">×'+r.n+'</span></div>').join('')
+    +'</div>';
+  if(applyBtn){ applyBtn.style.display='inline-flex'; applyBtn.textContent='Replace '+total+' match'+(total===1?'':'es')+'…'; }
+}
+async function urlReplaceApply(){
+  if(!_urScan||!_urScan.rows.length){ toast('Run Scan first','err'); return; }
+  const {find,repl,rows,total}=_urScan;
+  if(!confirm('Replace '+total+' occurrence(s) of\n\n  '+find+'\n\nwith\n\n  '+repl+'\n\nacross '+rows.length+' file(s)?\n\nEvery changed file is backed up to data/bak/ first, and the sitemap + robots file are rebuilt afterward.')) return;
+  const st=document.getElementById('ur-status');
+  let done=0,failed=0,replaced=0,i=0; const report=[];
+  for(const r of rows){
+    i++;
+    if(st) st.textContent='Replacing… '+i+'/'+rows.length+(failed?(' · '+failed+' skipped/failed'):'');
+    if(i%8===0) await new Promise(rr=>setTimeout(rr,0));
+    try{
+      const d=await apiCall('read_file',{path:r.path}); const content=d.content||'';
+      if(r.kind==='page' && fourgeLooksTruncated(content)){ failed++; report.push({file:r.path,status:'refused',reason:'read looked empty/truncated — nothing written'}); continue; }
+      const n=urCount(content,find);
+      if(!n){ report.push({file:r.path,status:'unchanged'}); continue; }
+      const next=content.split(find).join(repl);
+      if(r.kind==='json'){
+        try{ JSON.parse(next); }
+        catch(e){ failed++; report.push({file:r.path,status:'refused',reason:'replacement would corrupt this JSON file — nothing written'}); continue; }
+      }
+      try{ await apiCall('write_file',{path:'data/bak/'+r.path.replace(/[\/\\]+/g,'__'),content}); }catch(e){}
+      await apiCall('write_file',{path:r.path,content:next});
+      done++; replaced+=n; report.push({file:r.path,status:'updated',replacements:n});
+    }catch(e){ failed++; report.push({file:r.path,status:'failed',reason:e.message}); }
+  }
+  // Reload anything we hold in memory that was just rewritten on disk, so the
+  // open admin can't re-save stale (old-domain) copies over the replacement.
+  try{ if(rows.some(r=>r.path==='data/site.json')){ const d=await apiCall('read_file',{path:'data/site.json'}); const j=JSON.parse(d.content||'{}'); if(j&&typeof j==='object') _site=j; } }catch(e){}
+  try{ if(rows.some(r=>r.path==='data/seo.json')) await seoLoadData(); }catch(e){}
+  try{ if(rows.some(r=>r.path==='data/posts.json')){ const d=await apiCall('read_file',{path:'data/posts.json'}); const j=JSON.parse(d.content||'[]'); if(Array.isArray(j)) _posts=j; } }catch(e){}
+  try{ if(rows.some(r=>r.path==='data/forms.json')){ const d=await apiCall('read_file',{path:'data/forms.json'}); const j=JSON.parse(d.content||'[]'); if(Array.isArray(j)) _forms=j; } }catch(e){}
+  try{ await seoWriteSitemap(); }catch(e){}
+  try{ await seoWriteRobots(false); }catch(e){}
+  if(st) st.textContent='';
+  const bad=report.filter(x=>x.status!=='updated'&&x.status!=='unchanged');
+  if(bad.length){ console.warn('URL replace — files needing attention:'); console.table(bad); }
+  window._urlReplaceReport=report;
+  _urScan=null;
+  const applyBtn=document.getElementById('ur-apply'); if(applyBtn) applyBtn.style.display='none';
+  const res=document.getElementById('ur-results'); if(res) res.innerHTML='';
+  toast(done?('Replaced '+replaced+' occurrence(s) across '+done+' file(s)'+(failed?' — '+failed+' skipped/failed (see console)':'')+' ✓ Sitemap + robots rebuilt.')
+            :('Nothing replaced'+(failed?' — '+failed+' skipped/failed (see console)':'')), done&&!failed?'ok':'err');
 }
 
 // ── reCAPTCHA v3 site-wide injection ──────────────────────────────
