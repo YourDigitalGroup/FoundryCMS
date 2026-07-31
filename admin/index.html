@@ -1792,6 +1792,15 @@ textarea.fb-input{resize:vertical}
           </div>
         </div>
 
+        <div class="si-sec"><h2>Post-Launch Check</h2>
+          <div class="desc">Run this after a site goes live. It audits everything the launch runbook covers — forms &amp; reCAPTCHA, clean page addresses, crawlability, Google Analytics coverage, the sitemap, titles &amp; meta descriptions on every page, and image alt text / unused media — then hands you the punch list of what still needs doing.</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="fd-btn-primary" id="plc-run" onclick="postLaunchCheck()"><i class="fa-solid fa-clipboard-check"></i> Run Post-Launch Check</button>
+            <span id="plc-status" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+          <div id="plc-results" style="margin-top:14px"></div>
+        </div>
+
         <div class="si-sec"><h2>Launch: Domain Find &amp; Replace</h2>
           <div class="desc">Going live? Swap every reference to the old (dev) address for the new domain — across all pages, blog posts, forms, SEO data, plugins, and site settings, in one pass. <strong>Scan first</strong> to preview exactly which files change and how many times; nothing is written until you approve it. Changed files are backed up to <code>data/bak/</code>, and the sitemap + robots file are rebuilt afterward. Tip: enter addresses without <code>https://</code> (e.g. <code>dev-client.44interactive.com</code> → <code>www.clientdomain.com</code>) so every form of the link is caught.</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
@@ -2255,7 +2264,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.80';
+const CMS_VERSION='1.14.81';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6564,6 +6573,220 @@ async function faviconApplyAll(silent){
     }catch(e){ console.warn('Favicon apply failed for '+fp,e.message); failed++; }
   }
   toast(done?('Favicon '+(url?'set on':'removed from')+' '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated','ok');
+}
+
+// ── POST-LAUNCH CHECK ───────────────────────────────────────────────────────
+// One button that runs the launch runbook against the live site and returns a
+// punch list. Read-only except the clean-URL self-heal (idempotent). Every
+// page is read ONCE and shared across the checks (meta/canonical/analytics
+// coverage + the media reference corpus), with yields + live progress so big
+// sites stay responsive.
+async function postLaunchCheck(){
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  const st=document.getElementById('plc-status');
+  const btn=document.getElementById('plc-run');
+  if(btn) btn.disabled=true;
+  const items=[];
+  const add=(section,level,title,detail)=>items.push({section,level,title,detail:detail||''});
+  const prog=t=>{ if(st) st.textContent=t; };
+  try{
+    prog('Loading site data…');
+    if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+    try{ await seoLoadData(); }catch(e){}
+    if(!_media||!_media.length){ try{ await veLoadMediaLib(); }catch(e){} }
+    let forms=[]; try{ const d=await apiCall('read_file',{path:'data/forms.json'}); forms=JSON.parse(d.content||'[]')||[]; }catch(e){}
+    const base=normSiteBase();
+    let expectHost=''; try{ expectHost=new URL(base).host.replace(/^www\./i,''); }catch(e){}
+    const websiteSet=!!(((_site&&_site.website)||'').trim());
+
+    // 1 ── Forms & reCAPTCHA
+    if(!forms.length){
+      add('Forms & reCAPTCHA','na','No managed forms on this site','Nothing to verify.');
+    }else{
+      const rc=(_site&&_site.recaptcha)||{};
+      if(!rc.enabled){
+        add('Forms & reCAPTCHA','warn',forms.length+' form(s) live, reCAPTCHA not configured','Forms accept submissions without bot protection. Set it up in Plugins → reCAPTCHA if this site should have it.');
+      }else{
+        let rs=null; try{ rs=await apiCall('recaptcha_status'); }catch(e){}
+        const cfg=(rs&&rs.config)||{};
+        if(cfg.enabled && cfg.hasSiteKey && cfg.hasSecret){
+          const entries=(rs&&rs.last&&(Array.isArray(rs.last)?rs.last:(rs.last.entries||[])))||[];
+          const recent=entries.slice(-10);
+          const blocked=recent.filter(e=>String((e&&(e.outcome||e.status))||'')==='blocked').length;
+          const passed=recent.some(e=>String((e&&(e.outcome||e.status))||'')==='passed');
+          if(passed&&!blocked) add('Forms & reCAPTCHA','ok','reCAPTCHA '+(cfg.version||'')+' verified working','Recent form verifications passed.');
+          else if(blocked) add('Forms & reCAPTCHA','warn','reCAPTCHA is blocking some submissions',blocked+' of the last '+recent.length+' verifications were blocked — submit a live test; if a real person is blocked, confirm the keys are v3 keys and review the threshold.');
+          else add('Forms & reCAPTCHA','manual','Submit a test form on the live site','Keys are configured but no verifications are recorded yet — fill out a form on the live site and confirm the email / CRM lead arrives.');
+        }else{
+          add('Forms & reCAPTCHA','fail','reCAPTCHA enabled but keys incomplete','Site key: '+(cfg.hasSiteKey?'✓':'MISSING')+' · Secret: '+(cfg.hasSecret?'✓':'MISSING')+' — fix in Plugins → reCAPTCHA, then test a live submission.');
+        }
+      }
+    }
+
+    // 2 ── Clean URLs (the permalink check)
+    prog('Checking clean URLs…');
+    try{ await ensureCleanUrlRewrite(); }catch(e){}
+    let cuOk=false, cuDetail='';
+    try{
+      const sample=getPageList().find(p=>{ const f=String(p.path||p.file||''); return f && !/^index\.html?$/i.test(f) && /\.html?$/i.test(f); });
+      if(sample){
+        const clean=base+'/'+cleanUrlPath(sample.path||sample.file);
+        let r=null;
+        try{ r=await fetch(clean,{method:'HEAD',cache:'no-store'}); }catch(e){}
+        if(!r || (!r.ok && r.status===405)) { try{ r=await fetch(clean,{cache:'no-store'}); }catch(e){} }
+        cuOk=!!(r&&r.ok); cuDetail=clean;
+      }else{ cuOk=true; cuDetail='(only the homepage exists)'; }
+    }catch(e){ cuDetail=e.message; }
+    add('Clean URLs',cuOk?'ok':'fail',
+      cuOk?'Extensionless page addresses are served':'Clean URLs are NOT being served',
+      cuOk?('Verified '+cuDetail):('Tried '+cuDetail+' — the engine just re-installed the server rule; run this check again, and if it still fails the host may be ignoring .htaccess.'));
+
+    // 3 ── Crawlability (the search-engine-visibility check)
+    prog('Checking crawlability…');
+    let robotsTxt=''; try{ const r=await fetch(base+'/robots.txt',{cache:'no-store'}); if(r&&r.ok) robotsTxt=await r.text(); }catch(e){}
+    const blocksAll=/^\s*Disallow:\s*\/\s*$/m.test(robotsTxt);
+    const hasSitemapLine=/^sitemap:/im.test(robotsTxt);
+    if(blocksAll) add('Crawlability','fail','robots.txt is blocking the ENTIRE site','It contains "Disallow: /" — search engines cannot crawl anything and sitemaps will not be accepted. Fix the robots content in the SEO panel and Save & Publish.');
+    else if(!robotsTxt) add('Crawlability','warn','No robots.txt found','Run Save & Publish in the SEO panel — it writes robots.txt including your Sitemap line.');
+    else add('Crawlability','ok','robots.txt allows crawling',hasSitemapLine?'Sitemap line present.':'No Sitemap: line yet — SEO Save & Publish adds it.');
+    let homeHtml='';
+    try{ const hp=Object.values(_pages||{}).find(p=>/^index\.html?$/i.test(String(p.file||p.path||''))); if(hp){ const d=await apiCall('read_file',{path:hp.path||hp.file}); homeHtml=d.content||''; } }catch(e){}
+    if(/<meta[^>]*name=["']robots["'][^>]*noindex/i.test(homeHtml)) add('Crawlability','fail','The homepage is set to noindex','SEO panel → Home → turn off noindex, then Save & Publish. The site is invisible to search while this is live.');
+
+    // 5/6/7 shared ── one pass over every page
+    const ga=(_site&&_site.analytics)||{};
+    const pages=getPageList();
+    const missingMeta=[], wrongCanon=[];
+    let gaPages=0, scanned=0, truncated=0;
+    const refs=new Set();
+    const collectRefs=(content)=>{
+      const re=/(?:src|href|content|poster)\s*=\s*["']([^"']+?\.(?:png|jpe?g|webp|gif|svg|avif|ico|mp4|webm))(?:[?#][^"']*)?["']|url\(\s*["']?([^"')]+?\.(?:png|jpe?g|webp|gif|svg|avif))["']?\s*\)/gi;
+      let mm;
+      while((mm=re.exec(content))){
+        let u=String(mm[1]||mm[2]||'').trim();
+        if(!u||/^data:/i.test(u)) continue;
+        try{ if(/^https?:\/\//i.test(u)) u=new URL(u).pathname; }catch(e){}
+        try{ u=decodeURIComponent(u); }catch(e){}
+        refs.add(u.replace(/^\/+/,'').toLowerCase());
+      }
+    };
+    for(let i=0;i<pages.length;i++){
+      const pg=pages[i], fp=pg.path||pg.file; if(!fp) continue;
+      prog('Scanning pages… '+(i+1)+'/'+pages.length);
+      if(i%10===0) await new Promise(r=>setTimeout(r,0));
+      let content='';
+      try{ const d=await apiCall('read_file',{path:fp}); content=d.content||''; }catch(e){ continue; }
+      if(fourgeLooksTruncated(content)){ truncated++; continue; }
+      scanned++;
+      const hasTitle=/<title[^>]*>\s*[^<\s][^<]*<\/title>/i.test(content);
+      const hasDesc=/<meta[^>]*name=["']description["'][^>]*content=["'][^"']+["']/i.test(content)
+                 || /<meta[^>]*content=["'][^"']+["'][^>]*name=["']description["']/i.test(content);
+      if(!hasTitle||!hasDesc) missingMeta.push({page:fp,title:hasTitle,desc:hasDesc});
+      if(/googletagmanager\.com|gtag\(/i.test(content)) gaPages++;
+      const cm=content.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+      if(cm){ try{ const h=new URL(cm[1]).host.replace(/^www\./i,''); if(expectHost && h!==expectHost) wrongCanon.push({page:fp,canonical:cm[1]}); }catch(e){} }
+      collectRefs(content);
+    }
+    prog('Scanning posts, forms & styles…');
+    for(const extra of ['data/posts.json','data/forms.json','data/injections.json','data/site.json','settings.css','interior.css','posts.html']){
+      try{ const d=await apiCall('read_file',{path:extra}); if(d&&d.content) collectRefs(d.content); }catch(e){}
+    }
+
+    // 4 ── Google Analytics (config + real page coverage)
+    const gaConfigured=!!(ga.ga4||ga.gtm);
+    if(!gaConfigured && gaPages===0){
+      add('Google Analytics','fail','No analytics on the site','Add the GA4 / Tag Manager ID in Analytics and Apply. Create the property at analytics.google.com — Agency account: media@44interactive.com · Digital account: yourdigitalgroup@gmail.com.');
+    }else if(scanned>0 && gaPages===scanned){
+      add('Google Analytics','ok','Analytics present on every page'+(ga.ga4?(' ('+ga.ga4+')'):''),(ga.gtm?('GTM '+ga.gtm+' · '):'')+scanned+' page(s) verified.');
+    }else{
+      add('Google Analytics','warn','Analytics on '+gaPages+' of '+scanned+' pages','Open Analytics and click Apply to stamp the missing pages.');
+    }
+
+    // 5 ── Sitemap
+    prog('Checking sitemap…');
+    let smXml=''; try{ const d=await apiCall('read_file',{path:'sitemap.xml'}); smXml=d.content||''; }catch(e){}
+    if(!smXml){
+      add('Sitemap','fail','No sitemap.xml on the server','SEO panel → “Build my sitemap now” (or Save & Publish).');
+    }else{
+      const locs=smXml.match(/<loc>[^<]+<\/loc>/g)||[];
+      let wrongHost=0;
+      locs.forEach(l=>{ try{ const h=new URL(l.replace(/<\/?loc>/g,'')).host.replace(/^www\./i,''); if(expectHost&&h!==expectHost) wrongHost++; }catch(e){} });
+      if(wrongHost) add('Sitemap','fail',wrongHost+' of '+locs.length+' sitemap URLs point at a different domain','Old / dev addresses are still in the sitemap. Set Design → Website URL to the launch domain, run Settings → Launch: Domain Find & Replace if pages carry old links, then rebuild the sitemap.');
+      else add('Sitemap','ok','sitemap.xml is valid — '+locs.length+' URLs on the right domain',hasSitemapLine?'Referenced from robots.txt.':'robots.txt has no Sitemap line yet — SEO Save & Publish adds it.');
+      add('Sitemap','manual','Submit the sitemap to Google & Bing','Submit /sitemap.xml (this CMS has exactly one sitemap slug) at search.google.com/search-console and bing.com/webmasters. Google Analytics must be live first — give it about an hour to register before submitting. Accounts — Agency: media@44interactive.com · Digital: yourdigitalgroup@gmail.com. Ask Bronson with questions.');
+    }
+    if(!websiteSet) add('Sitemap','warn','Design → Website URL is not set','Canonical links and the sitemap fall back to this browser’s host — set the launch domain exactly as it should be indexed (www or not).');
+
+    // 6 ── Titles & meta descriptions
+    if(!missingMeta.length) add('Titles & descriptions','ok','Every scanned page has a title and meta description',scanned+' page(s) verified.');
+    else add('Titles & descriptions','fail',missingMeta.length+' page(s) missing a title or meta description','First few: '+missingMeta.slice(0,6).map(x=>x.page+(x.title?'':' [no title]')+(x.desc?'':' [no description]')).join(', ')+(missingMeta.length>6?' …':'')+'. SEO panel → Generate All writes these, Save & Publish applies them. Ask Jon with questions.');
+    if(wrongCanon.length) add('Titles & descriptions','fail',wrongCanon.length+' page(s) have canonicals pointing at the wrong domain','e.g. '+wrongCanon[0].canonical+' — set Design → Website URL, then SEO Save & Publish (and Domain Find & Replace if old links remain).');
+
+    // 7 ── Media: alt text + unused images
+    prog('Checking media library…');
+    const imgs=(_media||[]).filter(m=>/\.(png|jpe?g|webp|gif|svg|avif)$/i.test(String(m.name||'')));
+    if(!imgs.length){
+      add('Media','na','No images in the media library','');
+    }else{
+      const noAlt=imgs.filter(m=>!String(m.alt||'').trim());
+      if(!noAlt.length) add('Media','ok','All '+imgs.length+' images have alt text','');
+      else add('Media','fail',noAlt.length+' of '+imgs.length+' images missing alt text','First few: '+noAlt.slice(0,6).map(m=>m.name).join(', ')+(noAlt.length>6?' …':'')+'. Add them in the Media Library (click an image → Alt text → saved alt pushes to pages automatically).');
+      const isUsed=m=>{
+        const p=String(m.path||m.url||'').replace(/^\/+/,'').toLowerCase();
+        if(!p) return true;
+        if(refs.has(p)) return true;
+        for(const r of refs){ if(r===p || r.endsWith('/'+p) || p.endsWith('/'+r)) return true; }
+        return false;
+      };
+      const unused=imgs.filter(m=>!isUsed(m));
+      if(unused.length) add('Media','warn',unused.length+' image(s) not referenced by any page, post, form, plugin, or stylesheet','Review and delete what is truly unneeded: '+unused.slice(0,6).map(m=>m.name).join(', ')+(unused.length>6?' …':'')+'. Double-check anything referenced only by external tools before deleting.');
+      else add('Media','ok','Every image is referenced somewhere on the site','');
+    }
+    if(truncated) add('Pages','warn',truncated+' page file(s) looked empty or truncated and were skipped','Open them in the editor to inspect (they were NOT modified).');
+
+    prog('');
+    plcRender(items);
+  }catch(e){
+    prog('');
+    toast('Post-launch check failed: '+e.message,'err');
+  }finally{
+    if(btn) btn.disabled=false;
+  }
+}
+function plcRender(items){
+  const res=document.getElementById('plc-results'); if(!res) return;
+  const ICO={ok:'✓',warn:'⚠',fail:'✗',manual:'☐',na:'–'};
+  const COL={ok:'#1E8A5B',warn:'#b45309',fail:'#c81e1e',manual:'var(--ember)',na:'var(--muted)'};
+  const sections=[...new Set(items.map(i=>i.section))];
+  let html=sections.map(sec=>{
+    const rows=items.filter(i=>i.section===sec);
+    return '<div style="margin-bottom:14px"><div style="font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">'+esc(sec)+'</div>'
+      +rows.map(r=>'<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border)">'
+        +'<span style="flex:0 0 auto;font-weight:800;color:'+COL[r.level]+'">'+ICO[r.level]+'</span>'
+        +'<div style="min-width:0"><div style="font-size:13px;font-weight:600">'+esc(r.title)+'</div>'
+        +(r.detail?'<div style="font-size:12px;color:var(--muted);line-height:1.55;margin-top:2px">'+esc(r.detail)+'</div>':'')
+        +'</div></div>').join('')
+      +'</div>';
+  }).join('');
+  const todo=items.filter(i=>i.level==='fail'||i.level==='warn'||i.level==='manual');
+  if(todo.length){
+    html+='<div style="margin-top:6px;padding:14px 16px;border:1.5px solid var(--ember);border-radius:10px;background:var(--surface-2)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px"><div style="font-size:13px;font-weight:700">Still to do ('+todo.length+')</div>'
+      +'<button type="button" class="fd-btn-secondary" style="font-size:12px;padding:6px 12px" onclick="plcCopyTodo()"><i class="fa-regular fa-copy"></i> Copy checklist</button></div>'
+      +todo.map(t=>'<div style="font-size:12.5px;padding:3px 0">☐ <strong>'+esc(t.section)+':</strong> '+esc(t.title)+'</div>').join('')
+      +'</div>';
+  }else{
+    html+='<div style="margin-top:6px;padding:14px 16px;border:1.5px solid #1E8A5B;border-radius:10px;font-size:13px;font-weight:600;color:#1E8A5B">✓ Launch checklist clean — nothing left to do.</div>';
+  }
+  res.innerHTML=html;
+  window._plcItems=items;
+}
+function plcCopyTodo(){
+  const items=window._plcItems||[];
+  const todo=items.filter(i=>i.level==='fail'||i.level==='warn'||i.level==='manual');
+  const txt='Post-launch checklist — '+(((_site&&_site.name)||'')+' ').trim()+'('+new Date().toISOString().slice(0,10)+')\n'
+    +todo.map(t=>'- [ ] '+t.section+': '+t.title+(t.detail?('\n      '+t.detail):'')).join('\n')+'\n';
+  navigator.clipboard.writeText(txt).then(()=>toast('Checklist copied ✓','ok'),()=>toast('Could not copy — select and copy from the list','err'));
 }
 
 // ── LAUNCH: DOMAIN FIND & REPLACE ───────────────────────────────────────────
