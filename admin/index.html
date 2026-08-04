@@ -1641,6 +1641,30 @@ textarea.fb-input{resize:vertical}
       ═══════════════════════════════════════════════════════ -->
       <div class="panel" id="p-inject">
         <div class="ta"><button class="fd-btn-primary" onclick="saveInjections()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg> Save &amp; Publish</button></div>
+
+        <div class="si-sec admin-only" style="display:none;margin-bottom:22px">
+          <h2>SEO Platform — Import package</h2>
+          <div class="desc">Deploys a <code>deploy-&lt;site&gt;-&lt;date&gt;.json</code> package from the 44i SEO platform: page titles &amp; descriptions, JSON-LD schema, social tags, robots/llms files, redirects, security headers, and scheduled content. <strong>Preview first</strong> — it reports exactly what would be applied, skipped (with the reason), and left for a human, and writes nothing. Applying backs up every file it changes to <code>data/bak/</code>. Re-importing the same package updates in place instead of duplicating.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <input type="file" id="pkg-file" accept="application/json,.json" style="flex:1;min-width:240px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box" onchange="pkgFilePicked()">
+            <button type="button" class="fd-btn-secondary" id="pkg-preview" onclick="pkgRun('preview')" disabled><i class="fa-solid fa-magnifying-glass"></i> Preview</button>
+            <button type="button" class="fd-btn-primary" id="pkg-apply" onclick="pkgRun('apply')" disabled>Apply package</button>
+          </div>
+          <div id="pkg-status" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+          <div id="pkg-report" style="margin-top:12px"></div>
+          <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Automated delivery (optional)</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">Let the platform POST packages straight to this site. It authenticates with a per-site key (Bearer token) stored encrypted on the server — never in a public file.</div>
+            <div id="pkg-endpoint" style="font-size:12px;font-family:var(--font-mono);color:var(--muted);line-height:1.7"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <button type="button" class="fd-btn-secondary superadmin-only" style="display:none" onclick="pkgToken('regenerate')"><i class="fa-solid fa-key"></i> Generate / rotate key</button>
+              <button type="button" class="fd-btn-secondary superadmin-only" style="display:none" onclick="pkgToken('revoke')">Revoke key</button>
+              <button type="button" class="fd-btn-secondary" onclick="pkgTickNow()" title="Publish any scheduled package content whose time has come">Publish due content now</button>
+            </div>
+            <div id="pkg-token-out" style="margin-top:10px"></div>
+          </div>
+        </div>
+
         <div id="plugins-body"></div>
       </div>
 
@@ -2264,7 +2288,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.81';
+const CMS_VERSION='1.14.82';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2333,7 +2357,7 @@ function goPanel(id){
   if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-leadgen':'Lead Generation','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
-  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject')initPlugins();else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-users')initUsers();
+  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-users')initUsers();
 }
 
 // ── COLLAPSIBLE SIDE MENUS ──────────────────────────────────────
@@ -4541,7 +4565,7 @@ function renderPosts(){
     +_posts.map((p,i)=>'<tr style="cursor:pointer" onclick="editPost('+i+')">'
       +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(p.title||'Untitled'))+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(p.date||'')+'</td>'
-      +'<td><span style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;'+(p.published?'background:rgba(22,163,74,.1);color:var(--green)':'background:var(--surface-3);color:var(--muted)')+'">'+(p.published?'Published':'Draft')+'</span></td>'
+      +'<td><span style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;'+(p.published?'background:rgba(22,163,74,.1);color:var(--green)':(p.publishAt?'background:rgba(219,53,22,.10);color:var(--ember)':'background:var(--surface-3);color:var(--muted)'))+'">'+(p.published?'Published':(p.publishAt?('Scheduled '+esc(String(p.publishAt).slice(0,10))):'Draft'))+'</span></td>'
       +'<td style="text-align:right;white-space:nowrap"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();postToPage('+i+')" title="Turn this post back into a normal page (with your site’s header and footer)">→ Page</button> <button class="btn btn-o btn-xs" onclick="event.stopPropagation();editPost('+i+')">Edit</button></td>'
       +'</tr>').join('')
     +'</tbody></table>';
@@ -5310,7 +5334,9 @@ async function loadBlog(){
   await loadForms();
   var posts=[];
   try{var r=await fetch('data/posts.json?t='+Date.now());if(r.ok)posts=await r.json();}catch(e){}
-  posts=posts.filter(function(p){return p.published;});
+  // Scheduled posts (from a 44i deploy package) become visible at their time.
+  var NOW=Date.now();
+  posts=posts.filter(function(p){ if(!p) return false; if(p.published) return true; var t=p.publishAt?Date.parse(p.publishAt):NaN; return !isNaN(t)&&t<=NOW; });
   var params=new URLSearchParams(location.search);
   var slug=params.get('p');
   if(slug){
@@ -5431,7 +5457,10 @@ function postsRuntimeAssets(){
     +'  for(var src in groups){\n'
     +'    var posts=[]; var u=src+"/data/posts.json?t="+Date.now();\n'
     +'    try{var r=await fetch(u);if(r.ok)posts=await r.json();}catch(e){ if(src) console.warn("Fourge posts: could not load "+u+" — the source site must allow cross-site reads (sign in to its CMS once on engine 1.14.75+ to enable).", e); }\n'
-    +'    posts=(Array.isArray(posts)?posts:[]).filter(function(p){return p&&p.published;});\n'
+    // A post scheduled by a 44i deploy package carries publishAt: it goes live
+    // the moment that time passes, evaluated at view time so no cron is needed.
+    +'    var NOW=Date.now();\n'
+    +'    posts=(Array.isArray(posts)?posts:[]).filter(function(p){ if(!p) return false; if(p.published) return true; var t=p.publishAt?Date.parse(p.publishAt):NaN; return !isNaN(t)&&t<=NOW; });\n'
     +'    posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});\n'
     +'    var bs=groups[src];\n'
     +'    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);\n'
@@ -6239,8 +6268,23 @@ function seoInjectIntoHtml(html,pg,base){
   if(ogTitle) add('meta',{name:'twitter:title',content:ogTitle});
   if(ogDesc) add('meta',{name:'twitter:description',content:ogDesc});
   if(ogImg) add('meta',{name:'twitter:image',content:ogImg});
+  // Imported social tags from a 44i deploy package that Fourge has no field of
+  // its own for (the known og:/twitter: ones are folded into the fields above).
+  ((s.extraMeta&&Array.isArray(s.extraMeta))?s.extraMeta:[]).forEach(mt=>{
+    const key=String((mt&&mt.key)||''), val=String((mt&&mt.content)||'');
+    if(!key||!val) return;
+    if(/^(og:(title|description|image|url)|twitter:(card|title|description|image)|description|robots)$/i.test(key)) return;
+    add('meta', ((mt.attr==='property')?{property:key,content:val}:{name:key,content:val}));
+  });
   const schema=seoBuildSchema(pg,s,canon);
   if(schema){ const sc=add('script',{type:'application/ld+json'}); sc.textContent=JSON.stringify(schema); }
+  // Imported JSON-LD blocks ride alongside Fourge's own graph, each in its own
+  // script tag exactly as the platform generated it.
+  ((s.extraJsonld&&Array.isArray(s.extraJsonld))?s.extraJsonld:[]).forEach(blk=>{
+    let json=''; try{ json=(typeof blk==='string')?blk:JSON.stringify(blk); }catch(e){ return; }
+    if(!json||!json.trim()) return;
+    const sc2=add('script',{type:'application/ld+json'}); sc2.textContent=json;
+  });
   // Rewrite the page's own internal links to the clean (extensionless) form so
   // navigation doesn't bounce through a .html → clean 301 on every click.
   doc.querySelectorAll('a[href]').forEach(a=>{ const h=a.getAttribute('href'), c=cleanHref(h); if(c!==h) a.setAttribute('href',c); });
@@ -6277,7 +6321,9 @@ function seoBuildSitemap(){
   // (The old fallback emitted /blog/{slug} — a URL form this CMS never served —
   // which fed crawlers dead links.) Drafts are excluded.
   (_posts||[]).forEach(po=>{
-    if(!po || !po.published) return;
+    if(!po) return;
+    // published, or scheduled and already due (deploy-package content)
+    if(!po.published){ const t=po.publishAt?Date.parse(po.publishAt):NaN; if(isNaN(t)||t>Date.now()) return; }
     let u='';
     if(po.path) u=base+'/'+cleanUrlPath(po.path);
     else if(po.slug) u=base+'/posts.html?p='+encodeURIComponent(po.slug);
@@ -6787,6 +6833,125 @@ function plcCopyTodo(){
   const txt='Post-launch checklist — '+(((_site&&_site.name)||'')+' ').trim()+'('+new Date().toISOString().slice(0,10)+')\n'
     +todo.map(t=>'- [ ] '+t.section+': '+t.title+(t.detail?('\n      '+t.detail):'')).join('\n')+'\n';
   navigator.clipboard.writeText(txt).then(()=>toast('Checklist copied ✓','ok'),()=>toast('Could not copy — select and copy from the list','err'));
+}
+
+// ── SEO PLATFORM: DEPLOY-PACKAGE IMPORTER (client shell) ────────────────────
+// All apply logic lives server-side (api.php: seo_package) so this screen and
+// the machine endpoint can never disagree. This just validates the file, calls
+// preview/apply, and renders the returned report.
+let _pkgData=null;
+function pkgFilePicked(){
+  const inp=document.getElementById('pkg-file');
+  const st=document.getElementById('pkg-status');
+  const pv=document.getElementById('pkg-preview'), ap=document.getElementById('pkg-apply');
+  const rep=document.getElementById('pkg-report'); if(rep) rep.innerHTML='';
+  _pkgData=null; if(pv) pv.disabled=true; if(ap) ap.disabled=true;
+  const f=inp&&inp.files&&inp.files[0];
+  if(!f){ if(st) st.textContent=''; return; }
+  if(f.size>8*1024*1024){ if(st) st.textContent='That file is '+fmtBytes(f.size)+' — the limit is 8 MB.'; return; }
+  if(st) st.textContent='Reading '+f.name+' ('+fmtBytes(f.size)+')…';
+  const fr=new FileReader();
+  fr.onload=()=>{
+    let j=null;
+    try{ j=JSON.parse(fr.result); }
+    catch(e){ if(st) st.textContent='That file is not valid JSON — nothing was applied.'; return; }
+    if(!j||typeof j!=='object'||Array.isArray(j)||j.format!=='44i-deploy-package'){
+      if(st) st.textContent='That JSON is not a 44i deploy package (its "format" must be "44i-deploy-package") — nothing was applied.';
+      return;
+    }
+    if(+j.format_version>1){
+      if(st) st.textContent='This package is format version '+j.format_version+'; this site understands version 1. Update Fourge first.';
+      return;
+    }
+    _pkgData=j;
+    const n=k=>Array.isArray(j[k])?j[k].length:0;
+    if(st) st.textContent='Loaded '+esc(f.name)+' — generated '+esc(String(j.generated_at||'?').slice(0,10))
+      +' for '+esc(String(j.site||'?'))+'. Contains: '+n('seo_meta')+' meta, '+n('schema')+' schema, '+n('og_tags')+' social, '
+      +n('content')+' content, '+((j.redirects&&j.redirects.rules&&j.redirects.rules.length)||0)+' redirects, '+n('manual_tasks')+' manual task(s). Preview before applying.';
+    if(pv) pv.disabled=false; if(ap) ap.disabled=false;
+  };
+  fr.onerror=()=>{ if(st) st.textContent='Could not read that file.'; };
+  fr.readAsText(f);
+}
+async function pkgRun(mode){
+  if(!_pkgData){ toast('Choose a package file first','err'); return; }
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  if(mode==='apply' && !confirm('Apply this package to the live site?\n\nEvery file it changes is backed up to data/bak/ first, and a full report follows.')) return;
+  const st=document.getElementById('pkg-status');
+  const pv=document.getElementById('pkg-preview'), ap=document.getElementById('pkg-apply');
+  if(pv) pv.disabled=true; if(ap) ap.disabled=true;
+  if(st) st.textContent=(mode==='apply'?'Applying package…':'Previewing (nothing is written)…');
+  try{
+    const r=await apiCall('seo_package',{mode,package:_pkgData});
+    if(!r||r.ok===false) throw new Error((r&&r.error)||'Import failed');
+    pkgRenderReport(r);
+    if(st) st.textContent='';
+    if(mode==='apply'){
+      toast('Package applied — '+r.counts.applied+' change(s), '+r.counts.skipped+' skipped, '+r.counts.manual+' manual ✓','ok');
+      // The server rewrote data files underneath us — reload what we hold.
+      try{ await seoLoadData(); }catch(e){}
+      try{ await loadPages(); }catch(e){}
+      try{ const d=await apiCall('read_file',{path:'data/posts.json'}); const j=JSON.parse(d.content||'[]'); if(Array.isArray(j)) _posts=j; }catch(e){}
+    } else {
+      toast('Preview complete — nothing was written','ok');
+    }
+  }catch(e){
+    if(st) st.textContent='';
+    toast('Import failed: '+e.message,'err');
+  }finally{
+    if(pv) pv.disabled=!_pkgData; if(ap) ap.disabled=!_pkgData;
+  }
+}
+function pkgRenderReport(r){
+  const box=document.getElementById('pkg-report'); if(!box) return;
+  const src=r.source||{};
+  const grp=(title,rows,color,fmt)=>{
+    if(!rows||!rows.length) return '';
+    return '<div style="margin-bottom:12px"><div style="font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:'+color+';margin-bottom:4px">'+esc(title)+' ('+rows.length+')</div>'
+      +'<div style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)">'
+      +rows.map(x=>'<div style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:12px;line-height:1.5">'+fmt(x)+'</div>').join('')
+      +'</div></div>';
+  };
+  box.innerHTML=
+    '<div style="font-size:12.5px;font-weight:700;margin-bottom:8px">'+(r.dry_run?'Preview — nothing was written':'Applied')
+      +' · '+esc(String(src.client||''))+(src.tier?(' ('+esc(src.tier)+')'):'')
+      +(src.audit_score!=null?(' · audit score '+esc(String(src.audit_score))):'')+'</div>'
+    +grp('Applied',r.applied,'#1E8A5B',x=>'<strong>'+esc(x.type)+'</strong> — '+esc(x.item||'')+(x.note?(' <span style="color:var(--muted)">· '+esc(x.note)+'</span>'):''))
+    +grp('Skipped',r.skipped,'#b45309',x=>'<strong>'+esc(x.type)+'</strong> — '+esc(x.item||'')+'<div style="color:var(--muted);margin-top:2px">'+esc(x.reason||'')+'</div>')
+    +grp('Needs a human',r.manual,'var(--ember)',x=>'☐ <strong>'+esc(x.item||'')+'</strong>'+(x.action?('<div style="color:var(--muted);margin-top:2px">'+esc(x.action)+'</div>'):''))
+    +(Array.isArray(r.published_now)&&r.published_now.length?('<div style="font-size:12px;color:#1E8A5B">Published on arrival (schedule already past): '+r.published_now.map(x=>esc(x.title)).join(', ')+'</div>'):'');
+  window._pkgLastReport=r;
+}
+async function pkgAdminRefresh(){
+  const ep=document.getElementById('pkg-endpoint'); if(!ep) return;
+  if(!canCallApi()) return;
+  try{
+    const r=await apiCall('seo_pkg_admin',{op:'status'});
+    ep.innerHTML='POST '+esc(r.endpoint||'')+'<br>tick '+esc(r.tickEndpoint||'')
+      +'<br>Key: '+(r.hasToken?'<span style="color:#1E8A5B">installed</span>':'<span style="color:#b45309">not set</span>');
+    if(r.lastReport) pkgRenderReport(r.lastReport);
+  }catch(e){}
+}
+async function pkgToken(op){
+  if(op==='revoke' && !confirm('Revoke the deploy-package key? The platform will no longer be able to post packages to this site.')) return;
+  try{
+    const r=await apiCall('seo_pkg_admin',{op});
+    const out=document.getElementById('pkg-token-out');
+    if(r.token&&out){
+      out.innerHTML='<div style="padding:10px 12px;border:1.5px solid var(--ember);border-radius:8px;background:var(--surface-2)">'
+        +'<div style="font-size:12px;font-weight:700;margin-bottom:4px">Copy this key now — it cannot be shown again</div>'
+        +'<code style="font-size:12px;word-break:break-all">'+esc(r.token)+'</code></div>';
+      toast('Key generated ✓','ok');
+    } else if(out){ out.innerHTML=''; toast('Key revoked','ok'); }
+    pkgAdminRefresh();
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+}
+async function pkgTickNow(){
+  try{
+    const r=await apiCall('seo_pkg_tick',{});
+    toast(r.count?('Published '+r.count+' scheduled item(s) ✓'):'Nothing was due yet','ok');
+    if(r.count){ try{ await loadPages(); }catch(e){} }
+  }catch(e){ toast('Failed: '+e.message,'err'); }
 }
 
 // ── LAUNCH: DOMAIN FIND & REPLACE ───────────────────────────────────────────
