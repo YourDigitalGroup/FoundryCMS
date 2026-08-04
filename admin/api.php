@@ -2154,6 +2154,79 @@ HT;
     }
     return file_put_contents($htPath, $existing) !== false;
 }
+// ── INDEXING SCAFFOLD ───────────────────────────────────────────────────────
+// Three server-level indexing controls, in one marker-spliced block placed
+// ABOVE the clean-URL rewrite (order matters — that block's catch-all rewrite
+// would otherwise swallow the redirect below).
+//
+// Safety rules this block obeys, because ~16 live client sites run it:
+//  • Options -MultiViews lives INSIDE <IfModule mod_rewrite.c>. If mod_rewrite
+//    were unavailable, MultiViews would be the only thing serving /page from
+//    page.html — disabling it unconditionally would break every clean URL.
+//  • The trailing-slash 301 only fires when the slashed form is neither a real
+//    file nor a real directory, i.e. only for URLs that 404 today. It cannot
+//    change any working URL.
+//  • The non-production guard matches an EXPLICIT list of non-production host
+//    shapes and then unconditionally exempts this site's own configured
+//    production host (and its www/non-www twin). There is deliberately NO
+//    "anything else is non-production" catch-all: a client with extra live
+//    domain aliases must never be de-indexed by this. If the site's host can't
+//    be determined, the guard is omitted entirely.
+function fourgeWriteIndexingHtaccess() {
+    // Production host comes from the site's configured Website URL only — never
+    // from the request, which could be the dev host we're guarding against.
+    $prodHost = '';
+    try {
+        $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+        $w = trim((string)($site['website'] ?? ''));
+        if ($w !== '') {
+            if (!preg_match('~^https?://~i', $w)) $w = 'https://' . $w;
+            $h = (string)parse_url($w, PHP_URL_HOST);
+            $h = strtolower(preg_replace('~^www\.~i', '', $h));
+            if ($h !== '' && preg_match('~^[a-z0-9.\-]+$~', $h)) $prodHost = $h;
+        }
+    } catch (Throwable $e) { $prodHost = ''; }
+
+    $L = [];
+    $L[] = '<IfModule mod_rewrite.c>';
+    $L[] = '  RewriteEngine On';
+    $L[] = '  # Stop Apache/LiteSpeed content negotiation from resolving /page on its';
+    $L[] = '  # own — it silently bypasses (and defeats) the rules below.';
+    $L[] = '  Options -MultiViews';
+    $L[] = '  # /page/ -> /page  (only for a slashed URL that is not a real file or';
+    $L[] = '  # directory, so this can never touch a URL that already works)';
+    $L[] = '  RewriteCond %{REQUEST_URI} !^/(admin|data)/ [NC]';
+    $L[] = '  RewriteCond %{REQUEST_FILENAME} !-d';
+    $L[] = '  RewriteCond %{REQUEST_FILENAME} !-f';
+    $L[] = '  RewriteRule ^(.+)/$ /$1 [R=301,L]';
+    $L[] = '</IfModule>';
+    if ($prodHost !== '') {
+        $esc = str_replace('.', '\\.', $prodHost);
+        $L[] = '<IfModule mod_setenvif.c>';
+        $L[] = '  # Non-production hosts: explicit shapes only, never a catch-all.';
+        $L[] = '  SetEnvIf Host "^(dev|staging|stg|test|qa|uat|preview|beta|demo|sandbox)[.\-]" FOURGE_NONPROD=1';
+        $L[] = '  SetEnvIf Host "\.fourge\.com$" FOURGE_NONPROD=1';
+        $L[] = '  SetEnvIf Host "^localhost" FOURGE_NONPROD=1';
+        $L[] = '  SetEnvIf Host "\.local$" FOURGE_NONPROD=1';
+        $L[] = '  SetEnvIf Host "^[0-9.]+$" FOURGE_NONPROD=1';
+        $L[] = '  # …and this site\'s own production host is ALWAYS production, last word.';
+        $L[] = '  SetEnvIf Host "^(www\.)?' . $esc . '(:[0-9]+)?$" !FOURGE_NONPROD';
+        $L[] = '</IfModule>';
+        $L[] = '<IfModule mod_headers.c>';
+        $L[] = '  Header always set X-Robots-Tag "noindex, nofollow" env=FOURGE_NONPROD';
+        $L[] = '</IfModule>';
+        $L[] = '<IfModule mod_rewrite.c>';
+        $L[] = '  RewriteCond %{ENV:FOURGE_NONPROD} =1';
+        $L[] = '  RewriteRule ^robots\.txt$ /_fourge_robots_nonprod.txt [L]';
+        $L[] = '</IfModule>';
+    }
+    // The alternate robots file the rule above serves on non-production hosts.
+    $nonProd = PUBLIC_HTML . '/_fourge_robots_nonprod.txt';
+    if (!is_file($nonProd)) {
+        @file_put_contents($nonProd, "# Served only on non-production hosts (see the Fourge Indexing block in .htaccess).\nUser-agent: *\nDisallow: /\n");
+    }
+    return cmsPkgSpliceHtaccess('# BEGIN Fourge Indexing', '# END Fourge Indexing', implode("\n", $L));
+}
 function fourgeApiInstallCleanUrls($me) {
     if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
     if (!fourgeWriteCleanUrlHtaccess()) {
@@ -2165,11 +2238,12 @@ function fourgeApiInstallCleanUrls($me) {
     // to cross-site reads, install the SEO-platform endpoints, and publish any
     // scheduled deploy-package content that has come due. None of these can
     // fail the clean-URL install.
-    $cors = false; $seoApi = false; $due = [];
+    $cors = false; $seoApi = false; $idx = false; $due = [];
     try { $cors   = fourgeWritePostsCorsHtaccess(); } catch (Throwable $e) { $cors = false; }
     try { $seoApi = fourgeWriteSeoApiHtaccess();    } catch (Throwable $e) { $seoApi = false; }
+    try { $idx    = fourgeWriteIndexingHtaccess(); } catch (Throwable $e) { $idx = false; }
     try { $due    = cmsPkgTick(false);              } catch (Throwable $e) { $due = []; }
-    echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'published' => count($due)]);
+    echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx, 'published' => count($due)]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
@@ -2228,9 +2302,26 @@ function cmsPkgBackup($relPath) {
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
     @copy($src, $dir . '/' . str_replace(['/', '\\'], '__', ltrim($relPath, '/')));
 }
-// Comparable path key: scheme/host/www/query/extension/trailing-slash agnostic.
-// The homepage normalizes to '' from every spelling.
-function cmsPkgNormPath($u) {
+// ── PUBLIC URL PATHS, PHP SIDE ──────────────────────────────────────────────
+// Two jobs that were previously (wrongly) one function:
+//
+//   cmsPkgUrlPath()  — the path that actually appears in a public URL. Must be
+//                      byte-identical to fourgePagePath() in admin/index.html,
+//                      because both write canonical tags for the same page.
+//                      CASE-PRESERVING: on a case-sensitive filesystem a page
+//                      file named About.html is served at /About, and a canonical
+//                      of /about is a 404 pointing search engines at nothing.
+//   cmsPkgNormPath() — a comparison KEY for matching a deploy-package target
+//                      against pages.json. Case- and trailing-slash-folded on
+//                      purpose, so /Services/ and services/index.html match.
+//
+// PHP cannot call the JS helper, so the two are locked together by a shared
+// vector table asserted in both test suites (indexing.mjs / indexing_test.php).
+//
+// Shape: extensionless, no leading slash, home = '', a directory index folds to
+// its directory ('services/index.html' -> 'services/', which is the URL Apache
+// actually serves for that file via DirectoryIndex).
+function cmsPkgUrlPath($u) {
     $u = trim((string)$u);
     if ($u === '') return '';
     // A host is only stripped when the input was genuinely absolute. Sniffing
@@ -2242,9 +2333,26 @@ function cmsPkgNormPath($u) {
     elseif (strpos($u, '//') === 0) { $u = substr($u, 2); $hadHost = true; }
     if ($hadHost) { $slash = strpos($u, '/'); $u = ($slash === false) ? '' : substr($u, $slash); }
     $u = preg_replace('~[?#].*$~', '', (string)$u);
-    $u = strtolower(trim((string)$u, '/'));
-    $u = preg_replace('~\.html?$~', '', $u);
-    return ($u === 'index') ? '' : $u;
+    $u = ltrim((string)$u, '/');
+    // The index match needs a start-or-slash boundary, or "myindex.html" folds
+    // to "my" — a canonical pointing at a URL that does not exist.
+    $u = preg_replace('~(^|/)index\.html?$~i', '$1', $u);   // dir index -> the dir
+    return preg_replace('~\.html?$~i', '', (string)$u);
+}
+// Absolute public URL for a page file — the PHP mirror of fourgePageUrl().
+// '' when no canonical origin is known; the home page keeps its single slash.
+function cmsPkgPageUrl($base, $file) {
+    $base = rtrim((string)$base, '/');
+    if ($base === '') return '';
+    $p = cmsPkgUrlPath($file);
+    return $p !== '' ? ($base . '/' . $p) : ($base . '/');
+}
+// Comparable path key: scheme/host/query/extension/case/trailing-slash agnostic.
+// The homepage normalizes to '' from every spelling. Note that services.html and
+// services/index.html deliberately fold to the same key — they compete for the
+// same public URL, so treating them as one target is the correct behaviour.
+function cmsPkgNormPath($u) {
+    return rtrim(strtolower(cmsPkgUrlPath($u)), '/');
 }
 function cmsPkgSlug($s) {
     $s = strtolower(trim((string)$s));
@@ -2701,8 +2809,8 @@ function cmsPkgApply($pkg, $dry) {
             if ($fk !== '' && trim((string)($seo[$pid]['focusKeyword'] ?? '')) === '') $seo[$pid]['focusKeyword'] = $fk;
             if (!$dry) {
                 cmsPkgBackup($file);
-                $canon = $baseUrl !== '' ? ($baseUrl . '/' . cmsPkgNormPath($file)) : '';
-                @file_put_contents(PUBLIC_HTML . '/' . $file, cmsPkgStampSeo($html, $seo[$pid], rtrim($canon, '/') ?: '', $rec['draft']));
+                $canon = cmsPkgPageUrl($baseUrl, $file);   // URL emitter, not the match key
+                @file_put_contents(PUBLIC_HTML . '/' . $file, cmsPkgStampSeo($html, $seo[$pid], $canon, $rec['draft']));
                 $pages[$pid] = $rec;
             } else { $pages[$pid] = $rec; }
             $add('content_page', $title, ($isNew ? 'created ' : 'updated ') . $file . ($noteBits ? ' — ' . implode('; ', $noteBits) : ''));
@@ -2756,8 +2864,7 @@ function cmsPkgApply($pkg, $dry) {
             $skip('stamp', $file, 'Page file looked empty or truncated — refused to rewrite it');
             continue;
         }
-        $canon = $baseUrl !== '' ? rtrim($baseUrl . '/' . cmsPkgNormPath($file), '/') : '';
-        if ($canon === '' && $baseUrl !== '') $canon = $baseUrl . '/';
+        $canon = cmsPkgPageUrl($baseUrl, $file);   // URL emitter, not the match key
         $next = cmsPkgStampSeo($html, $seo[$pid], $canon, !empty($rec['draft']));
         if ($next === $html) continue;
         if (!$dry) { cmsPkgBackup($file); @file_put_contents($abs, $next); }

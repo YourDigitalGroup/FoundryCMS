@@ -2299,7 +2299,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.83';
+const CMS_VERSION='1.14.84';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3630,10 +3630,17 @@ function veFinalizePageHtml(html, pg){
   // hand-written meta tags untouched.
   try{
     if(pg && _seoLoaded && _seo && typeof _seo==='object'){
-      const pid=pageIdFromPath(pg.path||pg.file)||pg.id;
+      const pid=fourgePageId(pg);
       const s=_seo[pid];
       if((s && Object.keys(s).length) || /data-fourge-seo/.test(html))
-        html=seoInjectIntoHtml(html,pg,normSiteBase());
+        html=seoInjectIntoHtml(html,pg,fourgeCanonicalBase());
+      else
+        // No SEO record: still give the page a self-referencing canonical and a
+        // robots tag — the two things every indexable page needs — WITHOUT
+        // touching its hand-written title/description/social tags. (The full
+        // stamp takes those over, and on a page that has no record it would
+        // strip them and put nothing back.)
+        html=seoMinimalStamp(html,pg);
     }
   }catch(e){}
   html=expandFormShortcodes(html);
@@ -4307,9 +4314,8 @@ function renderTLPGenerated(){
 function tlpEditPage(id){ if(!_pages[id]) return; veSelectPage(id); navTo('pages'); }
 function tlpViewPage(id){
   const pg=_pages[id]; if(!pg) return;
-  const base=(_site&&_site.website||'').replace(/\/$/,'');
-  const path=cleanUrlPath(pg.file||pg.path||'');
-  window.open((base?base+'/':'/')+path,'_blank','noopener');
+  const abs=fourgePageUrl(pg.file||pg.path||'');            // one URL helper
+  window.open(abs||('/'+fourgePagePath(pg.file||pg.path||'')),'_blank','noopener');
 }
 async function tlpDeletePage(id){
   const pg=_pages[id]; if(!pg) return;
@@ -4520,16 +4526,16 @@ async function publishTLPs(){
 }
 
 // Build/refresh sitemap.xml including all pages (TLPs included) but respecting hidden-from-nav
+// Legacy entry point, kept for its existing call sites. It used to build its own
+// URLs from _site.website and write its own sitemap.xml — a SECOND sitemap
+// generator that raced the real one, and won whenever a page was saved after
+// SEO → Generate. It also listed drafts and noindex pages, and stamped every URL
+// with a fabricated changefreq of "weekly". It now delegates to the one builder.
 async function updateSitemap(){
   const{url,token}=getApiCfg();
   if(!url||!token) return;
-  const base=(_site&&_site.website||'').replace(/\/$/,'');
-  const urls=Object.values(_pages).filter(p=>p.file||p.path).map(p=>{
-    const loc=base+'/'+cleanUrlPath(p.file||p.path);
-    return '  <url><loc>'+esc(loc)+'</loc><changefreq>weekly</changefreq></url>';
-  }).join('\n');
-  const xml='<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'+urls+'\n</urlset>';
-  try{ await apiCall('write_file',{path:'sitemap.xml',content:xml}); }catch(e){}
+  if(!fourgeCanonicalBase()) return;        // no configured domain → write nothing
+  try{ await seoWriteSitemap(); }catch(e){}
 }
 
 
@@ -5102,6 +5108,7 @@ async function savePost(publish){
   try{
     await savePostsJson();
     await ensurePostsHtml();   // make sure posts.html exists/updated
+    seoSitemapRefresh();       // publishing/unpublishing a post changes the sitemap
     toast(post.published?'Post published ✓':'Draft saved ✓','ok');
     goPanel('p-posts');
     renderPosts();
@@ -5370,7 +5377,7 @@ async function loadBlog(){
       meta('name','twitter:title',decodeEntities(post.title));
       if(desc)meta('name','twitter:description',desc);
       var lk=document.head.querySelector('link[rel="canonical"]');if(!lk){lk=document.createElement('link');lk.setAttribute('rel','canonical');document.head.appendChild(lk);}lk.setAttribute('href',canon);
-      var art={'@context':'https://schema.org','@type':'Article',headline:decodeEntities(post.title)};
+      var art={'@context':'https://schema.org','@type':'BlogPosting',headline:decodeEntities(post.title),mainEntityOfPage:{'@type':'WebPage','@id':canon}};
       if(desc)art.description=desc;
       if(post.date)art.datePublished=post.date;
       if(post.author)art.author={'@type':'Person',name:decodeEntities(post.author)};
@@ -5915,7 +5922,48 @@ function seoGlobal(){ if(!_seo.__site) _seo.__site={separator:'|',defaultOg:'',o
 // A page file/path → its public URL path. "index.html" → "" (site root),
 // "about.html" → "about", "services/x.html" → "services/x". Leading slashes trimmed.
 function cleanUrlPath(p){
-  return String(p||'').replace(/^\/+/,'').replace(/index\.html?$/i,'').replace(/\.html?$/i,'');
+  // The index match needs a start-or-slash boundary: without one, "myindex.html"
+  // became "/my" and "portfolio-index.html" became "/portfolio-" — canonical
+  // tags and nav links pointing at URLs that 404.
+  return String(p||'').replace(/^\/+/,'').replace(/(^|\/)index\.html?$/i,'$1').replace(/\.html?$/i,'');
+}
+// ── ONE SOURCE OF TRUTH FOR PUBLIC URLs ─────────────────────────────────────
+// Canonical tags, og:url, the sitemap, and the SERP preview must never derive
+// URLs independently — three subsystems each doing their own string work is how
+// a site ends up with canonicals on one host and sitemap entries on another.
+// Everything goes through fourgePageUrl() / fourgePagePath().
+//
+// The URL form is: extensionless, no trailing slash, home = "/".
+// (Kept in sync with cmsPkgNormPath() in admin/api.php — PHP can't call this,
+// so the two are locked together by a shared vector table in the test suite.)
+function fourgePagePath(fileOrPath){ return cleanUrlPath(fileOrPath); }
+// The origin used for anything a search engine will read. Deliberately does NOT
+// fall back to autoSiteBase(): deriving the host from whatever URL the admin
+// happened to be opened on is what stamped dev/non-www hosts into hundreds of
+// live canonicals. If the Website URL isn't configured, we emit no absolute URL
+// at all rather than guess one.
+function fourgeCanonicalBase(){
+  let b=((_site&&_site.website)||'').trim().replace(/\/+$/,'');
+  if(!b) return '';
+  if(!/^https?:\/\//i.test(b)) b='https://'+b;
+  return b;
+}
+// Absolute public URL for a page file. '' when no canonical origin is known.
+function fourgePageUrl(fileOrPath){
+  const base=fourgeCanonicalBase(); if(!base) return '';
+  const p=fourgePagePath(fileOrPath);
+  return p ? (base+'/'+p) : (base+'/');
+}
+// The pages.json key for a page record. pg.id is authoritative whenever it
+// actually exists in _pages: deriving the id from the filename is only a
+// fallback, and it resolves to the WRONG key for any page whose file doesn't
+// spell its id (a renamed file, a TLP with a custom path). Getting it wrong
+// loses that page's noindex/draft state, which is how a draft leaks into the
+// sitemap or gets stamped index,follow.
+function fourgePageId(pg){
+  if(!pg) return '';
+  if(pg.id && _pages && _pages[pg.id]) return pg.id;
+  return pageIdFromPath(pg.path||pg.file)||pg.id||'';
 }
 // Rewrite a single internal link href to its clean form. Leaves anchors,
 // mailto/tel/js, protocol-relative + absolute (scheme) URLs, the CMS/data
@@ -6014,7 +6062,7 @@ function seoChecks(pid){
     {ok:!!desc.trim(), label:'Description is filled in'},
     {ok:desc.length>=110&&desc.length<=170, label:'Description is a good length (110–170 characters)'},
     {ok:!s.noindex, label:'Page can appear in search results'},
-    {ok:!!(s.canonical||normSiteBase()), label:'Page has a web address'},
+    {ok:!!(s.canonical||fourgeCanonicalBase()), label:'Page has a web address'},
     {ok:!!(s.ogImage||seoGlobal().defaultOg), label:'Social sharing image set'}
   ];
   if(f&&f.loaded){
@@ -6034,7 +6082,7 @@ function seoRenderAnalysis(pid){
 }
 function seoRenderPreview(pid){
   const el=document.getElementById('seo-preview'); if(!el) return;
-  const s=_seo[pid]||{}, base=normSiteBase()||'https://example.com', path=String(_pages[pid]?.path||_pages[pid]?.file||'').replace(/^\/+/,'');
+  const s=_seo[pid]||{}, base=fourgeCanonicalBase()||'https://example.com', path=String(_pages[pid]?.path||_pages[pid]?.file||'').replace(/^\/+/,'');
   el.innerHTML='<div style="color:#1a0dab;font-size:15px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(decodeHtml(s.title||_pages[pid]?.title||'Page title'))+'</div>'
     +'<div style="color:#006621;font-size:12px;margin:2px 0">'+esc(base+'/'+path)+'</div>'
     +'<div style="color:#545454;font-size:12px;line-height:1.4">'+esc(s.description||'Add a meta description to control this snippet.')+'</div>';
@@ -6073,7 +6121,7 @@ function renderSEOGlobal(){
   const opt=(list,cur)=>list.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('');
   el.innerHTML='<div style="border-top:1px solid var(--border);margin-top:26px;padding-top:20px;max-width:760px">'
     +'<div class="si-sec"><h2>Your Business Info</h2><div class="desc">Helps Google understand your business so it can show richer results — like your address, phone, and hours. Your details come from the Design tab under Contact.</div>'
-    +'<div class="fr"><div class="fg"><label>Organization type</label><select onchange="seoGlobal().orgType=this.value">'+opt(['LocalBusiness','Organization','ProfessionalService','HomeAndConstructionBusiness','GeneralContractor','Store','Restaurant'],g.orgType||'LocalBusiness')+'</select></div>'
+    +'<div class="fr"><div class="fg"><label>Organization type</label><select onchange="seoGlobal().orgType=this.value">'+opt(['LocalBusiness','Organization','MarketingAgency','AdvertisingAgency','HomeAndConstructionBusiness','GeneralContractor','Plumber','Electrician','RoofingContractor','HVACBusiness','Store','Restaurant','MedicalBusiness','LegalService','RealEstateAgent','AutoRepair'].concat(/^ProfessionalService$/.test(g.orgType||'')?['ProfessionalService']:[]),g.orgType||'LocalBusiness')+'</select><small>ProfessionalService is deprecated by schema.org — for agency clients use MarketingAgency.</small></div>'
     +'<div class="fg"><label>Default social image URL</label><input type="text" value="'+esc(g.defaultOg||'')+'" oninput="seoGlobal().defaultOg=this.value" placeholder="https://… used when a page has no image"></div></div>'
     +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(g.includeOrg!==false?'checked':'')+' onchange="seoGlobal().includeOrg=this.checked"> Add my business info to every page (recommended)</label></div>'
     +'<div class="si-sec"><h2>Sitemap</h2><div class="desc">A sitemap is a list of your pages that helps search engines find everything on your site. We build one for you automatically from your pages and posts (hidden and draft pages are left out).</div>'
@@ -6131,7 +6179,7 @@ async function seoLoadData(){
 async function seoStampAllPages(){
   if(!canCallApi()) return {done:0,failed:0,skipped:true};
   if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
-  const pages=getPageList(); const base=normSiteBase();
+  const pages=getPageList(); const base=fourgeCanonicalBase();
   const st=document.getElementById('seo-apply-status');
   const report=[]; let done=0,failed=0,guarded=0,i=0;
   for(const pg of pages){
@@ -6222,7 +6270,10 @@ function seoBuildSchema(pg,s,canon){
   const g=seoGlobal(), site=_site||{}, graph=[];
   if(g.includeOrg!==false && site.name){
     const org={'@type':g.orgType||'Organization', name:site.name};
-    const base=normSiteBase(); if(base) org.url=base;
+    const base=fourgeCanonicalBase();
+    // A stable @id makes this ONE entity across the whole site, so page-level
+    // nodes can reference it instead of re-declaring the business on every page.
+    if(base){ org.url=base; org['@id']=base+'/#business'; }
     if(site.logo) org.logo=site.logo;
     if(site.phone) org.telephone=site.phone;
     if(site.email) org.email=site.email;
@@ -6236,6 +6287,23 @@ function seoBuildSchema(pg,s,canon){
     const node={'@type':type, name:s.title||pg.label||pg.title||''};
     if(canon)node.url=canon;
     if(s.description)node.description=s.description;
+    // Reference the business entity by @id rather than repeating it.
+    const orgId=(graph[0]&&graph[0]['@id'])||'';
+    if(orgId){
+      if(type==='Service') node.provider={'@id':orgId};
+      else if(/^(WebPage|AboutPage|ContactPage|CollectionPage|ItemPage|FAQPage)$/.test(type)) node.isPartOf={'@id':orgId};
+      else node.publisher={'@id':orgId};
+    }
+    // Breadcrumbs for everything except the home page — one level deep, which
+    // is what a flat file-based site actually has.
+    const cpath=fourgePagePath(pg.path||pg.file);
+    const cbase=fourgeCanonicalBase();
+    if(cpath && cbase){
+      graph.push({'@type':'BreadcrumbList', itemListElement:[
+        {'@type':'ListItem', position:1, name:'Home', item:cbase+'/'},
+        {'@type':'ListItem', position:2, name:(s.title||pg.label||pg.title||cpath), item:cbase+'/'+cpath}
+      ]});
+    }
     // AEO (answer-engine) fields: a direct answer becomes the page's abstract,
     // topics become about/keywords entities. Stored per page in seo.json as
     // aeoAnswer (string) and aeoTopics (array or comma string).
@@ -6255,8 +6323,31 @@ function seoBuildSchema(pg,s,canon){
   }
   return graph.length?{'@context':'https://schema.org','@graph':graph}:null;
 }
+// The floor every page gets, even with no SEO record: a self-referencing
+// absolute canonical and an explicit robots value. Purely additive — it never
+// removes or overwrites anything the page already declares, so it is safe to
+// run on imported pages with hand-authored <head> markup. Its own nodes are
+// marked data-fourge-canon and replaced (not duplicated) on the next save.
+function seoMinimalStamp(html,pg){
+  html=String(html||'');
+  const url=fourgePageUrl(pg&&(pg.path||pg.file));
+  if(!url) return html;                                  // no configured domain → emit nothing
+  html=html.replace(/[ \t]*<(?:link|meta)\b[^>]*data-fourge-canon[^>]*>[ \t]*\r?\n?/gi,'');
+  const pid=fourgePageId(pg);
+  const isDraft=!!(pg.draft || (_pages[pid]&&_pages[pid].draft));
+  const L=[];
+  const hasCanon=/<link\b[^>]*rel\s*=\s*["']canonical["']/i.test(html);
+  const hasRobots=/<meta\b[^>]*name\s*=\s*["']robots["']/i.test(html);
+  if(!hasCanon)  L.push('<link rel="canonical" href="'+esc(url)+'" data-fourge-canon>');
+  if(!hasRobots) L.push('<meta name="robots" content="'+(isDraft?'noindex':'index')+',follow" data-fourge-canon>');
+  if(!L.length) return html;
+  const block=L.join('\n');
+  if(/<\/head>/i.test(html)) return html.replace(/<\/head>/i,block+'\n</head>');
+  if(/<head\b[^>]*>/i.test(html)) return html.replace(/<head\b[^>]*>/i,m=>m+'\n'+block);
+  return block+'\n'+html;
+}
 function seoInjectIntoHtml(html,pg,base){
-  const pid=pageIdFromPath(pg.path||pg.file)||pg.id, s=_seo[pid]||{};
+  const pid=fourgePageId(pg), s=_seo[pid]||{};
   const doc=new DOMParser().parseFromString(html,'text/html');
   const head=doc.head||doc.documentElement;
   // Take over the standard SEO tags + remove any of our prior managed nodes.
@@ -6265,7 +6356,7 @@ function seoInjectIntoHtml(html,pg,base){
   if(s.title){ let t=doc.querySelector('title'); if(!t){ t=doc.createElement('title'); head.appendChild(t); } t.textContent=s.title; }
   if(s.description) add('meta',{name:'description',content:s.description});
   let canon=s.canonical;
-  if(!canon && base){ canon=base+'/'+cleanUrlPath(pg.path||pg.file); }
+  if(!canon){ canon=fourgePageUrl(pg.path||pg.file); }   // single URL helper — never hand-built
   if(canon) add('link',{rel:'canonical',href:canon});
   const noindex=s.noindex || (_pages[pid]&&_pages[pid].draft);   // draft pages are noindex
   add('meta',{name:'robots',content:(noindex?'noindex':'index')+','+(s.nofollow?'nofollow':'follow')});
@@ -6320,40 +6411,94 @@ async function seoApplyAll(){
   await saveSEO();   // saving publishes: pages + sitemap + robots + clean-URL rule
 }
 // ── Sitemap + robots.txt ────────────────────────────────────────────────────
+// Real per-page content-change dates, keyed by clean path. Only genuine human
+// edits count: data/revisions.json records who saved which page and when.
+// File mtime is deliberately NOT used — a bulk SEO re-stamp touches every file
+// and would mark the whole site "modified today", which is exactly the
+// unreliable signal Google discounts.
+let _seoLastmod=null;
+async function seoLoadLastmod(){
+  const map={};
+  try{
+    const d=await apiCall('read_file',{path:'data/revisions.json'});
+    const revs=JSON.parse(d.content||'[]');
+    (Array.isArray(revs)?revs:[]).forEach(r=>{
+      const key=fourgePagePath(r&&(r.path||r.file)||'');
+      const when=String((r&&(r.date||r.when||r.at))||'').slice(0,10);
+      if(!when||!/^\d{4}-\d{2}-\d{2}$/.test(when)) return;
+      if(!map[key] || map[key]<when) map[key]=when;   // newest edit wins
+    });
+  }catch(e){}
+  _seoLastmod=map;
+  return map;
+}
 function seoBuildSitemap(){
-  const base=normSiteBase(); if(!base) return null;
-  const seen=new Set(), urls=[];
-  getPageList().forEach(p=>{ const fp=p.path||p.file, pid=pageIdFromPath(fp);
+  if(!fourgeCanonicalBase()) return null;
+  const seen=new Set(), entries=[];
+  const lm=_seoLastmod||{};
+  const push=(u,mod)=>{ if(!u||seen.has(u)) return; seen.add(u); entries.push({loc:u,lastmod:mod||''}); };
+  getPageList().forEach(p=>{ const fp=p.path||p.file, pid=fourgePageId(p);
     if((_seo[pid]||{}).noindex || (_pages[pid]&&_pages[pid].draft)) return;
     if(/^uploads\//i.test(String(fp||''))) return;   // stray files under uploads/ are not site pages
-    let u=base+'/'+cleanUrlPath(fp); if(!seen.has(u)){ seen.add(u); urls.push(u); } });
+    push(fourgePageUrl(fp), lm[fourgePagePath(fp)]); });
   // Posts: only URLs that actually exist. A post with its own page file uses
   // it; otherwise its canonical address is the posts.html single-post view.
   // (The old fallback emitted /blog/{slug} — a URL form this CMS never served —
-  // which fed crawlers dead links.) Drafts are excluded.
+  // which fed crawlers dead links.) Drafts are excluded. A post's own date is a
+  // real content date, so it is used as lastmod.
   (_posts||[]).forEach(po=>{
     if(!po) return;
     // published, or scheduled and already due (deploy-package content)
     if(!po.published){ const t=po.publishAt?Date.parse(po.publishAt):NaN; if(isNaN(t)||t>Date.now()) return; }
-    let u='';
-    if(po.path) u=base+'/'+cleanUrlPath(po.path);
-    else if(po.slug) u=base+'/posts.html?p='+encodeURIComponent(po.slug);
-    if(u && !seen.has(u)){ seen.add(u); urls.push(u); }
+    const d=/^\d{4}-\d{2}-\d{2}$/.test(String(po.date||''))?String(po.date):'';
+    if(po.path) push(fourgePageUrl(po.path), lm[fourgePagePath(po.path)]||d);
+    else if(po.slug) push(fourgeCanonicalBase()+'/posts.html?p='+encodeURIComponent(po.slug), d);
   });
-  const lastmod=new Date().toISOString().slice(0,10);
-  return '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-    +urls.map(u=>'  <url><loc>'+u.replace(/&/g,'&amp;')+'</loc><lastmod>'+lastmod+'</lastmod></url>').join('\n')+'\n</urlset>\n';
+  return seoWrapSitemap(entries);
 }
+const SITEMAP_MAX=45000;   // under the 50,000 / 50 MB protocol limits
+function seoSitemapXml(entries){
+  return '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    +entries.map(e=>'  <url><loc>'+e.loc.replace(/&/g,'&amp;')+'</loc>'
+      // lastmod is emitted ONLY when a real content date is known — an invented
+      // one makes Google distrust every lastmod in the file.
+      +(e.lastmod?('<lastmod>'+e.lastmod+'</lastmod>'):'')+'</url>').join('\n')
+    +'\n</urlset>\n';
+}
+// Under the cap: one plain sitemap. Over it: chunk files plus an index, which
+// is what /sitemap.xml then becomes.
+function seoWrapSitemap(entries){
+  if(entries.length<=SITEMAP_MAX){ _seoSitemapParts=null; return seoSitemapXml(entries); }
+  const base=fourgeCanonicalBase(), parts=[];
+  for(let i=0;i<entries.length;i+=SITEMAP_MAX) parts.push(entries.slice(i,i+SITEMAP_MAX));
+  _seoSitemapParts=parts.map((chunk,i)=>({path:'sitemap-'+(i+1)+'.xml',xml:seoSitemapXml(chunk)}));
+  return '<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    +_seoSitemapParts.map(p=>'  <sitemap><loc>'+base+'/'+p.path+'</loc></sitemap>').join('\n')+'\n</sitemapindex>\n';
+}
+let _seoSitemapParts=null;
 async function seoWriteSitemap(){
-  // With no configured Website URL the base falls back to whatever host this
-  // admin tab was opened on — which may be the non-www variant of the domain.
-  // Warn once per session so canonical/sitemap hosts get pinned deliberately.
-  if(!((_site&&_site.website)||'').trim() && !window.__fourgeBaseWarned){
-    window.__fourgeBaseWarned=true;
-    toast('Tip: set Design → Website URL so your sitemap and canonical links always use your preferred domain (www vs non-www). Using '+normSiteBase()+' for now.','err');
+  if(!fourgeCanonicalBase()){
+    if(!window.__fourgeBaseWarned){
+      window.__fourgeBaseWarned=true;
+      toast('Set Design → Website URL first — the sitemap and canonical links need your real domain, and Fourge will not guess one from the address you happen to be signed in on.','err');
+    }
+    throw new Error('Set Website URL in Design → General first');
   }
+  await seoLoadLastmod();               // real per-page edit dates
   const xml=seoBuildSitemap(); if(!xml){ throw new Error('Set Website URL in Design → General first'); }
   await apiCall('write_file',{path:'sitemap.xml',content:xml});
+  // Over the URL cap /sitemap.xml becomes an index; write its parts too.
+  if(_seoSitemapParts) for(const part of _seoSitemapParts){
+    try{ await apiCall('write_file',{path:part.path,content:part.xml}); }catch(e){}
+  }
+}
+// Best-effort sitemap refresh after content changes (page save/delete, post
+// publish). Never allowed to fail or slow down the operation that triggered it.
+function seoSitemapRefresh(){
+  try{
+    if(!canCallApi() || !fourgeCanonicalBase()) return;
+    seoWriteSitemap().catch(()=>{});
+  }catch(e){}
 }
 async function seoGenerateSitemap(){
   const st=document.getElementById('seo-sitemap-status');
@@ -6362,7 +6507,7 @@ async function seoGenerateSitemap(){
   catch(e){ if(st) st.textContent=e.message; toast('Sitemap failed: '+e.message,'err'); }
 }
 async function seoWriteRobots(notify){
-  const g=seoGlobal(), base=normSiteBase();
+  const g=seoGlobal(), base=fourgeCanonicalBase();   // search-facing → configured domain only
   let txt=(g.robotsTxt||'').trim() || 'User-agent: *\nAllow: /';
   if(base && !/^sitemap:/im.test(txt)) txt+='\nSitemap: '+base+'/sitemap.xml';
   await apiCall('write_file',{path:'robots.txt',content:txt+'\n'});
@@ -6652,9 +6797,10 @@ async function postLaunchCheck(){
     try{ await seoLoadData(); }catch(e){}
     if(!_media||!_media.length){ try{ await veLoadMediaLib(); }catch(e){} }
     let forms=[]; try{ const d=await apiCall('read_file',{path:'data/forms.json'}); forms=JSON.parse(d.content||'[]')||[]; }catch(e){}
-    const base=normSiteBase();
-    let expectHost=''; try{ expectHost=new URL(base).host.replace(/^www\./i,''); }catch(e){}
-    const websiteSet=!!(((_site&&_site.website)||'').trim());
+    const base=normSiteBase();                       // for fetching (must be reachable)
+    const canonBase=fourgeCanonicalBase();           // for expectations (configured domain only)
+    let expectHost=''; try{ expectHost=new URL(canonBase||base).host.replace(/^www\./i,''); }catch(e){}
+    const websiteSet=!!canonBase;
 
     // 1 ── Forms & reCAPTCHA
     if(!forms.length){
@@ -6713,7 +6859,7 @@ async function postLaunchCheck(){
     // 5/6/7 shared ── one pass over every page
     const ga=(_site&&_site.analytics)||{};
     const pages=getPageList();
-    const missingMeta=[], wrongCanon=[];
+    const missingMeta=[], wrongCanon=[], noCanon=[], badH1=[];
     let gaPages=0, scanned=0, truncated=0;
     const refs=new Set();
     const collectRefs=(content)=>{
@@ -6742,6 +6888,9 @@ async function postLaunchCheck(){
       if(/googletagmanager\.com|gtag\(/i.test(content)) gaPages++;
       const cm=content.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
       if(cm){ try{ const h=new URL(cm[1]).host.replace(/^www\./i,''); if(expectHost && h!==expectHost) wrongCanon.push({page:fp,canonical:cm[1]}); }catch(e){} }
+      else noCanon.push(fp);
+      const h1n=(content.match(/<h1\b/gi)||[]).length;
+      if(h1n!==1) badH1.push({page:fp,n:h1n});
       collectRefs(content);
     }
     prog('Scanning posts, forms & styles…');
@@ -6778,6 +6927,26 @@ async function postLaunchCheck(){
     if(!missingMeta.length) add('Titles & descriptions','ok','Every scanned page has a title and meta description',scanned+' page(s) verified.');
     else add('Titles & descriptions','fail',missingMeta.length+' page(s) missing a title or meta description','First few: '+missingMeta.slice(0,6).map(x=>x.page+(x.title?'':' [no title]')+(x.desc?'':' [no description]')).join(', ')+(missingMeta.length>6?' …':'')+'. SEO panel → Generate All writes these, Save & Publish applies them. Ask Jon with questions.');
     if(wrongCanon.length) add('Titles & descriptions','fail',wrongCanon.length+' page(s) have canonicals pointing at the wrong domain','e.g. '+wrongCanon[0].canonical+' — set Design → Website URL, then SEO Save & Publish (and Domain Find & Replace if old links remain).');
+
+    // Canonical coverage
+    if(!websiteSet) add('Canonical URLs','fail','No canonical tags can be produced — Design → Website URL is empty','Fourge will not guess your domain: a canonical pointing at the wrong host de-indexes the right one. Set the exact domain you want indexed (www or not), then SEO → Save & Publish.');
+    else if(!noCanon.length) add('Canonical URLs','ok','Every scanned page has a canonical URL',scanned+' page(s) verified against '+canonBase);
+    else add('Canonical URLs','fail',noCanon.length+' page(s) have no canonical tag','First few: '+noCanon.slice(0,6).join(', ')+(noCanon.length>6?' …':'')+'. SEO → Save & Publish stamps them all.');
+
+    // Single H1
+    if(!badH1.length) add('Headings','ok','Every scanned page has exactly one H1','');
+    else add('Headings','warn',badH1.length+' page(s) do not have exactly one H1','First few: '+badH1.slice(0,6).map(x=>x.page+' ('+x.n+')').join(', ')+(badH1.length>6?' …':'')+'. One H1 per page is the clearest signal of what the page is about — fix in the page editor.');
+
+    // Business entity completeness (drives LocalBusiness structured data)
+    const gsch=seoGlobal(), addr=(_site&&_site.address)||{};
+    if(gsch.includeOrg!==false && (_site&&_site.name)){
+      const localish=!/^Organization$/i.test(gsch.orgType||'');
+      if(localish && !addr.street && !addr.city)
+        add('Structured data','fail','Business schema is set to “'+(gsch.orgType||'LocalBusiness')+'” but has no address','Google requires a postal address on a LocalBusiness entity. Fill Design → Site Info → Address, or switch Organization type to “Organization”, then SEO → Save & Publish.');
+      else if(/^ProfessionalService$/i.test(gsch.orgType||''))
+        add('Structured data','warn','Business type is the deprecated “ProfessionalService”','schema.org has retired it. For an agency client use MarketingAgency (SEO panel → Organization type), then Save & Publish.');
+      else add('Structured data','ok','Business entity looks complete ('+(gsch.orgType||'LocalBusiness')+')','');
+    }
 
     // 7 ── Media: alt text + unused images
     prog('Checking media library…');
@@ -9173,6 +9342,7 @@ async function deletePageNow(){
     if(_curPage===pid){ const rest=getVisiblePages(); _curPage=rest[0]?rest[0].id:''; }
     renderVePageList();
     if(_curPage) veLoadPage(_curPage); else veShowEmpty('No pages. Upload .html files and they appear here.');
+    seoSitemapRefresh();   // a deleted page must stop appearing in the sitemap
     toast('Page deleted','ok');
   }catch(e){ toast('Delete failed: '+e.message,'err'); }
 }
@@ -12243,6 +12413,7 @@ async function veSavePage(){
     document.getElementById('ve-unsaved')?.classList.remove('on');
     renderVePageList();
 
+    seoSitemapRefresh();   // keep sitemap.xml current with the page that just changed
     if(savedServer&&savedGH) toast('Saved to server + GitHub ✓','ok');
     else if(savedServer&&ghErr) toast('Saved to server ✓ — GitHub mirror failed: '+ghErr,'err');
     else if(savedServer) toast('Saved to server ✓ (GitHub not configured)','ok');
