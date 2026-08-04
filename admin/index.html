@@ -1760,6 +1760,17 @@ textarea.fb-input{resize:vertical}
               </div>
               <button class="fd-btn-primary" onclick="gaSaveCustomCode()" style="margin-top:6px">Save &amp; Apply to All Pages</button>
             </div>
+            <div class="ga-setup-card" style="margin-top:16px">
+              <h3>4 · Chatbot</h3>
+              <p>Paste the chatbot embed code (from the CRM's chat-widget setup). It's injected into the <code>&lt;head&gt;</code> of every page. Use <strong>Chatbot in testing</strong> while you're still tuning it: the widget then stays completely hidden from real visitors and only appears for someone who adds <code>?chatbot=true</code> to the address — it stays visible for the rest of that person's browsing session, and <code>?chatbot=false</code> turns it back off.</p>
+              <div class="fg"><label>Chatbot embed code</label><textarea id="cb-embed" rows="4" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="&lt;script src=&quot;https://widgets.leadconnectorhq.com/loader.js&quot; data-widget-id=&quot;…&quot;&gt;&lt;/script&gt;"></textarea></div>
+              <label style="display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;cursor:pointer;margin:4px 0 10px">
+                <input type="checkbox" id="cb-testing" style="width:16px;height:16px;cursor:pointer">
+                Chatbot in testing <span style="font-weight:400;color:var(--muted)">— hidden from visitors; only shows with <code>?chatbot=true</code></span>
+              </label>
+              <div id="cb-state" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+              <button class="fd-btn-primary" onclick="gaSaveChatbot()" style="margin-top:2px">Save &amp; Apply to All Pages</button>
+            </div>
           </div>
       </div>
 
@@ -2288,7 +2299,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.82';
+const CMS_VERSION='1.14.83';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -7199,6 +7210,10 @@ function initAnalytics(){
   set('cc-func-head',c.funcHead); set('cc-func-body',c.funcBody);
   set('cc-an-head',c.anHead);     set('cc-an-body',c.anBody);
   set('cc-mkt-head',c.mktHead);   set('cc-mkt-body',c.mktBody);
+  const cb=gaChatbotCfg();
+  set('cb-embed',cb.embed);
+  const cbT=document.getElementById('cb-testing'); if(cbT) cbT.checked=!!cb.testing;
+  gaChatbotRenderState();
   // Default report month = previous month
   const mEl=document.getElementById('ga-rep-month');
   if(mEl&&!mEl.value){ const d=new Date(); d.setMonth(d.getMonth()-1); mEl.value=d.toISOString().slice(0,7); }
@@ -7344,14 +7359,16 @@ function gaApplySnippets(html){
   html=html.replace(mk(GA_HEAD_START,GA_HEAD_END),'')
            .replace(mk(GA_BODY_START,GA_BODY_END),'')
            .replace(mk(CC_HEAD_START,CC_HEAD_END),'')
-           .replace(mk(CC_BODY_START,CC_BODY_END),'');
+           .replace(mk(CC_BODY_START,CC_BODY_END),'')
+           .replace(mk(CB_HEAD_START,CB_HEAD_END),'');
   const a=gaCfg();
   const gaHead=(a.ga4||a.gtm||a.ads)?gaBuildHeadSnippet():'';
   const gaBody=(a.gtm)?gaBuildBodySnippet():'';
   const ccHead=gaBuildCustomHead();
   const ccBody=gaBuildCustomBody();
-  // HEAD: GA snippet then custom code, immediately after <head>.
-  const headInsert=[gaHead,ccHead].filter(Boolean).join('\n');
+  const cbHead=gaBuildChatbot();
+  // HEAD: GA snippet, then custom code, then the chatbot, immediately after <head>.
+  const headInsert=[gaHead,ccHead,cbHead].filter(Boolean).join('\n');
   if(headInsert){
     if(/<head[^>]*>/i.test(html)) html=html.replace(/<head([^>]*)>/i,'<head$1>\n'+headInsert);
     else html=headInsert+'\n'+html;
@@ -7370,18 +7387,105 @@ function gaApplySnippets(html){
 async function gaInjectAll(){ return gaWalkPages(true); }
 async function gaRemoveAll(){
   const a=gaCfg();
-  const saved={ga4:a.ga4,gtm:a.gtm,ads:a.ads,custom:a.custom};
-  a.ga4='';a.gtm='';a.ads='';a.custom={};   // blank everything so the walk strips all managed blocks
+  const saved={ga4:a.ga4,gtm:a.gtm,ads:a.ads,custom:a.custom,chatbot:a.chatbot};
+  a.ga4='';a.gtm='';a.ads='';a.custom={};a.chatbot={embed:'',testing:false};   // blank everything so the walk strips all managed blocks
   const r=await gaWalkPages(false);
-  a.ga4=saved.ga4;a.gtm=saved.gtm;a.ads=saved.ads;a.custom=saved.custom; // restore config — only files were stripped
+  a.ga4=saved.ga4;a.gtm=saved.gtm;a.ads=saved.ads;a.custom=saved.custom;a.chatbot=saved.chatbot; // restore config — only files were stripped
   return r;
 }
 // True when any custom header/body field has content.
 function gaHasCustom(){ const c=gaCfg().custom||{}; return Object.keys(c).some(k=>(c[k]||'').trim()); }
 
+// ── CHATBOT (with a testing gate) ───────────────────────────────────────────
+// The embed is a live <script> tag, so "hidden while testing" can't mean
+// hiding it with CSS — the widget would still load, phone home, and show for
+// visitors. Instead the markup is parked in a NON-EXECUTABLE script tag as
+// base64 (which sidesteps every quoting and close-tag hazard) and a tiny gate
+// materializes it only when the tester's URL carries ?chatbot=true. Real
+// visitors download nothing at all.
+const CB_HEAD_START='<!-- foundry-chatbot:start -->';
+const CB_HEAD_END  ='<!-- foundry-chatbot:end -->';
+const CB_PARAM='chatbot';
+function gaChatbotCfg(){ const a=gaCfg(); if(!a.chatbot) a.chatbot={embed:'',testing:false}; return a.chatbot; }
+function gaHasChatbot(){ return String(gaChatbotCfg().embed||'').trim()!==''; }
+function gaB64(str){
+  const bytes=new TextEncoder().encode(String(str));
+  let bin=''; for(let i=0;i<bytes.length;i++) bin+=String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function gaBuildChatbot(){
+  const c=gaChatbotCfg();
+  const embed=String(c.embed||'').trim();
+  if(!embed) return '';
+  // Not in testing → the embed ships as-is and behaves exactly like any other
+  // header snippet.
+  if(!c.testing) return CB_HEAD_START+'\n'+embed+'\n'+CB_HEAD_END;
+  const so='<scr'+'ipt', sc='</'+'scr'+'ipt>';
+  const gate=
+    '(function(){'
+    +'var P="'+CB_PARAM+'",K="fourge_chatbot_preview";'
+    +'var q=null;try{q=new URLSearchParams(location.search).get(P);}catch(e){}'
+    +'try{if(q==="true"||q==="1")sessionStorage.setItem(K,"1");else if(q==="false"||q==="0")sessionStorage.removeItem(K);}catch(e){}'
+    +'var on=false;try{on=sessionStorage.getItem(K)==="1";}catch(e){on=(q==="true"||q==="1");}'
+    +'if(!on)return;'
+    +'function go(){'
+      +'var el=document.getElementById("fourge-chatbot-payload");if(!el)return;'
+      +'var b=atob(el.getAttribute("data-b64")||"");'
+      +'var u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);'
+      +'var markup=new TextDecoder("utf-8").decode(u);'
+      +'var tmp=document.createElement("div");tmp.innerHTML=markup;'
+      +'var target=document.body||document.head;'
+      // Scripts parsed via innerHTML never execute — each one is re-created so
+      // the widget actually loads for the tester.
+      +'[].slice.call(tmp.childNodes).forEach(function(n){'
+        +'if(n.nodeType===1&&n.tagName==="SCRIPT"){'
+          +'var s=document.createElement("script");'
+          +'for(var j=0;j<n.attributes.length;j++)s.setAttribute(n.attributes[j].name,n.attributes[j].value);'
+          +'if(n.textContent)s.textContent=n.textContent;'
+          +'target.appendChild(s);'
+        +'}else target.appendChild(n);'
+      +'});'
+      +'if(window.console&&console.info)console.info("Fourge: chatbot is in TESTING mode and was loaded because this URL has ?'+CB_PARAM+'=true. Visitors do not see it.");'
+    +'}'
+    +'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",go);else go();'
+    +'})();';
+  return CB_HEAD_START+'\n'
+    +'<!-- Chatbot held back for testing: visitors get nothing; add ?'+CB_PARAM+'=true to load it. -->\n'
+    +so+' type="application/x-fourge-chatbot" id="fourge-chatbot-payload" data-b64="'+gaB64(embed)+'">'+sc+'\n'
+    +so+'>'+gate+sc+'\n'
+    +CB_HEAD_END;
+}
+async function gaSaveChatbot(){
+  const a=gaCfg();
+  const embed=document.getElementById('cb-embed')?.value||'';
+  const testing=!!document.getElementById('cb-testing')?.checked;
+  if(embed.trim() && !/<\s*script|<\s*iframe|<\s*div/i.test(embed)){
+    toast('That does not look like an embed code — paste the full snippet the CRM gives you, including its script tag','err');
+    return;
+  }
+  a.chatbot={embed:embed.trim(),testing:testing};
+  try{ await gaPersistSite(); }
+  catch(e){ toast('Save failed: '+e.message,'err'); return; }
+  gaChatbotRenderState();
+  if(a.ga4||a.gtm||a.ads||gaHasCustom()||gaHasChatbot()) await gaInjectAll();
+  else toast('Chatbot settings saved ✓','ok');
+}
+function gaChatbotRenderState(){
+  const el=document.getElementById('cb-state'); if(!el) return;
+  const c=gaChatbotCfg();
+  if(!String(c.embed||'').trim()){ el.textContent='No chatbot embed saved — the site has no chat widget.'; return; }
+  if(c.testing){
+    const base=normSiteBase();
+    el.innerHTML='<strong style="color:var(--ember)">In testing.</strong> Visitors see nothing. Test it at <code>'
+      +esc((base||'')+'/?'+CB_PARAM+'=true')+'</code> — it stays on for the rest of that browsing session.';
+  } else {
+    el.innerHTML='<strong style="color:#1E8A5B">Live for everyone.</strong> The chatbot loads for every visitor on every page.';
+  }
+}
+
 async function gaWalkPages(inject){
   const a=gaCfg();
-  if(inject && !a.ga4 && !a.gtm && !a.ads && !gaHasCustom()){ toast('Save a tracking ID or custom code first','err'); return; }
+  if(inject && !a.ga4 && !a.gtm && !a.ads && !gaHasCustom() && !gaHasChatbot()){ toast('Save a tracking ID, custom code, or a chatbot embed first','err'); return; }
   const{url,token}=getApiCfg();
   if(!url||!token){ toast('Configure Server API in Settings first','err'); return; }
   const ids=Object.keys(_pages||{});
