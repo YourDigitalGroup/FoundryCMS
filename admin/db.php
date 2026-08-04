@@ -312,6 +312,11 @@ function fourgeSecretPolicy() {
         // encrypted (server-side only) and never returned to the browser; the
         // server uses it to push form leads into GHL.
         'ghl_token'     => 3,
+        // 44i SEO-platform deploy-package endpoint key — Super Admin and above.
+        // Bearer token the platform presents to POST a deploy package. Stored
+        // encrypted server-side; never written into data/site.json (that file is
+        // publicly readable).
+        'seo_pkg_token' => 3,
     ];
 }
 

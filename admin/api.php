@@ -167,7 +167,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 // Parse the request body first so auth can be routed per-action.
 $raw    = file_get_contents('php://input');
 $body   = json_decode($raw, true) ?: [];
-$action = $body['action'] ?? $_POST['action'] ?? '';
+// $_GET is honored last so the pretty machine endpoints installed in .htaccess
+// (/api/seo-platform/package → admin/api.php?action=seo_package) can carry the
+// action while the POST body is the raw package JSON.
+$action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 
 // ── AUTH MODEL ────────────────────────────────────────────────────────────────
 //  • 'login' is public — it verifies the email/password itself.
@@ -176,8 +179,11 @@ $action = $body['action'] ?? $_POST['action'] ?? '';
 //    off by the optional reCAPTCHA check inside cmsSendForm.
 //  • Account + secret actions require a valid session token (from login).
 //  • Legacy file / GA / AI actions accept the shared API_TOKEN OR a session token.
-$PUBLIC_ACTIONS  = ['login', 'send_form'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status'];
+//  • 'seo_package' / 'seo_pkg_tick' are listed public ONLY so the machine-to-machine
+//    Bearer-token path can reach them; both handlers authenticate internally
+//    (session OR constant-time Bearer match) and refuse everything else.
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'seo_package', 'seo_pkg_tick'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status','seo_pkg_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -209,7 +215,7 @@ if (!in_array($action, $PUBLIC_ACTIONS, true)) {
 // is the server-side backstop for hosts that don't honor .htaccess (e.g. nginx)
 // or have mod_rewrite disabled. Localhost/dev is exempt; set 'require_https' =>
 // false in config.secret.php only for a deliberate plain-HTTP setup.
-$HTTPS_REQUIRED_ACTIONS = ['login', 'change_password', 'set_secret', 'save_user', 'ga_save_credentials', 'set_page_password'];
+$HTTPS_REQUIRED_ACTIONS = ['login', 'change_password', 'set_secret', 'save_user', 'ga_save_credentials', 'set_page_password', 'seo_pkg_admin'];
 if (REQUIRE_HTTPS && in_array($action, $HTTPS_REQUIRED_ACTIONS, true) && !fourgeIsHttps() && !fourgeIsLocalRequest()) {
     ob_end_clean(); http_response_code(403);
     echo json_encode(['error' => 'For your security, signing in and changing credentials require a secure (HTTPS) connection. Please load this site over https:// and try again.']);
@@ -237,6 +243,9 @@ try {
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
+        case 'seo_package':     ob_end_clean(); fourgeApiSeoPackage($authUser, $body); break;
+        case 'seo_pkg_tick':    ob_end_clean(); fourgeApiSeoPkgTick($authUser, $body); break;
+        case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
@@ -2114,6 +2123,37 @@ HT;
     }
     return file_put_contents($htPath, $existing) !== false;
 }
+// The 44i SEO platform posts deploy packages to the documented pretty paths
+// /api/seo-platform/package and /api/seo-platform/tick. Apache rewrites them
+// onto this file with the action in the query string, so the platform's POST
+// body stays the raw package JSON. Written by the same login self-heal that
+// installs clean URLs; marker-spliced, IfModule-guarded, best-effort.
+function fourgeWriteSeoApiHtaccess() {
+    $htPath   = PUBLIC_HTML . '/.htaccess';
+    $existing = is_file($htPath) ? file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge SEO Platform API';
+    $end   = '# END Fourge SEO Platform API';
+    $rules = <<<'HT'
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^api/seo-platform/package/?$ admin/api.php?action=seo_package [L,QSA]
+  RewriteRule ^api/seo-platform/tick/?$ admin/api.php?action=seo_pkg_tick [L,QSA]
+</IfModule>
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        // Must sit ABOVE the clean-URL block: that block rewrites any
+        // extensionless request to <path>.html, which would swallow these.
+        $cu = strpos($existing, '# BEGIN Fourge Clean URLs');
+        if ($cu !== false) $existing = substr($existing, 0, $cu) . $block . "\n\n" . substr($existing, $cu);
+        else $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
 function fourgeApiInstallCleanUrls($me) {
     if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
     if (!fourgeWriteCleanUrlHtaccess()) {
@@ -2121,11 +2161,15 @@ function fourgeApiInstallCleanUrls($me) {
         echo json_encode(['error' => 'Could not write .htaccess (check that the site root is writable by PHP)']);
         return;
     }
-    // Best-effort rider: same login self-heal also opens the public posts feed
-    // to cross-site reads. Never fails the clean-URL install.
-    $cors = false;
-    try { $cors = fourgeWritePostsCorsHtaccess(); } catch (Exception $e) { $cors = false; }
-    echo json_encode(['ok' => true, 'postsCors' => $cors]);
+    // Best-effort riders on the same login self-heal: open the public posts feed
+    // to cross-site reads, install the SEO-platform endpoints, and publish any
+    // scheduled deploy-package content that has come due. None of these can
+    // fail the clean-URL install.
+    $cors = false; $seoApi = false; $due = [];
+    try { $cors   = fourgeWritePostsCorsHtaccess(); } catch (Throwable $e) { $cors = false; }
+    try { $seoApi = fourgeWriteSeoApiHtaccess();    } catch (Throwable $e) { $seoApi = false; }
+    try { $due    = cmsPkgTick(false);              } catch (Throwable $e) { $due = []; }
+    echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'published' => count($due)]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
@@ -2151,6 +2195,671 @@ function fourgeApiSetPagePassword($me, $body) {
     if (!fourgeWriteGateFile())        { http_response_code(500); echo json_encode(['error' => 'Could not write the page gate']); return; }
     if (!fourgeWriteProtectHtaccess(array_keys($map))) { http_response_code(500); echo json_encode(['error' => 'Could not update .htaccess']); return; }
     echo json_encode(['ok' => true, 'protected' => array_keys($map)]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 44i SEO PLATFORM — DEPLOY PACKAGE IMPORTER
+// Consumes the same "44i-deploy-package" v1 file the WordPress connector eats,
+// so one exported file deploys to either platform. The apply logic lives HERE
+// (server side) and the admin screen calls it with mode=preview|apply — so the
+// UI and the machine endpoint cannot drift apart. Nothing from the file is ever
+// executed: HTML is sanitized, redirect targets are URL-validated, header
+// name/value pairs are charset-restricted, and .htaccess writes are confined to
+// marker-delimited managed blocks.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cmsPkgDataPath($name) { return PUBLIC_HTML . '/data/' . $name; }
+function cmsPkgReadJson($name, $fallback) {
+    $f = cmsPkgDataPath($name);
+    if (!is_file($f)) return $fallback;
+    $j = json_decode((string)@file_get_contents($f), true);
+    return ($j === null) ? $fallback : $j;
+}
+function cmsPkgWriteJson($name, $data) {
+    $dir = PUBLIC_HTML . '/data';
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    return @file_put_contents(cmsPkgDataPath($name), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) !== false;
+}
+// One-generation backup of any existing file we are about to overwrite.
+function cmsPkgBackup($relPath) {
+    $src = PUBLIC_HTML . '/' . ltrim($relPath, '/');
+    if (!is_file($src)) return;
+    $dir = PUBLIC_HTML . '/data/bak';
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    @copy($src, $dir . '/' . str_replace(['/', '\\'], '__', ltrim($relPath, '/')));
+}
+// Comparable path key: scheme/host/www/query/extension/trailing-slash agnostic.
+// The homepage normalizes to '' from every spelling.
+function cmsPkgNormPath($u) {
+    $u = trim((string)$u);
+    if ($u === '') return '';
+    // A host is only stripped when the input was genuinely absolute. Sniffing
+    // for "a dot before the first slash" would eat bare page filenames — a
+    // pages.json entry of "about.html" would normalize to '' and collide with
+    // the homepage, so nothing would resolve.
+    $hadHost = false;
+    if (preg_match('~^[a-z][a-z0-9+.\-]*://~i', $u)) { $u = preg_replace('~^[a-z][a-z0-9+.\-]*://~i', '', $u); $hadHost = true; }
+    elseif (strpos($u, '//') === 0) { $u = substr($u, 2); $hadHost = true; }
+    if ($hadHost) { $slash = strpos($u, '/'); $u = ($slash === false) ? '' : substr($u, $slash); }
+    $u = preg_replace('~[?#].*$~', '', (string)$u);
+    $u = strtolower(trim((string)$u, '/'));
+    $u = preg_replace('~\.html?$~', '', $u);
+    return ($u === 'index') ? '' : $u;
+}
+function cmsPkgSlug($s) {
+    $s = strtolower(trim((string)$s));
+    $s = preg_replace('~[^a-z0-9]+~', '-', $s);
+    return trim((string)$s, '-');
+}
+// Strip every tag Fourge manages (its own data-fourge-seo nodes plus the
+// standard set it takes over) so a re-stamp is idempotent — mirrors
+// seoInjectIntoHtml() in the admin.
+function cmsPkgStripManagedSeo($html) {
+    $html = preg_replace('~[ \t]*<script\b[^>]*data-fourge-seo[^>]*>[\s\S]*?</script>[ \t]*\r?\n?~i', '', (string)$html);
+    $html = preg_replace('~[ \t]*<(?:meta|link)\b[^>]*data-fourge-seo[^>]*>[ \t]*\r?\n?~i', '', (string)$html);
+    $html = preg_replace('~[ \t]*<meta\b[^>]*name\s*=\s*["\'](?:description|robots)["\'][^>]*>[ \t]*\r?\n?~i', '', (string)$html);
+    $html = preg_replace('~[ \t]*<link\b[^>]*rel\s*=\s*["\']canonical["\'][^>]*>[ \t]*\r?\n?~i', '', (string)$html);
+    $html = preg_replace('~[ \t]*<meta\b[^>]*property\s*=\s*["\']og:[^"\']*["\'][^>]*>[ \t]*\r?\n?~i', '', (string)$html);
+    $html = preg_replace('~[ \t]*<meta\b[^>]*name\s*=\s*["\']twitter:[^"\']*["\'][^>]*>[ \t]*\r?\n?~i', '', (string)$html);
+    return (string)$html;
+}
+// og_tags blocks arrive as raw HTML and are reduced to <meta> tags ONLY.
+// http-equiv / charset / anything that isn't a name|property+content pair is
+// dropped, values are stripped of CR/LF.
+function cmsPkgSanitizeMetaTags($html) {
+    $out = [];
+    if (!preg_match_all('~<meta\b[^>]*>~i', (string)$html, $m)) return $out;
+    foreach ($m[0] as $tag) {
+        if (preg_match('~http-equiv|charset~i', $tag)) continue;
+        if (preg_match('~\b(property|name)\s*=\s*"([^"]+)"~i', $tag, $k)) { $attr = strtolower($k[1]); $key = trim($k[2]); }
+        elseif (preg_match("~\b(property|name)\s*=\s*'([^']+)'~i", $tag, $k)) { $attr = strtolower($k[1]); $key = trim($k[2]); }
+        else continue;
+        if (preg_match('~\bcontent\s*=\s*"([^"]*)"~i', $tag, $c)) $val = $c[1];
+        elseif (preg_match("~\bcontent\s*=\s*'([^']*)'~i", $tag, $c)) $val = $c[1];
+        else continue;
+        if (!preg_match('~^[A-Za-z0-9:_.\-]{1,64}$~', $key)) continue;
+        $val = trim(str_replace(["\r", "\n"], ' ', html_entity_decode($val, ENT_QUOTES, 'UTF-8')));
+        if ($val === '') continue;
+        $out[] = ['attr' => $attr, 'key' => $key, 'content' => $val];
+    }
+    return $out;
+}
+// Content HTML: drop executable/structural elements outright, kill inline
+// handlers and script-ish URLs, then allow-list the remaining tags.
+function cmsPkgSanitizeHtml($html) {
+    $html = (string)$html;
+    $html = preg_replace('~<!--[\s\S]*?-->~', '', $html);
+    $kill = 'script|style|iframe|object|embed|applet|form|input|button|select|textarea|link|meta|base|svg|math';
+    $html = preg_replace('~<(' . $kill . ')\b[^>]*>[\s\S]*?</\1\s*>~i', '', $html);
+    $html = preg_replace('~<(' . $kill . ')\b[^>]*/?>~i', '', $html);
+    $html = preg_replace('~\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)~i', '', $html);
+    $html = preg_replace('~\s(?:href|src|srcset|action|formaction|xlink:href)\s*=\s*("|\')\s*(?:javascript|vbscript|data)\s*:[^"\']*\1~i', '', $html);
+    $allow = ['p','br','strong','b','em','i','u','s','ul','ol','li','h1','h2','h3','h4','h5','h6',
+              'blockquote','a','img','figure','figcaption','table','thead','tbody','tfoot','tr','th','td',
+              'hr','span','div','section','article','small','sup','sub','code','pre','dl','dt','dd'];
+    $html = strip_tags($html, '<' . implode('><', $allow) . '>');
+    return trim((string)$html);
+}
+// Build the managed <head> block for a page from its seo.json record and stamp
+// it in. Same marker + tag shape the admin uses, so the two converge instead of
+// fighting: whichever runs last produces the same output from the same record.
+function cmsPkgStampSeo($html, $rec, $canonical, $isDraft = false) {
+    $html = cmsPkgStripManagedSeo($html);
+    $esc = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); };
+    $L = [];
+    $title = trim((string)($rec['title'] ?? ''));
+    if ($title !== '') {
+        if (preg_match('~<title\b[^>]*>~i', $html)) $html = preg_replace('~<title\b[^>]*>[\s\S]*?</title>~i', '<title>' . $esc($title) . '</title>', $html, 1);
+        else $html = preg_replace('~<head\b[^>]*>~i', '$0' . "\n" . '<title>' . $esc($title) . '</title>', $html, 1);
+    }
+    $desc = trim((string)($rec['description'] ?? ''));
+    if ($desc !== '') $L[] = '<meta name="description" content="' . $esc($desc) . '" data-fourge-seo>';
+    $canon = trim((string)($rec['canonical'] ?? '')) ?: (string)$canonical;
+    if ($canon !== '') $L[] = '<link rel="canonical" href="' . $esc($canon) . '" data-fourge-seo>';
+    $noindex = !empty($rec['noindex']) || $isDraft;
+    $L[] = '<meta name="robots" content="' . ($noindex ? 'noindex' : 'index') . ',' . (!empty($rec['nofollow']) ? 'nofollow' : 'follow') . '" data-fourge-seo>';
+    $ogT = trim((string)($rec['ogTitle'] ?? $title));
+    $ogD = trim((string)($rec['ogDescription'] ?? $desc));
+    $ogI = trim((string)($rec['ogImage'] ?? ''));
+    if ($ogT !== '') $L[] = '<meta property="og:title" content="' . $esc($ogT) . '" data-fourge-seo>';
+    if ($ogD !== '') $L[] = '<meta property="og:description" content="' . $esc($ogD) . '" data-fourge-seo>';
+    if ($ogI !== '') $L[] = '<meta property="og:image" content="' . $esc($ogI) . '" data-fourge-seo>';
+    if ($canon !== '') $L[] = '<meta property="og:url" content="' . $esc($canon) . '" data-fourge-seo>';
+    $L[] = '<meta name="twitter:card" content="' . $esc($rec['twitterCard'] ?? 'summary_large_image') . '" data-fourge-seo>';
+    if ($ogT !== '') $L[] = '<meta name="twitter:title" content="' . $esc($ogT) . '" data-fourge-seo>';
+    if ($ogD !== '') $L[] = '<meta name="twitter:description" content="' . $esc($ogD) . '" data-fourge-seo>';
+    if ($ogI !== '') $L[] = '<meta name="twitter:image" content="' . $esc($ogI) . '" data-fourge-seo>';
+    foreach ((array)($rec['extraMeta'] ?? []) as $mt) {
+        $a = ($mt['attr'] ?? 'name') === 'property' ? 'property' : 'name';
+        $k = (string)($mt['key'] ?? ''); $v = (string)($mt['content'] ?? '');
+        if ($k === '' || $v === '') continue;
+        if (preg_match('~^(?:og:(?:title|description|image|url)|twitter:(?:card|title|description|image)|description|robots)$~i', $k)) continue; // already managed
+        $L[] = '<meta ' . $a . '="' . $esc($k) . '" content="' . $esc($v) . '" data-fourge-seo>';
+    }
+    foreach ((array)($rec['extraJsonld'] ?? []) as $blk) {
+        $json = is_string($blk) ? $blk : json_encode($blk, JSON_UNESCAPED_SLASHES);
+        if (!is_string($json) || trim($json) === '') continue;
+        $json = str_ireplace('</script', '<\\/script', $json);   // can never break out of the block
+        $L[] = '<script type="application/ld+json" data-fourge-seo>' . $json . '</script>';
+    }
+    $block = implode("\n", $L);
+    if ($block === '') return $html;
+    if (preg_match('~</head>~i', $html)) return preg_replace('~</head>~i', $block . "\n</head>", $html, 1);
+    if (preg_match('~<head\b[^>]*>~i', $html)) return preg_replace('~<head\b[^>]*>~i', '$0' . "\n" . $block, $html, 1);
+    return $block . "\n" . $html;
+}
+// Generic marker-splice for a managed .htaccess block.
+function cmsPkgSpliceHtaccess($begin, $end, $rules) {
+    $htPath   = PUBLIC_HTML . '/.htaccess';
+    $existing = is_file($htPath) ? file_get_contents($htPath) : '';
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        // Redirects and headers must precede the clean-URL rewrite block.
+        $cu = strpos($existing, '# BEGIN Fourge Clean URLs');
+        if ($cu !== false) $existing = substr($existing, 0, $cu) . $block . "\n\n" . substr($existing, $cu);
+        else $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+// A redirect rule is only accepted when both sides are safe to place in a
+// server config: constrained source path charset, absolute-or-rooted target,
+// no whitespace/newlines anywhere.
+function cmsPkgValidRedirect($from, $to) {
+    $from = '/' . ltrim(preg_replace('~[?#].*$~', '', (string)$from), '/');
+    $p = trim($from, '/');
+    if ($p === '' || strlen($p) > 300) return null;
+    if (!preg_match('~^[A-Za-z0-9/_%.\-]+$~', $p)) return null;
+    $to = trim((string)$to);
+    if ($to === '' || strlen($to) > 600) return null;
+    if (preg_match('~[\s"\'\\\\]~', $to)) return null;
+    if (!preg_match('~^(?:https?://[A-Za-z0-9.\-]+(?::\d+)?(?:/[^\s]*)?|/[^\s]*)$~', $to)) return null;
+    return ['from' => '/' . $p, 'to' => $to];
+}
+function cmsPkgWriteRedirects($rules) {
+    $lines = ['<IfModule mod_rewrite.c>', '  RewriteEngine On'];
+    foreach ($rules as $r) {
+        $p = trim((string)$r['from'], '/');
+        $code = (int)($r['code'] ?? 301);
+        if ($code !== 301 && $code !== 302 && $code !== 307 && $code !== 308) $code = 301;
+        $pat = str_replace(['.', ' '], ['\\.', '\\ '], $p);
+        $lines[] = '  RewriteRule ^' . $pat . '/?$ ' . $r['to'] . ' [R=' . $code . ',L]';
+    }
+    $lines[] = '</IfModule>';
+    return cmsPkgSpliceHtaccess('# BEGIN Fourge Package Redirects', '# END Fourge Package Redirects', implode("\n", $lines));
+}
+// Parse Apache `Header always set X "Y"` and nginx `add_header X "Y" always;`.
+function cmsPkgParseHeaders($raw) {
+    $pairs = [];
+    foreach (preg_split('~\r?\n~', (string)$raw) as $line) {
+        $line = trim($line);
+        if ($line === '' || $line[0] === '#') continue;
+        $m = null;
+        if (preg_match('~^Header\s+(?:always\s+)?set\s+([A-Za-z0-9\-]+)\s+"([^"]*)"~i', $line, $m)) {}
+        elseif (preg_match("~^Header\s+(?:always\s+)?set\s+([A-Za-z0-9\-]+)\s+'([^']*)'~i", $line, $m)) {}
+        elseif (preg_match('~^add_header\s+([A-Za-z0-9\-]+)\s+"([^"]*)"~i', $line, $m)) {}
+        elseif (preg_match("~^add_header\s+([A-Za-z0-9\-]+)\s+'([^']*)'~i", $line, $m)) {}
+        else continue;
+        $name = $m[1]; $val = str_replace(["\r", "\n"], '', $m[2]);
+        if (!preg_match('~^[A-Za-z0-9\-]{1,64}$~', $name)) continue;
+        // A quote or backslash means the source line was quoted in a way this
+        // parser can't round-trip safely into .htaccess — drop it rather than
+        // emit a broken directive.
+        if (strpos($val, '"') !== false || strpos($val, '\\') !== false || strlen($val) > 1500) continue;
+        // Response-shaping headers we must never let a data file set.
+        if (preg_match('~^(?:set-cookie|location|status|content-length|transfer-encoding)$~i', $name)) continue;
+        $pairs[$name] = $val;
+    }
+    return $pairs;
+}
+function cmsPkgWriteHeaders($pairs) {
+    $lines = ['<IfModule mod_headers.c>'];
+    foreach ($pairs as $n => $v) $lines[] = '  Header always set ' . $n . ' "' . $v . '"';
+    $lines[] = '</IfModule>';
+    return cmsPkgSpliceHtaccess('# BEGIN Fourge Package Headers', '# END Fourge Package Headers', implode("\n", $lines));
+}
+// Clone the site's own homepage shell for a new page so imported content wears
+// the site's header/footer/design (same donor approach as post→page).
+function cmsPkgPageFromShell($title, $bodyHtml) {
+    $esc = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+    $inner = "\n" . '<section style="max-width:880px;margin:0 auto;padding:48px 24px">' . "\n"
+           . '<h1>' . $esc . '</h1>' . "\n" . $bodyHtml . "\n" . '</section>' . "\n";
+    $home = PUBLIC_HTML . '/index.html';
+    $shell = is_file($home) ? (string)file_get_contents($home) : '';
+    if ($shell !== '' && preg_match('~<main\b[^>]*>[\s\S]*?</main>~i', $shell)) {
+        $out = preg_replace_callback('~(<main\b[^>]*>)([\s\S]*?)(</main>)~i',
+            function ($m) use ($inner) { return $m[1] . $inner . $m[3]; }, $shell, 1);
+        $out = preg_replace_callback('~<title\b[^>]*>[\s\S]*?</title>~i',
+            function ($m) use ($esc) { return '<title>' . $esc . '</title>'; }, (string)$out, 1);
+        $out = cmsPkgStripManagedSeo((string)$out);
+        // Donor's page-scoped custom CSS/JS and its form markup don't belong here.
+        $out = preg_replace('~[ \t]*<(style|script)\b[^>]*data-fourge-page[^>]*>[\s\S]*?</\1>[ \t]*\r?\n?~i', '', (string)$out);
+        $out = preg_replace('~[ \t]*<link\b[^>]*data-fourge-page[^>]*>[ \t]*\r?\n?~i', '', (string)$out);
+        return (string)$out;
+    }
+    return "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n"
+         . "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+         . "<title>" . $esc . "</title>\n<link rel=\"stylesheet\" href=\"settings.css\">\n</head>\n"
+         . "<body>\n<main>" . $inner . "</main>\n</body>\n</html>\n";
+}
+// Publish any scheduled deploy-package content whose time has arrived. Posts
+// also self-publish in the public runtime (it treats publishAt<=now as live);
+// this is what flips the stored record and handles page-type items.
+function cmsPkgTick($dry = false) {
+    $now = time(); $done = [];
+    $posts = cmsPkgReadJson('posts.json', []);
+    $postsDirty = false;
+    if (is_array($posts)) {
+        foreach ($posts as $i => $p) {
+            if (!is_array($p) || !empty($p['published']) || empty($p['publishAt'])) continue;
+            $t = strtotime((string)$p['publishAt']);
+            if ($t === false || $t > $now) continue;
+            $posts[$i]['published'] = true; unset($posts[$i]['publishAt']);
+            $postsDirty = true;
+            $done[] = ['type' => 'post', 'title' => (string)($p['title'] ?? '')];
+        }
+    }
+    $pages = cmsPkgReadJson('pages.json', []);
+    $pagesDirty = false;
+    if (is_array($pages)) {
+        foreach ($pages as $pid => $rec) {
+            if (!is_array($rec) || empty($rec['publishAt'])) continue;
+            $t = strtotime((string)$rec['publishAt']);
+            if ($t === false || $t > $now) continue;
+            $pages[$pid]['draft'] = false; unset($pages[$pid]['publishAt']);
+            $pagesDirty = true;
+            $done[] = ['type' => 'page', 'title' => (string)($rec['title'] ?? $pid)];
+        }
+    }
+    if (!$dry) {
+        if ($postsDirty) cmsPkgWriteJson('posts.json', $posts);
+        if ($pagesDirty) cmsPkgWriteJson('pages.json', $pages);
+    }
+    return $done;
+}
+// Session (admin ≥2) OR constant-time Bearer match against the stored key.
+function cmsPkgAuthorized($me, $body) {
+    if ($me && fourgeLevel($me) >= 2) return true;
+    $tok = '';
+    $hdr = trim((string)($_SERVER['HTTP_AUTHORIZATION'] ?? ''));
+    if ($hdr !== '' && preg_match('~^Bearer\s+(.+)$~i', $hdr, $m)) $tok = trim($m[1]);
+    if ($tok === '') $tok = trim((string)($_SERVER['HTTP_X_SEO_PKG_TOKEN'] ?? ''));   // hosts that strip Authorization
+    if ($tok === '') $tok = trim((string)($body['pkg_token'] ?? ''));
+    if ($tok === '') return false;
+    $stored = '';
+    try { $stored = (string)fourgeGetSecret(fourgeDb(), 'seo_pkg_token'); } catch (Throwable $e) { $stored = ''; }
+    if ($stored === '') return false;
+    return hash_equals($stored, $tok);
+}
+
+function cmsPkgApply($pkg, $dry) {
+    $applied = []; $skipped = []; $manual = [];
+    $add  = function ($type, $item, $note = '') use (&$applied) { $applied[] = ['type' => $type, 'item' => $item] + ($note !== '' ? ['note' => $note] : []); };
+    $skip = function ($type, $item, $reason) use (&$skipped) { $skipped[] = ['type' => $type, 'item' => $item, 'reason' => $reason]; };
+    $man  = function ($type, $item, $action = '') use (&$manual) { $manual[] = ['type' => $type, 'item' => $item] + ($action !== '' ? ['action' => $action] : []); };
+
+    $site  = cmsPkgReadJson('site.json', []);
+    $pages = cmsPkgReadJson('pages.json', []);
+    $seo   = cmsPkgReadJson('seo.json', []);
+    if (!is_array($pages)) $pages = [];
+    if (!is_array($seo))   $seo = [];
+
+    // Site sanity check (warn only — never refuse to import).
+    $declared = trim((string)($pkg['site'] ?? ''));
+    if ($declared !== '') {
+        $dHost = strtolower(preg_replace('~^www\.~i', '', (string)parse_url($declared, PHP_URL_HOST)));
+        $cHost = strtolower(preg_replace('~^www\.~i', '', (string)parse_url((string)($site['website'] ?? ''), PHP_URL_HOST)));
+        if ($dHost !== '' && $cHost !== '' && $dHost !== $cHost) {
+            $man('site_mismatch', $declared, 'This package was generated for ' . $dHost . ' but this site is configured as ' . $cHost . '. Confirm you are importing into the right site.');
+        }
+    }
+    $baseUrl = rtrim((string)($site['website'] ?? ''), '/');
+    if ($baseUrl !== '' && !preg_match('~^https?://~i', $baseUrl)) $baseUrl = 'https://' . $baseUrl;
+
+    // target URL → page id
+    $byPath = [];
+    foreach ($pages as $pid => $rec) {
+        if (!is_array($rec)) continue;
+        $byPath[cmsPkgNormPath((string)($rec['path'] ?? $rec['file'] ?? ''))] = $pid;
+    }
+    $resolve = function ($target) use ($byPath) {
+        $k = cmsPkgNormPath($target);
+        return $byPath[$k] ?? null;
+    };
+    $touched = [];   // pid => true (pages needing a re-stamp)
+
+    // 1 ── seo_meta
+    foreach ((array)($pkg['seo_meta'] ?? []) as $row) {
+        $t = (string)($row['target'] ?? '');
+        $pid = $resolve($t);
+        if (!$pid) { $skip('seo_meta', $t, 'No page on this site matches that URL path'); continue; }
+        if (!isset($seo[$pid]) || !is_array($seo[$pid])) $seo[$pid] = [];
+        $fields = [];
+        foreach (['seo_title' => 'title', 'seo_description' => 'description', 'canonical' => 'canonical'] as $src => $dst) {
+            $v = trim((string)($row[$src] ?? ''));
+            if ($v !== '') { $seo[$pid][$dst] = $v; $fields[] = $dst; }
+        }
+        if (!$fields) { $skip('seo_meta', $t, 'No title, description, or canonical value in the entry'); continue; }
+        $touched[$pid] = true;
+        $add('seo_meta', $t, implode(' + ', $fields));
+    }
+
+    // 2 ── schema (JSON-LD). Replace semantics per target: the package owns the
+    // imported set, so re-importing cannot stack duplicates.
+    $schemaByPid = [];
+    foreach ((array)($pkg['schema'] ?? []) as $row) {
+        $t = (string)($row['target'] ?? '');
+        $pid = $resolve($t);
+        if (!$pid) { $skip('schema', $t, 'No page on this site matches that URL path'); continue; }
+        $ld = $row['jsonld'] ?? null;
+        if (!is_array($ld) || !$ld) { $skip('schema', $t, 'jsonld is missing or not an object'); continue; }
+        $type = is_array($ld['@type'] ?? null) ? implode('/', $ld['@type']) : (string)($ld['@type'] ?? 'JSON-LD');
+        $schemaByPid[$pid][] = $ld;
+        $add('schema', $t, $type);
+    }
+    foreach ($schemaByPid as $pid => $blocks) {
+        if (!isset($seo[$pid]) || !is_array($seo[$pid])) $seo[$pid] = [];
+        $seo[$pid]['extraJsonld'] = $blocks;
+        $touched[$pid] = true;
+    }
+
+    // 3 ── og_tags → <meta> only. Known OG/Twitter values are folded into
+    // Fourge's own fields so the page never carries two og:title tags.
+    $metaByPid = [];
+    foreach ((array)($pkg['og_tags'] ?? []) as $row) {
+        $t = (string)($row['target'] ?? '');
+        $pid = $resolve($t);
+        if (!$pid) { $skip('og_tags', $t, 'No page on this site matches that URL path'); continue; }
+        $tags = cmsPkgSanitizeMetaTags((string)($row['html'] ?? ''));
+        if (!$tags) { $skip('og_tags', $t, 'No usable <meta> tags after sanitizing (scripts and http-equiv are always dropped)'); continue; }
+        if (!isset($seo[$pid]) || !is_array($seo[$pid])) $seo[$pid] = [];
+        $extras = [];
+        foreach ($tags as $tg) {
+            $k = strtolower($tg['key']);
+            if ($k === 'og:title')            $seo[$pid]['ogTitle'] = $tg['content'];
+            elseif ($k === 'og:description')  $seo[$pid]['ogDescription'] = $tg['content'];
+            elseif ($k === 'og:image')        $seo[$pid]['ogImage'] = $tg['content'];
+            elseif ($k === 'twitter:card')    $seo[$pid]['twitterCard'] = $tg['content'];
+            elseif (in_array($k, ['og:url', 'twitter:title', 'twitter:description', 'twitter:image'], true)) { /* derived */ }
+            else $extras[] = $tg;
+        }
+        $metaByPid[$pid] = $extras;
+        $touched[$pid] = true;
+        $add('og_tags', $t, count($tags) . ' meta tag(s)');
+    }
+    foreach ($metaByPid as $pid => $extras) { $seo[$pid]['extraMeta'] = $extras; }
+
+    // 4 ── site files
+    $sf = (array)($pkg['site_files'] ?? []);
+    $robots = trim((string)($sf['robots_txt'] ?? ''));
+    if ($robots !== '') {
+        $g = (isset($seo['__site']) && is_array($seo['__site'])) ? $seo['__site'] : [];
+        $existing = trim((string)($g['robotsTxt'] ?? ''));
+        if ($existing !== '' && $existing !== $robots) {
+            $skip('robots_txt', '/robots.txt', 'This site already has custom robots.txt content in the SEO panel — left alone so the import cannot overwrite it. Paste the package version in by hand if you want it.');
+        } else {
+            $g['robotsTxt'] = $robots; $seo['__site'] = $g;
+            $out = $robots;
+            if ($baseUrl !== '' && !preg_match('~^sitemap:~im', $out)) $out .= "\nSitemap: " . $baseUrl . '/sitemap.xml';
+            if (!$dry) { cmsPkgBackup('robots.txt'); @file_put_contents(PUBLIC_HTML . '/robots.txt', $out . "\n"); }
+            $add('robots_txt', '/robots.txt', 'served, Sitemap line preserved');
+        }
+    }
+    $llms = trim((string)($sf['llms_txt'] ?? ''));
+    if ($llms !== '') {
+        if (!$dry) { cmsPkgBackup('llms.txt'); @file_put_contents(PUBLIC_HTML . '/llms.txt', $llms . "\n"); }
+        $add('llms_txt', '/llms.txt', strlen($llms) . ' bytes');
+    }
+    if (trim((string)($sf['sitemap_xml'] ?? '')) !== '') {
+        $skip('sitemap_xml', '/sitemap.xml', 'Fourge generates its own sitemap from live pages and posts — the package copy would go stale. Rebuild it from the SEO panel instead.');
+    }
+
+    // 5 ── redirects (merge + dedupe by source path; raw is a manual item)
+    $rd = (array)($pkg['redirects'] ?? []);
+    $store = cmsPkgReadJson('redirects.json', []);
+    if (!is_array($store)) $store = [];
+    $bySrc = [];
+    foreach ($store as $r) { if (is_array($r) && !empty($r['from'])) $bySrc[strtolower(trim((string)$r['from'], '/'))] = $r; }
+    $newCount = 0;
+    foreach ((array)($rd['rules'] ?? []) as $r) {
+        $v = cmsPkgValidRedirect($r['from'] ?? '', $r['to'] ?? '');
+        if (!$v) { $skip('redirect', (string)($r['from'] ?? '?') . ' → ' . (string)($r['to'] ?? '?'), 'Source path or target URL failed validation (unsafe characters, or the target is not an absolute/rooted URL)'); continue; }
+        $code = (int)($r['code'] ?? 301);
+        $key = strtolower(trim($v['from'], '/'));
+        $bySrc[$key] = ['from' => $v['from'], 'to' => $v['to'], 'code' => $code];
+        $newCount++;
+    }
+    if ($newCount) {
+        $rules = array_values($bySrc);
+        if (!$dry) { cmsPkgBackup('.htaccess'); cmsPkgWriteJson('redirects.json', $rules); cmsPkgWriteRedirects($rules); }
+        $add('redirects', $newCount . ' rule(s)', count($rules) . ' total after merge/dedupe');
+    }
+    if (trim((string)($rd['raw'] ?? '')) !== '') {
+        $man('redirects_raw', 'Server-level redirect block', 'The package includes raw .htaccess/nginx redirect text. It is never executed — review it and apply anything the rule list above does not cover by hand.');
+    }
+
+    // 6 ── security headers
+    $hdrs = cmsPkgParseHeaders((string)(($pkg['security_headers']['raw'] ?? '')));
+    if ($hdrs) {
+        if (!$dry) { cmsPkgBackup('.htaccess'); cmsPkgWriteHeaders($hdrs); }
+        $add('security_headers', implode(', ', array_keys($hdrs)), count($hdrs) . ' header(s) sent on every response');
+    } elseif (trim((string)($pkg['security_headers']['raw'] ?? '')) !== '') {
+        $skip('security_headers', 'raw block', 'No valid `Header set` / `add_header` name-value pairs found in the block');
+    }
+
+    // 7 ── content (external_id is the idempotency key)
+    $posts = cmsPkgReadJson('posts.json', []);
+    if (!is_array($posts)) $posts = [];
+    $nowTs = time();
+    foreach ((array)($pkg['content'] ?? []) as $c) {
+        $title = trim((string)($c['title'] ?? ''));
+        $ext   = trim((string)($c['external_id'] ?? ''));
+        if ($title === '') { $skip('content', $ext ?: '(untitled)', 'Entry has no title'); continue; }
+        if (isset($c['approved']) && $c['approved'] === false) { $skip('content', $title, 'Marked not approved in the package'); continue; }
+        $bodyRaw = (string)($c['body_html'] ?? '');
+        $body = cmsPkgSanitizeHtml($bodyRaw);
+        if ($body === '') { $skip('content', $title, 'Body was empty (or contained nothing that survived sanitizing)'); continue; }
+        $status = strtolower(trim((string)($c['status'] ?? 'draft')));
+        $schedRaw = trim((string)($c['schedule'] ?? ''));
+        $schedTs = $schedRaw !== '' ? strtotime($schedRaw) : false;
+        $isPage = strtolower(trim((string)($c['post_type'] ?? 'post'))) === 'page';
+        $publishNow = false; $publishAt = '';
+        if ($status === 'publish') $publishNow = true;
+        elseif ($status === 'schedule') {
+            if ($schedTs === false) { $publishNow = true; }
+            elseif ($schedTs <= $nowTs) { $publishNow = true; }
+            else { $publishAt = gmdate('c', $schedTs); }
+        }
+        $noteBits = [];
+        if ($publishNow && $status === 'schedule' && $schedTs !== false && $schedTs <= $nowTs) $noteBits[] = 'schedule date already passed — published now';
+        elseif ($publishAt !== '') $noteBits[] = 'scheduled for ' . $publishAt;
+        elseif (!$publishNow) $noteBits[] = 'draft, awaiting review';
+
+        if ($isPage) {
+            $slug = cmsPkgSlug($c['slug'] ?? $title);
+            if ($slug === '') { $skip('content', $title, 'Could not derive a filename from the title'); continue; }
+            $pid = null;
+            foreach ($pages as $k => $rec) { if (is_array($rec) && $ext !== '' && (string)($rec['extId'] ?? '') === $ext) { $pid = $k; break; } }
+            $isNew = ($pid === null);
+            if ($isNew) {
+                $pid = $slug;
+                $n = 2; while (isset($pages[$pid])) { $pid = $slug . '-' . $n; $n++; }
+            }
+            $file = (string)($pages[$pid]['file'] ?? ($pid . '.html'));
+            $html = cmsPkgPageFromShell($title, $body);
+            $rec = is_array($pages[$pid] ?? null) ? $pages[$pid] : [];
+            $rec['title'] = $title; $rec['file'] = $file; $rec['path'] = $file;
+            if ($ext !== '') $rec['extId'] = $ext;
+            $rec['draft'] = !$publishNow;
+            if ($publishAt !== '') $rec['publishAt'] = $publishAt; else unset($rec['publishAt']);
+            if (!isset($seo[$pid]) || !is_array($seo[$pid])) $seo[$pid] = [];
+            if (trim((string)($seo[$pid]['title'] ?? '')) === '') $seo[$pid]['title'] = $title;
+            $fk = trim((string)($c['focus_keyword'] ?? ''));
+            if ($fk !== '' && trim((string)($seo[$pid]['focusKeyword'] ?? '')) === '') $seo[$pid]['focusKeyword'] = $fk;
+            if (!$dry) {
+                cmsPkgBackup($file);
+                $canon = $baseUrl !== '' ? ($baseUrl . '/' . cmsPkgNormPath($file)) : '';
+                @file_put_contents(PUBLIC_HTML . '/' . $file, cmsPkgStampSeo($html, $seo[$pid], rtrim($canon, '/') ?: '', $rec['draft']));
+                $pages[$pid] = $rec;
+            } else { $pages[$pid] = $rec; }
+            $add('content_page', $title, ($isNew ? 'created ' : 'updated ') . $file . ($noteBits ? ' — ' . implode('; ', $noteBits) : ''));
+        } else {
+            $idx = null;
+            foreach ($posts as $i => $p) { if (is_array($p) && $ext !== '' && (string)($p['extId'] ?? '') === $ext) { $idx = $i; break; } }
+            $isNew = ($idx === null);
+            $slug = cmsPkgSlug($c['slug'] ?? $title);
+            if ($slug === '') $slug = 'post-' . substr(md5($title), 0, 6);
+            foreach ($posts as $i => $p) {   // keep slugs unique across other posts
+                if ($i === $idx || !is_array($p)) continue;
+                if ((string)($p['slug'] ?? '') === $slug) { $slug .= '-' . substr(md5($ext . $title), 0, 4); break; }
+            }
+            $rec = $isNew ? [] : $posts[$idx];
+            $rec['id']    = (string)($rec['id'] ?? ('pkg' . substr(md5($ext . $title . microtime(true)), 0, 9)));
+            $rec['title'] = $title;
+            $rec['slug']  = $slug;
+            $rec['blocks'] = [['id' => substr(md5($rec['id'] . 'b'), 0, 7), 'type' => 'html', 'html' => $body]];
+            if (trim((string)($rec['excerpt'] ?? '')) === '') {
+                $plain = trim(preg_replace('~\s+~', ' ', strip_tags($body)));
+                $rec['excerpt'] = mb_substr($plain, 0, 155);
+            }
+            $rec['date'] = $publishAt !== '' ? substr($publishAt, 0, 10)
+                        : (trim((string)($rec['date'] ?? '')) !== '' ? $rec['date'] : gmdate('Y-m-d'));
+            $rec['published'] = $publishNow;
+            if ($publishAt !== '') $rec['publishAt'] = $publishAt; else unset($rec['publishAt']);
+            if ($ext !== '') $rec['extId'] = $ext;
+            $fk = trim((string)($c['focus_keyword'] ?? ''));
+            if ($fk !== '') $rec['focusKeyword'] = $fk;
+            $kind = trim((string)($c['kind'] ?? ''));
+            if ($kind !== '') $rec['pkgKind'] = $kind;
+            if ($isNew) array_unshift($posts, $rec); else $posts[$idx] = $rec;
+            $add('content_post', $title, ($isNew ? 'created' : 'updated') . ' /posts.html?p=' . $slug . ($noteBits ? ' — ' . implode('; ', $noteBits) : ''));
+        }
+    }
+
+    // 8 ── manual tasks
+    foreach ((array)($pkg['manual_tasks'] ?? []) as $t) {
+        $man((string)($t['kind'] ?? 'task'), (string)($t['title'] ?? 'Task'), (string)($t['action'] ?? ''));
+    }
+
+    // Re-stamp every page whose SEO record changed.
+    foreach (array_keys($touched) as $pid) {
+        $rec = is_array($pages[$pid] ?? null) ? $pages[$pid] : null;
+        $file = $rec ? (string)($rec['path'] ?? $rec['file'] ?? '') : '';
+        if ($file === '') { $skip('stamp', (string)$pid, 'Page has no file on disk'); continue; }
+        $abs = PUBLIC_HTML . '/' . ltrim($file, '/');
+        if (!is_file($abs)) { $skip('stamp', $file, 'Page file not found on the server'); continue; }
+        $html = (string)@file_get_contents($abs);
+        if (trim($html) === '' || (stripos($html, '</html>') === false && stripos($html, '</body>') === false)) {
+            $skip('stamp', $file, 'Page file looked empty or truncated — refused to rewrite it');
+            continue;
+        }
+        $canon = $baseUrl !== '' ? rtrim($baseUrl . '/' . cmsPkgNormPath($file), '/') : '';
+        if ($canon === '' && $baseUrl !== '') $canon = $baseUrl . '/';
+        $next = cmsPkgStampSeo($html, $seo[$pid], $canon, !empty($rec['draft']));
+        if ($next === $html) continue;
+        if (!$dry) { cmsPkgBackup($file); @file_put_contents($abs, $next); }
+    }
+
+    if (!$dry) {
+        cmsPkgWriteJson('seo.json', $seo);
+        cmsPkgWriteJson('pages.json', $pages);
+        cmsPkgWriteJson('posts.json', $posts);
+    }
+
+    return [
+        'ok' => true,
+        'imported_at' => date('c'),
+        'dry_run' => (bool)$dry,
+        'source' => [
+            'site' => (string)($pkg['site'] ?? ''),
+            'generated_at' => (string)($pkg['generated_at'] ?? ''),
+            'package_id' => (string)(($pkg['source']['package_id'] ?? '')),
+            'audit_score' => ($pkg['source']['audit_score'] ?? null),
+            'client' => (string)(($pkg['client']['name'] ?? '')),
+            'tier' => (string)(($pkg['client']['tier'] ?? '')),
+        ],
+        'applied' => $applied,
+        'skipped' => $skipped,
+        'manual'  => $manual,
+        'counts'  => ['applied' => count($applied), 'skipped' => count($skipped), 'manual' => count($manual)],
+    ];
+}
+
+function fourgeApiSeoPackage($me, $body) {
+    if (!cmsPkgAuthorized($me, $body)) {
+        http_response_code(401);
+        echo json_encode(['ok' => false, 'error' => 'Unauthorized — sign in to the CMS or present the site\'s deploy-package Bearer token.']);
+        return;
+    }
+    // The pretty endpoint posts the package as the whole body; the admin screen
+    // nests it under "package" alongside action/mode.
+    $pkg = (is_array($body['package'] ?? null)) ? $body['package'] : $body;
+    $mode = strtolower(trim((string)($body['mode'] ?? ($_GET['mode'] ?? 'apply'))));
+    if (!is_array($pkg)) { http_response_code(400); echo json_encode(['ok' => false, 'error' => 'Request body was not valid JSON']); return; }
+    if (strlen((string)json_encode($pkg)) > 8 * 1024 * 1024) {
+        http_response_code(413); echo json_encode(['ok' => false, 'error' => 'Package is larger than 8 MB']); return;
+    }
+    if ((string)($pkg['format'] ?? '') !== '44i-deploy-package') {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Not a 44i deploy package (expected format "44i-deploy-package"). Nothing was applied.']);
+        return;
+    }
+    $fv = (int)($pkg['format_version'] ?? 0);
+    if ($fv > 1) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'This package is format_version ' . $fv . '; this site understands version 1. Update Fourge, then re-import. Nothing was applied.']);
+        return;
+    }
+    $dry = ($mode === 'preview' || $mode === 'dry-run' || $mode === 'dry_run');
+    $report = cmsPkgApply($pkg, $dry);
+    if (!$dry) {
+        try { $report['published_now'] = cmsPkgTick(false); } catch (Throwable $e) {}
+        cmsPkgWriteJson('seo-package-report.json', $report);
+    }
+    echo json_encode($report);
+}
+
+function fourgeApiSeoPkgTick($me, $body) {
+    if (!cmsPkgAuthorized($me, $body)) {
+        http_response_code(401); echo json_encode(['ok' => false, 'error' => 'Unauthorized']); return;
+    }
+    $done = cmsPkgTick(false);
+    echo json_encode(['ok' => true, 'published' => $done, 'count' => count($done), 'checked_at' => date('c')]);
+}
+
+// Admin-side status + token rotation. The token is shown ONCE at generation.
+function fourgeApiSeoPkgAdmin($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
+    $op = strtolower(trim((string)($body['op'] ?? 'status')));
+    $has = false;
+    try { $has = trim((string)fourgeGetSecret(fourgeDb(), 'seo_pkg_token')) !== ''; } catch (Throwable $e) { $has = false; }
+    $scheme = fourgeIsHttps() ? 'https' : 'http';
+    $host   = (string)($_SERVER['HTTP_HOST'] ?? '');
+    $endpoint = $host !== '' ? ($scheme . '://' . $host . '/api/seo-platform/package') : '/api/seo-platform/package';
+    if ($op === 'regenerate') {
+        if (fourgeLevel($me) < 3) { http_response_code(403); echo json_encode(['error' => 'Super Admin access required to rotate the key']); return; }
+        try {
+            $tok = bin2hex(random_bytes(24));
+            fourgeSetSecret(fourgeDb(), 'seo_pkg_token', $tok, (string)($me['username'] ?? ''));
+            echo json_encode(['ok' => true, 'token' => $tok, 'endpoint' => $endpoint, 'hasToken' => true,
+                'note' => 'Copy this key now — it is stored encrypted and cannot be shown again.']);
+        } catch (Throwable $e) {
+            http_response_code(500); echo json_encode(['error' => 'Could not store the key: ' . $e->getMessage()]);
+        }
+        return;
+    }
+    if ($op === 'revoke') {
+        if (fourgeLevel($me) < 3) { http_response_code(403); echo json_encode(['error' => 'Super Admin access required']); return; }
+        try { fourgeDb()->prepare("DELETE FROM secrets WHERE name=?")->execute(['seo_pkg_token']); } catch (Throwable $e) {}
+        echo json_encode(['ok' => true, 'hasToken' => false, 'endpoint' => $endpoint]);
+        return;
+    }
+    echo json_encode(['ok' => true, 'hasToken' => $has, 'endpoint' => $endpoint,
+        'tickEndpoint' => str_replace('/package', '/tick', $endpoint),
+        'lastReport' => cmsPkgReadJson('seo-package-report.json', null)]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
