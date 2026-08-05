@@ -282,7 +282,7 @@ body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 /* RGBA color control: the native swatch sits on a checkerboard and is faded to
    its own alpha, so partial opacity is visible rather than just a number. */
 .fc-wrap{--fc-a:1;display:inline-flex;align-items:center;gap:7px;max-width:100%;vertical-align:middle}
-.fc-wrap .fc-sw{position:relative;display:inline-flex;flex:0 1 auto;min-width:0;border-radius:6px;overflow:hidden}
+.fc-wrap .fc-sw{position:relative;display:inline-flex;flex:0 0 auto;min-width:0;border-radius:6px;overflow:hidden}
 .fc-wrap .fc-sw::before{content:'';position:absolute;inset:0;border-radius:6px;pointer-events:none;
   background-image:linear-gradient(45deg,#c9c4ba 25%,transparent 25%,transparent 75%,#c9c4ba 75%),linear-gradient(45deg,#c9c4ba 25%,transparent 25%,transparent 75%,#c9c4ba 75%);
   background-size:8px 8px;background-position:0 0,4px 4px;background-color:#fff;opacity:0}
@@ -290,11 +290,19 @@ body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 .fc-wrap .fc-sw>input[type=color]{position:relative;z-index:1;opacity:var(--fc-a)}
 .fc-wrap .fc-range{flex:1 1 54px;min-width:44px;max-width:120px;height:16px;padding:0;margin:0;cursor:pointer;accent-color:var(--ember);background:transparent;border:none}
 .fc-wrap .fc-pct{flex:0 0 auto;font-size:10px;font-variant-numeric:tabular-nums;color:var(--muted);min-width:30px;text-align:right}
-/* Narrow panels (visual editor properties) stack the slider under the swatch. */
-.ve-props .fc-wrap{display:flex;flex-wrap:wrap;gap:5px 7px}
-.ve-props .fc-wrap .fc-sw{flex:1 1 100%}
-.ve-props .fc-wrap .fc-range{flex:1 1 auto;max-width:none}
-.brand-swatch+.fc-range,.fc-wrap .brand-swatch{width:56px!important}
+/* A picker declared width:100% (the accessibility panel, the visual editor's
+   property panel) is a full-width block, not a chip. Inside a content-sized flex
+   parent its percentage has nothing to resolve against and it collapses to a
+   sliver — so those keep their own row and the slider sits underneath. The mode
+   is picked from the input's own width in fcUpgrade(), not from which panel it
+   happens to live in, so a picker added anywhere later lands in the right one. */
+/* Grid, not wrapping flex: the swatch spans row 1 and the slider + percentage
+   land side by side on row 2 every time, instead of the readout wrapping onto a
+   third row once the swatch is wide. */
+.fc-wrap.fc-block{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;width:100%;gap:6px 8px}
+.fc-wrap.fc-block .fc-sw{grid-column:1/-1}
+.fc-wrap.fc-block .fc-sw>input[type=color]{width:100%}
+.fc-wrap.fc-block .fc-range{max-width:none;min-width:0;width:100%}
 .fg small{display:block;font-size:11px;color:var(--muted);margin-top:3px;line-height:1.5}
 .fr{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 /* CARDS */
@@ -2315,7 +2323,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.85';
+const CMS_VERSION='1.14.86';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2458,7 +2466,18 @@ function fcUpgrade(el){
   if(el.dataset.alpha==null||el.dataset.alpha==='') el.dataset.alpha='1';
   const wrap=document.createElement('span');
   wrap.className='fc-wrap';
-  // The picker keeps its own width/height styling; the wrapper only lays out.
+  // Two layouts, chosen from the picker's OWN declared width rather than from
+  // the panel it sits in. A fixed-px picker (44px form chip, 38px heading chip,
+  // the 56px brand swatch) stays on one row with the slider beside it. One that
+  // asked for width:100% is a full-width block: its percentage would have
+  // nothing to resolve against inside a content-sized flex parent and would
+  // collapse to a sliver, so it keeps its own row with the slider underneath.
+  const declared=(el.style&&el.style.width)||'';
+  let block=/%\s*$/.test(declared);
+  if(!declared){
+    try{ block=/%\s*$/.test(getComputedStyle(el).width||''); }catch(e){}
+  }
+  if(block) wrap.classList.add('fc-block');
   el.parentNode.insertBefore(wrap,el);
   const sw=document.createElement('span'); sw.className='fc-sw';
   wrap.appendChild(sw); sw.appendChild(el);
