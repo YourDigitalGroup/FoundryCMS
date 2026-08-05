@@ -279,6 +279,22 @@ body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 .fg input,.fg select,.fg textarea{width:100%;padding:8px 10px;border:1px solid var(--border);font-family:var(--font-sans);font-size:13px;color:var(--text);outline:none;background:var(--surface);transition:border-color .15s;border-radius:var(--r-sm)}
 .fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--ember)}.fg textarea{resize:vertical;min-height:60px}
 .brand-swatch{width:56px!important;height:56px;padding:3px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--surface);display:block}
+/* RGBA color control: the native swatch sits on a checkerboard and is faded to
+   its own alpha, so partial opacity is visible rather than just a number. */
+.fc-wrap{--fc-a:1;display:inline-flex;align-items:center;gap:7px;max-width:100%;vertical-align:middle}
+.fc-wrap .fc-sw{position:relative;display:inline-flex;flex:0 1 auto;min-width:0;border-radius:6px;overflow:hidden}
+.fc-wrap .fc-sw::before{content:'';position:absolute;inset:0;border-radius:6px;pointer-events:none;
+  background-image:linear-gradient(45deg,#c9c4ba 25%,transparent 25%,transparent 75%,#c9c4ba 75%),linear-gradient(45deg,#c9c4ba 25%,transparent 25%,transparent 75%,#c9c4ba 75%);
+  background-size:8px 8px;background-position:0 0,4px 4px;background-color:#fff;opacity:0}
+.fc-wrap.fc-has-alpha .fc-sw::before{opacity:1}
+.fc-wrap .fc-sw>input[type=color]{position:relative;z-index:1;opacity:var(--fc-a)}
+.fc-wrap .fc-range{flex:1 1 54px;min-width:44px;max-width:120px;height:16px;padding:0;margin:0;cursor:pointer;accent-color:var(--ember);background:transparent;border:none}
+.fc-wrap .fc-pct{flex:0 0 auto;font-size:10px;font-variant-numeric:tabular-nums;color:var(--muted);min-width:30px;text-align:right}
+/* Narrow panels (visual editor properties) stack the slider under the swatch. */
+.ve-props .fc-wrap{display:flex;flex-wrap:wrap;gap:5px 7px}
+.ve-props .fc-wrap .fc-sw{flex:1 1 100%}
+.ve-props .fc-wrap .fc-range{flex:1 1 auto;max-width:none}
+.brand-swatch+.fc-range,.fc-wrap .brand-swatch{width:56px!important}
 .fg small{display:block;font-size:11px;color:var(--muted);margin-top:3px;line-height:1.5}
 .fr{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 /* CARDS */
@@ -2299,7 +2315,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.84';
+const CMS_VERSION='1.14.85';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2327,6 +2343,163 @@ function decodeHtml(s){
 function capitalize(s){return s?s.charAt(0).toUpperCase()+s.slice(1):'';}
 function uid(){return Math.random().toString(36).slice(2,9);}
 function slugify(s){return String(s||'').toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'');}
+
+// ── RGBA COLOR CONTROLS ─────────────────────────────────────────────────────
+// <input type="color"> can only ever hold #rrggbb — the HTML spec gives it no
+// room for an alpha channel. So every color picker in the admin is upgraded, in
+// one pass, into a swatch + opacity slider, and the two are composed into a
+// single CSS color string.
+//
+// The composition rule matters for the ~16 live sites: at 100% opacity we emit
+// the SAME plain hex string this CMS has always emitted, so turning this on
+// changes no saved value and no rendered page. rgba() only ever appears once
+// somebody actually moves a slider.
+//
+// The upgrade is driven by a MutationObserver rather than by editing 16 markup
+// sites, because the admin re-renders these panels constantly (page settings,
+// heading rows, the visual editor's property panel) and any list of render hooks
+// would go stale the first time someone added a picker.
+function fcHex(v){                       // any CSS color -> '#rrggbb' ('' if unreadable)
+  return fcParse(v).hex;
+}
+function fcAlphaOf(v){                   // any CSS color -> 0..1
+  return fcParse(v).a;
+}
+// Parse hex3/hex4/hex6/hex8, rgb(), rgba(), 'transparent' and named colors.
+// Named colors go through the browser so we don't ship a color table.
+let _fcProbe=null;
+function fcParse(v){
+  let s=String(v==null?'':v).trim();
+  if(!s) return {hex:'',a:1};
+  if(/^transparent$/i.test(s)) return {hex:'#000000',a:0};
+  if(s[0]==='#'||/^[0-9a-f]{3,8}$/i.test(s)){
+    let h=s.replace(/^#/,'');
+    if(/^[0-9a-f]{3,4}$/i.test(h)) h=h.split('').map(c=>c+c).join('');
+    if(/^[0-9a-f]{6}$/i.test(h))   return {hex:'#'+h.toLowerCase(),a:1};
+    if(/^[0-9a-f]{8}$/i.test(h))   return {hex:'#'+h.slice(0,6).toLowerCase(),a:Math.round(parseInt(h.slice(6,8),16)/255*100)/100};
+    return {hex:'',a:1};
+  }
+  const m=s.match(/^rgba?\(\s*([0-9.]+%?)[\s,]+([0-9.]+%?)[\s,]+([0-9.]+%?)(?:[\s,\/]+([0-9.]+%?))?\s*\)$/i);
+  if(m){
+    const ch=x=>{ let n=parseFloat(x); if(/%$/.test(x)) n=n*255/100; return Math.max(0,Math.min(255,Math.round(n))); };
+    let a=1;
+    if(m[4]!=null){ a=parseFloat(m[4]); if(/%$/.test(m[4])) a/=100; a=Math.max(0,Math.min(1,isFinite(a)?a:1)); }
+    return {hex:'#'+[ch(m[1]),ch(m[2]),ch(m[3])].map(n=>n.toString(16).padStart(2,'0')).join(''),a:Math.round(a*100)/100};
+  }
+  // Named color (or anything else CSS understands) — let the browser resolve it.
+  try{
+    if(!_fcProbe){ _fcProbe=document.createElement('span'); _fcProbe.style.display='none'; document.body.appendChild(_fcProbe); }
+    _fcProbe.style.color=''; _fcProbe.style.color=s;
+    if(!_fcProbe.style.color) return {hex:'',a:1};
+    const resolved=getComputedStyle(_fcProbe).color;
+    if(resolved && !/^rgba?\(/i.test(s)) return fcParse(resolved);
+  }catch(e){}
+  return {hex:'',a:1};
+}
+// hex + alpha -> the string we store. Alpha 1 stays plain hex on purpose.
+function fcCompose(hex,a){
+  const h=fcParse(hex).hex; if(!h) return '';
+  a=(a==null||!isFinite(a))?1:Math.max(0,Math.min(1,+a));
+  if(a>=1) return h;
+  const n=parseInt(h.slice(1),16);
+  return 'rgba('+[(n>>16)&255,(n>>8)&255,n&255].join(',')+','+(Math.round(a*100)/100)+')';
+}
+// Anything that ends up inside a <style> block or an inline style goes through
+// here first: only a hex or an rgb/rgba triple can survive, so a color value can
+// never carry CSS of its own into a published page.
+function fcCssColor(v){
+  const p=fcParse(v); if(!p.hex) return '';
+  return fcCompose(p.hex,p.a);
+}
+// The control's current value, or '' when the caller's "unset" flag is clear.
+// Callers keep their own data-set / data-dirty gating; this only composes.
+function fcVal(idOrEl){
+  const el=(typeof idOrEl==='string')?document.getElementById(idOrEl):idOrEl;
+  if(!el) return '';
+  return fcCompose(el.value, fcCtlAlpha(el));
+}
+function fcCtlAlpha(el){
+  if(!el) return 1;
+  const raw=el.dataset?el.dataset.alpha:null;
+  const a=(raw==null||raw==='')?1:parseFloat(raw);
+  return isFinite(a)?Math.max(0,Math.min(1,a)):1;
+}
+// Load any CSS color into a control (hex into the swatch, alpha into the slider).
+function fcSet(idOrEl,css){
+  const el=(typeof idOrEl==='string')?document.getElementById(idOrEl):idOrEl;
+  if(!el) return;
+  const p=fcParse(css);
+  if(p.hex) el.value=p.hex;
+  fcSetAlpha(el,p.hex?p.a:1);
+}
+function fcSetAlpha(el,a){
+  if(!el) return;
+  a=(a==null||!isFinite(a))?1:Math.max(0,Math.min(1,+a));
+  el.dataset.alpha=String(a);
+  const sl=document.getElementById(el.id?el.id+'-fca':'');
+  if(sl){ sl.value=String(Math.round(a*100)); }
+  fcPaint(el);
+}
+// Show the real result (including transparency) behind the native swatch.
+function fcPaint(el){
+  const wrap=el&&el.closest?el.closest('.fc-wrap'):null;
+  if(!wrap) return;
+  const a=fcCtlAlpha(el);
+  wrap.style.setProperty('--fc-a',String(a));
+  const out=wrap.querySelector('.fc-pct');
+  if(out) out.textContent=Math.round(a*100)+'%';
+  wrap.classList.toggle('fc-has-alpha',a<1);
+}
+// Turn one native picker into a swatch + opacity slider. Idempotent.
+function fcUpgrade(el){
+  if(!el || el.dataset.fcUp==='1') return;
+  el.dataset.fcUp='1';
+  if(!el.id) el.id='fc-'+uid();
+  if(el.dataset.alpha==null||el.dataset.alpha==='') el.dataset.alpha='1';
+  const wrap=document.createElement('span');
+  wrap.className='fc-wrap';
+  // The picker keeps its own width/height styling; the wrapper only lays out.
+  el.parentNode.insertBefore(wrap,el);
+  const sw=document.createElement('span'); sw.className='fc-sw';
+  wrap.appendChild(sw); sw.appendChild(el);
+  const sl=document.createElement('input');
+  sl.type='range'; sl.min='0'; sl.max='100'; sl.step='1'; sl.className='fc-range';
+  sl.id=el.id+'-fca';
+  sl.value=String(Math.round(fcCtlAlpha(el)*100));
+  sl.title='Opacity';
+  sl.setAttribute('aria-label','Opacity');
+  const pct=document.createElement('span'); pct.className='fc-pct';
+  // Moving the slider re-fires the color input's OWN events, so every existing
+  // handler (data-set flags, veAutoApply, adaptifyPreview, veBorderField…) runs
+  // unchanged — no per-picker wiring anywhere.
+  const push=(fire)=>{
+    el.dataset.alpha=String(Math.max(0,Math.min(1,(+sl.value||0)/100)));
+    fcPaint(el);
+    if(fire){
+      el.dispatchEvent(new Event('input',{bubbles:true}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+  };
+  sl.addEventListener('input',()=>push(true));
+  sl.addEventListener('change',()=>push(true));
+  el.addEventListener('input',()=>fcPaint(el));
+  wrap.appendChild(sl); wrap.appendChild(pct);
+  fcPaint(el);
+}
+function fcUpgradeAll(root){
+  const scope=root||document;
+  if(scope.querySelectorAll) scope.querySelectorAll('input[type="color"]:not([data-fc-up])').forEach(fcUpgrade);
+  if(scope.matches && scope.matches('input[type="color"]:not([data-fc-up])')) fcUpgrade(scope);
+}
+// One observer covers every panel the admin renders, now and later.
+function fcWatch(){
+  fcUpgradeAll(document);
+  try{
+    new MutationObserver(muts=>{
+      for(const m of muts) for(const n of m.addedNodes){ if(n&&n.nodeType===1) fcUpgradeAll(n); }
+    }).observe(document.body,{childList:true,subtree:true});
+  }catch(e){}
+}
 function toast(msg,type=''){const t=document.getElementById('toast');if(!t)return;t.textContent=msg;t.className='on'+(type?' '+type:'');clearTimeout(t._t);t._t=setTimeout(()=>t.className='',2800);}
 function dzOver(e){e.preventDefault();e.currentTarget.classList.add('ov');}
 function dzLeave(){document.querySelectorAll('.dz').forEach(d=>d.classList.remove('ov'));}
@@ -2392,6 +2565,9 @@ function applySidebarPrefs(){
   const vEl=document.getElementById('sb-version'); if(vEl) vEl.textContent='v'+CMS_VERSION;
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',applySidebarPrefs); else applySidebarPrefs();
+// Give every color picker its opacity slider — static markup now, dynamically
+// rendered panels as they appear.
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fcWatch); else fcWatch();
 
 // ── GITHUB API ──────────────────────────────────────────────────
 // Architect secrets loaded from the server (encrypted at rest in the DB).
@@ -2955,7 +3131,8 @@ function showFormBuilder(f){
   set('fb-header-title',_curFormMeta.headerTitle);
   set('fb-header-desc',_curFormMeta.headerDesc);
   const style=_curFormMeta.style||{};
-  const setColor=(id,val,def)=>{const el=document.getElementById(id);if(!el)return; if(val){el.value=val;el.dataset.set='1';}else{el.value=def;el.dataset.set='0';}};
+  // rgba-aware: fcSet loads the hex into the swatch and the alpha into the slider.
+  const setColor=(id,val,def)=>{const el=document.getElementById(id);if(!el)return; if(val){fcSet(el,val);el.dataset.set='1';}else{fcSet(el,def);el.dataset.set='0';}};
   setColor('fb-style-bg',(style.bg&&style.bg!=='none')?style.bg:'','#ffffff');
   setColor('fb-style-button',style.button,'#c8531e');
   setColor('fb-style-label',style.label,'#1a1917');
@@ -3287,7 +3464,7 @@ async function saveForm(){
   const title=get('fb-title');
   if(!title){ toast('Form needs a title','err'); return; }
   // Visual style controls → a compact style object (only keys the user actually set).
-  const colorVal=id=>{const el=document.getElementById(id);return (el&&el.dataset.set==='1')?el.value:'';};
+  const colorVal=id=>{const el=document.getElementById(id);return (el&&el.dataset.set==='1')?fcVal(el):'';};
   const style={};
   const bg=colorVal('fb-style-bg'); if(bg) style.bg=bg;
   const radRaw=(document.getElementById('fb-style-radius')||{}).value;
@@ -6542,8 +6719,8 @@ async function designAutofill(){
     fillIf('si-linkedin',  grabSoc(/href=["'](https?:\/\/(?:www\.)?linkedin\.com\/[^"']+)/i));
     fillIf('si-youtube',   grabSoc(/href=["'](https?:\/\/(?:www\.)?youtube\.com\/[^"']+)/i));
   }
-  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP) pe.value=brandP;
-  const se=document.getElementById('si-brand-secondary'); if(se&&brandS) se.value=brandS;
+  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP) fcSet(pe,brandP);
+  const se=document.getElementById('si-brand-secondary'); if(se&&brandS) fcSet(se,brandS);
 }
 // Inject a managed :root override defining the brand-color variables, appended last
 // so it wins over any earlier definition. Idempotent (replaces its prior block).
@@ -6551,14 +6728,17 @@ function brandInjectIntoHtml(html, primary, secondary){
   const doc=new DOMParser().parseFromString(html,'text/html');
   const head=doc.head||doc.documentElement;
   doc.querySelectorAll('[data-fourge-brand]').forEach(el=>el.remove());
-  const decls=[]; if(primary)decls.push('--brand-color-primary:'+primary); if(secondary)decls.push('--brand-color-secondary:'+secondary);
+  // Sanitized: these land in a <style> block on a live page, and the pickers can
+  // now produce rgba() as well as hex.
+  const p1=fcCssColor(primary), p2=fcCssColor(secondary);
+  const decls=[]; if(p1)decls.push('--brand-color-primary:'+p1); if(p2)decls.push('--brand-color-secondary:'+p2);
   if(decls.length){ const st=doc.createElement('style'); st.id='fourge-brand'; st.setAttribute('data-fourge-brand',''); st.textContent=':root{'+decls.join(';')+'}'; head.appendChild(st); }
   return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
 }
 async function brandApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
-  const primary=document.getElementById('si-brand-primary')?.value||'';
-  const secondary=document.getElementById('si-brand-secondary')?.value||'';
+  const primary=fcVal('si-brand-primary');
+  const secondary=fcVal('si-brand-secondary');
   if(!_site.brand) _site.brand={}; _site.brand.primary=primary; _site.brand.secondary=secondary;
   try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
   if(!Object.keys(_pages).length) await loadPages();
@@ -7334,7 +7514,7 @@ async function saveSiteInfo(){
   _site.name=get('si-name');_site.tagline=get('si-tagline');_site.website=get('si-website');_site.phone=get('si-phone');_site.email=get('si-email');
   if(!_site.address)_site.address={};_site.address.street=get('si-street');_site.address.city=get('si-city');_site.address.state=get('si-state');_site.address.zip=get('si-zip');
   if(!_site.social)_site.social={};_site.social.facebook=get('si-facebook');_site.social.instagram=get('si-instagram');_site.social.linkedin=get('si-linkedin');_site.social.youtube=get('si-youtube');
-  if(!_site.brand)_site.brand={};_site.brand.primary=get('si-brand-primary');_site.brand.secondary=get('si-brand-secondary');
+  if(!_site.brand)_site.brand={};_site.brand.primary=fcVal('si-brand-primary');_site.brand.secondary=fcVal('si-brand-secondary');
   // Site-wide heading styles — only touch them if the controls are actually on screen.
   if(document.getElementById('sh-h1-size')){ const hs=siReadHeadings(); if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles; }
 
@@ -9094,7 +9274,7 @@ function psRenderHeadings(hs){
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-weight:700;font-size:12px;width:26px;text-transform:uppercase;color:var(--text)">${tag}</span>
         <input type="text" id="ps-${tag}-size" value="${esc(s.size||'')}" placeholder="size e.g. 2.5rem" style="flex:1;font-size:12px">
-        <input type="color" id="ps-${tag}-color" value="${hasColor?esc(s.color):'#000000'}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (blank stays on the design)" style="width:38px;height:30px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+        <input type="color" id="ps-${tag}-color" value="${hasColor?(fcHex(s.color)||'#000000'):'#000000'}" data-alpha="${hasColor?fcAlphaOf(s.color):1}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (blank stays on the design)" style="width:38px;height:30px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
         <select id="ps-${tag}-weight" style="font-size:12px">${wopt}</select>
@@ -9179,7 +9359,7 @@ function psReadHeadings(){
     const align=document.getElementById('ps-'+tag+'-align')?.value||'';
     const font=document.getElementById('ps-'+tag+'-font')?.value||'';
     const colEl=document.getElementById('ps-'+tag+'-color');
-    const color=(colEl&&colEl.dataset.set==='1')?colEl.value:'';
+    const color=(colEl&&colEl.dataset.set==='1')?fcVal(colEl):'';
     const o={}; if(size)o.size=size; if(weight)o.weight=weight; if(align)o.align=align; if(font)o.font=font; if(color)o.color=color;
     if(Object.keys(o).length) out[tag]=o;
   });
@@ -9209,7 +9389,7 @@ function siRenderHeadings(hs){
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-weight:700;font-size:12px;width:26px;text-transform:uppercase;color:var(--text)">${tag}</span>
         <input type="text" id="sh-${tag}-size" value="${esc(s.size||'')}" placeholder="size e.g. 2.5rem" style="flex:1;font-size:12px">
-        <input type="color" id="sh-${tag}-color" value="${hasColor?esc(s.color):'#000000'}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (leave unset to keep your design's color)" style="width:38px;height:30px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+        <input type="color" id="sh-${tag}-color" value="${hasColor?(fcHex(s.color)||'#000000'):'#000000'}" data-alpha="${hasColor?fcAlphaOf(s.color):1}" data-set="${hasColor?'1':'0'}" oninput="this.dataset.set='1'" title="Heading color (leave unset to keep your design's color)" style="width:38px;height:30px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
         <select id="sh-${tag}-weight" style="font-size:12px">${wopt}</select>
@@ -9234,7 +9414,7 @@ function siReadHeadings(){
     const align=document.getElementById('sh-'+tag+'-align')?.value||'';
     const font=document.getElementById('sh-'+tag+'-font')?.value||'';
     const colEl=document.getElementById('sh-'+tag+'-color');
-    const color=(colEl&&colEl.dataset.set==='1')?colEl.value:'';
+    const color=(colEl&&colEl.dataset.set==='1')?fcVal(colEl):'';
     const o={}; if(size)o.size=size; if(weight)o.weight=weight; if(align)o.align=align; if(font)o.font=font; if(color)o.color=color;
     if(Object.keys(o).length) out[tag]=o;
   });
@@ -9251,7 +9431,8 @@ function siHeadingCss(hs){
     if(s.size)   d.push('font-size:'+norm(s.size)+' !important');
     if(s.weight) d.push('font-weight:'+s.weight+' !important');
     if(s.align)  d.push('text-align:'+s.align+' !important');
-    if(s.color)  d.push('color:'+s.color+' !important');
+    const sc=fcCssColor(s.color);
+    if(sc)       d.push('color:'+sc+' !important');
     if(s.font)   d.push("font-family:'"+String(s.font).replace(/'/g,'')+"',sans-serif !important");
     if(d.length) out.push(tag+'{'+d.join(';')+'}');
   });
@@ -9357,7 +9538,8 @@ function pageHeadingCss(pg){
     if(s.size)   d.push('font-size:'+norm(s.size)+' !important');
     if(s.weight) d.push('font-weight:'+s.weight+' !important');
     if(s.align)  d.push('text-align:'+s.align+' !important');
-    if(s.color)  d.push('color:'+s.color+' !important');
+    const sc=fcCssColor(s.color);
+    if(sc)       d.push('color:'+sc+' !important');
     if(s.font)   d.push("font-family:'"+String(s.font).replace(/'/g,'')+"',sans-serif !important");
     if(d.length) out.push('body '+tag+'{'+d.join(';')+'}');
   });
@@ -9732,9 +9914,14 @@ return '(function(){\n'
 +'  function rgb2hex(c){\n'
 +'    if(!c)return"";\n'
 +'    if(c==="transparent"||c==="rgba(0, 0, 0, 0)")return"";\n'
-+'    var m=c.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);\n'
++'    var m=c.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([0-9.]+))?/);\n'
 +'    if(!m)return c;\n'
-+'    return "#"+[m[1],m[2],m[3]].map(function(n){return("0"+parseInt(n).toString(16)).slice(-2);}).join("");\n'
++'    var h="#"+[m[1],m[2],m[3]].map(function(n){return("0"+parseInt(n).toString(16)).slice(-2);}).join("");\n'
++'    // Report partial opacity as #rrggbbaa so the panel can show it on the\n'
++'    // opacity slider instead of silently rounding it up to solid.\n'
++'    var a=(m[4]==null)?1:parseFloat(m[4]);\n'
++'    if(isFinite(a)&&a<1) h+=("0"+Math.round(Math.max(0,a)*255).toString(16)).slice(-2);\n'
++'    return h;\n'
 +'  }\n'
 +'  function realSibling(el,dir){\n'
 +'    var s=dir<0?el.previousElementSibling:el.nextElementSibling;\n'
@@ -9991,8 +10178,22 @@ return '(function(){\n'
 +'  fmtBar.appendChild(sizeSel);\n'
 +'  var colorIn=document.createElement("input"); colorIn.type="color"; colorIn.title="Text color"; colorIn.value="#000000"; colorIn.style.cssText="width:30px;height:28px;padding:2px;background:transparent;border:none;border-radius:5px;cursor:pointer;margin-left:2px";\n'
 +'  colorIn.addEventListener("mousedown",function(){ fmtSaveRange(); });\n'
-+'  colorIn.addEventListener("input",function(){ fmtWrap("color",colorIn.value); });\n'
++'  // Opacity for the inline text color. This bar is inside the editor iframe,\n'
++'  // so it carries its own slider rather than the admin-side upgrade pass.\n'
++'  var colorAl=document.createElement("input"); colorAl.type="range"; colorAl.min="0"; colorAl.max="100"; colorAl.value="100"; colorAl.title="Text opacity";\n'
++'  colorAl.setAttribute("aria-label","Text opacity");\n'
++'  colorAl.style.cssText="width:52px;height:16px;margin-left:3px;padding:0;cursor:pointer;accent-color:#DB3516;background:transparent;border:none";\n'
++'  function fmtColorVal(){\n'
++'    var a=Math.max(0,Math.min(100,parseInt(colorAl.value,10)||0))/100;\n'
++'    if(a>=1) return colorIn.value;\n'
++'    var n=parseInt(colorIn.value.slice(1),16);\n'
++'    return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+(Math.round(a*100)/100)+")";\n'
++'  }\n'
++'  colorIn.addEventListener("input",function(){ fmtWrap("color",fmtColorVal()); });\n'
++'  colorAl.addEventListener("mousedown",function(){ fmtSaveRange(); });\n'
++'  colorAl.addEventListener("input",function(){ fmtWrap("color",fmtColorVal()); });\n'
 +'  fmtBar.appendChild(colorIn);\n'
++'  fmtBar.appendChild(colorAl);\n'
 +'  fmtBar.appendChild(fmtMkBtn("&#10005;","Remove formatting",function(){ if(!editing||!fmtRestore()) return; try{document.execCommand("removeFormat",false,null);}catch(e){} try{editing.focus();}catch(e){} fmtDirty(); },"font-size:11px;color:#b5ae9c"));\n'
 +'  function isTextEditable(el){ if(!el) return false; var t=el.tagName; if({IMG:1,PICTURE:1,VIDEO:1,BR:1,HR:1,INPUT:1,SELECT:1,TEXTAREA:1,SVG:1}[t]) return false; if(t==="I"&&/fa-/.test(el.className||"")) return false; return (el.textContent||"").replace(/\\s+/g,"").length>0; }\n'
 +'  function enterInlineEdit(el){ if(editing===el) return; if(editing) exitInlineEdit(); pushHistory(); editing=el; el.setAttribute("data-fe-editing","1"); el.contentEditable="true"; el.style.outline="2px solid #DB3516"; el.style.outlineOffset="2px"; ov.style.display="none"; badge.style.display="none"; hbox.style.display="none"; try{el.focus();}catch(e){} }\n'
@@ -10202,7 +10403,7 @@ function veShowProps(info){
           <input type="text" id="vp-radius" value="${esc(st.borderRadius||'')}" placeholder="e.g. 8px" onchange="veAutoApply()">
         </div>
         <div class="ve-field" style="margin:0"><label>Background</label>
-          <input type="color" id="vp-bgcolor" value="${st.bgColor||'#ffffff'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+          <input type="color" id="vp-bgcolor" value="${fcHex(st.bgColor)||'#ffffff'}" data-alpha="${st.bgColor?fcAlphaOf(st.bgColor):1}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
       </div>
       <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">
@@ -10223,7 +10424,7 @@ function veShowProps(info){
         </div>
       </div>
       <div class="ve-field" style="margin:8px 0 0"><label>Color</label>
-        <input type="color" id="vp-bc" value="${bd.color||'#000000'}" data-set="0" oninput="this.dataset.set='1'" onchange="veBorderField('borderColor',this)" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+        <input type="color" id="vp-bc" value="${fcHex(bd.color)||'#000000'}" data-alpha="${bd.color?fcAlphaOf(bd.color):1}" data-set="0" oninput="this.dataset.set='1'" onchange="veBorderField('borderColor',this)" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
       </div>
       ${vePaletteRow('vp-bc')}
     `, 'border') +
@@ -10301,7 +10502,7 @@ function veShowProps(info){
       ${veAccWrap('Text Style', `
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Color</label>
-          <input type="color" id="vp-color" value="${st.color||'#000000'}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+          <input type="color" id="vp-color" value="${fcHex(st.color)||'#000000'}" data-alpha="${st.color?fcAlphaOf(st.color):1}" data-dirty="0" oninput="this.dataset.dirty='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
         <div class="ve-field" style="margin:0"><label>Font Size</label>
           <input type="text" id="vp-size" value="${esc(st.fontSize||'')}" placeholder="e.g. 18px" onchange="veAutoApply()">
@@ -10336,10 +10537,10 @@ function veShowProps(info){
       ${(isLink||info.isBtn)? veAccWrap('Hover', `
       <div class="ve-style-row">
         <div class="ve-field" style="margin:0"><label>Background</label>
-          <input type="color" id="vp-hover-bg" value="${st.bgColor||'#000000'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+          <input type="color" id="vp-hover-bg" value="${fcHex(st.bgColor)||'#000000'}" data-alpha="${st.bgColor?fcAlphaOf(st.bgColor):1}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
         <div class="ve-field" style="margin:0"><label>Text</label>
-          <input type="color" id="vp-hover-color" value="${st.color||'#ffffff'}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
+          <input type="color" id="vp-hover-color" value="${fcHex(st.color)||'#ffffff'}" data-alpha="${st.color?fcAlphaOf(st.color):1}" data-set="0" oninput="this.dataset.set='1'" onchange="veAutoApply()" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">
         </div>
       </div>
       ${vePaletteRow('vp-hover-bg')}
@@ -10406,7 +10607,7 @@ function veBorderField(field, el){
   if(!_veCurSel) return;
   const ifrm=document.getElementById('visual-iframe');
   if(!ifrm||!ifrm.contentWindow) return;
-  let v = (el&&el.value!==undefined) ? el.value : el;
+  let v = (el&&el.value!==undefined) ? ((el.type==='color')?fcVal(el):el.value) : el;
   if(field==='borderWidth') v=veNormalizeSize(v);
   ifrm.contentWindow.postMessage({type:'ve-update', fid:_veCurSel.fid, field, value:v},'*');
   document.getElementById('ve-unsaved')?.classList.add('on');
@@ -10508,7 +10709,7 @@ function vePaletteRow(inputId,noFill){
 }
 function vePickSwatch(inputId,hex){
   const el=document.getElementById(inputId); if(!el) return;
-  el.value=hex; el.dataset.dirty='1'; el.dataset.set='1';
+  el.value=fcHex(hex)||hex; el.dataset.dirty='1'; el.dataset.set='1';   // keeps the current opacity
   veAutoApply();
 }
 
@@ -10649,7 +10850,7 @@ function veSendStyles(send){
   if(mar!==undefined && mar!==(o.margin||''))  send({field:'margin',value:mar});
   if(rad!==undefined && rad!==(o.borderRadius||'')) send({field:'radius',value:rad});
   const bgc=document.getElementById('vp-bgcolor');
-  if(bgc && bgc.dataset.dirty==='1') send({field:'bgColor',value:bgc.value});
+  if(bgc && bgc.dataset.dirty==='1') send({field:'bgColor',value:fcVal(bgc)});
 }
 
 function veAddListItem(){
@@ -10718,12 +10919,12 @@ function veApplyText(){
   const anchorEl=document.getElementById('vp-anchor');
   if(anchorEl){ const av=anchorEl.value.trim(); if(av!==(_veCurSel.anchorId||'')) send({field:'anchorId',value:av}); }
   const colorEl=document.getElementById('vp-color');
-  if(colorEl && colorEl.dataset.dirty==='1') send({field:'color',value:colorEl.value});
+  if(colorEl && colorEl.dataset.dirty==='1') send({field:'color',value:fcVal(colorEl)});
   if(size && size!==(o.fontSize||'')) send({field:'size',value:size});
   if(weight && weight!==String(o.fontWeight||'')) send({field:'weight',value:weight});
   if(_veAlignSel && _veAlignSel!==(o.textAlign||'')) send({field:'align',value:_veAlignSel});
-  const hb=document.getElementById('vp-hover-bg'); if(hb && hb.dataset.set==='1') send({field:'hoverBg',value:hb.value});
-  const hc=document.getElementById('vp-hover-color'); if(hc && hc.dataset.set==='1') send({field:'hoverColor',value:hc.value});
+  const hb=document.getElementById('vp-hover-bg'); if(hb && hb.dataset.set==='1') send({field:'hoverBg',value:fcVal(hb)});
+  const hc=document.getElementById('vp-hover-color'); if(hc && hc.dataset.set==='1') send({field:'hoverColor',value:fcVal(hc)});
   veSendStyles(send);
   _veAlignSel=null;
   document.getElementById('ve-unsaved')?.classList.add('on');
@@ -12192,15 +12393,15 @@ async function initAdaptify(){
   }
   const en=document.getElementById('ada-enabled');    if(en) en.checked = cfg.enabled!==false;
   const po=document.getElementById('ada-position');   if(po) po.value   = cfg.position||'bottom-right';
-  const co=document.getElementById('ada-color');      if(co) co.value   = normHex(cfg.color)||'#C8531E';
-  const ic=document.getElementById('ada-icon-color'); if(ic) ic.value   = normHex(cfg.iconColor)||'#FFFFFF';
+  const co=document.getElementById('ada-color');      if(co) fcSet(co,fcCssColor(cfg.color)||'#C8531E');
+  const ic=document.getElementById('ada-icon-color'); if(ic) fcSet(ic,fcCssColor(cfg.iconColor)||'#FFFFFF');
   adaptifyPreview();
 }
 
 function adaptifyPreview(){
   const wrap=document.getElementById('ada-preview'); if(!wrap) return;
-  const color=document.getElementById('ada-color')?.value||'#C8531E';
-  const icon =document.getElementById('ada-icon-color')?.value||'#FFFFFF';
+  const color=fcVal('ada-color')||'#C8531E';
+  const icon =fcVal('ada-icon-color')||'#FFFFFF';
   wrap.innerHTML='<span style="display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:50%;background:'+esc(color)+';box-shadow:0 4px 16px rgba(0,0,0,.28)">'+adaIconSvg(icon)+'</span>';
 }
 
@@ -12208,8 +12409,8 @@ function readAdaptifyForm(){
   return {
     enabled:  !!document.getElementById('ada-enabled')?.checked,
     position: document.getElementById('ada-position')?.value||'bottom-right',
-    color:    document.getElementById('ada-color')?.value||'#C8531E',
-    iconColor:document.getElementById('ada-icon-color')?.value||'#FFFFFF',
+    color:    fcVal('ada-color')||'#C8531E',
+    iconColor:fcVal('ada-icon-color')||'#FFFFFF',
   };
 }
 
