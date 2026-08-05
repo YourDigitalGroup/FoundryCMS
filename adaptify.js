@@ -28,6 +28,28 @@
   function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS) || '{}'); } catch (e) { return {}; } }
   function savePrefs(p) { try { localStorage.setItem(PREFS, JSON.stringify(p)); } catch (e) {} }
   function esc(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
+  // The accent color can be an rgba() value now that the CMS picker has an
+  // opacity slider, so a faint tint of it can no longer be made by appending
+  // an alpha pair to a hex string ('rgba(...)14' is not a color). Parse the
+  // value and build the tint properly, whichever form it arrives in.
+  function tint(c, a) {
+    c = String(c == null ? '' : c).trim();
+    var m = c.match(/^#?([0-9a-f]{3,8})$/i), r, g, b, base = 1;
+    if (m) {
+      var h = m[1];
+      if (h.length === 3 || h.length === 4) h = h.split('').map(function (x) { return x + x; }).join('');
+      if (h.length === 8) { base = parseInt(h.slice(6, 8), 16) / 255; h = h.slice(0, 6); }
+      if (h.length !== 6) return 'rgba(0,0,0,' + a + ')';
+      r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16);
+    } else {
+      var p = c.match(/^rgba?\(\s*([0-9.]+)[\s,]+([0-9.]+)[\s,]+([0-9.]+)(?:[\s,\/]+([0-9.]+))?\s*\)$/i);
+      if (!p) return 'rgba(0,0,0,' + a + ')';
+      r = Math.round(+p[1]); g = Math.round(+p[2]); b = Math.round(+p[3]);
+      if (p[4] != null) base = parseFloat(p[4]);
+    }
+    if (!isFinite(base)) base = 1;
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + (Math.round(a * base * 1000) / 1000) + ')';
+  }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   ready(function () {
@@ -384,7 +406,7 @@
       + '.adaptify-tg{display:flex;align-items:center;gap:7px;text-align:left;border:1px solid #e3e0da!important;background:#faf9f7!important;border-radius:9px;padding:9px 10px;font-size:12px;font-weight:600;color:#333!important;cursor:pointer;min-height:40px}'
       + '.adaptify-tg:hover{border-color:#bbb!important}'
       + '.adaptify-tg-dot{width:9px;height:9px;border-radius:50%;background:#ccc!important;flex-shrink:0}'
-      + '.adaptify-tg.on{background:' + esc(cfg.color) + '14!important;border-color:' + esc(cfg.color) + '!important;color:#1a1a1a!important}'
+      + '.adaptify-tg.on{background:' + tint(cfg.color, 0.08) + '!important;border-color:' + esc(cfg.color) + '!important;color:#1a1a1a!important}'
       + '.adaptify-tg.on .adaptify-tg-dot{background:' + esc(cfg.color) + '!important}'
       + '.adaptify-step{border:1px solid #ececec!important;border-radius:9px;padding:8px 10px;margin-top:8px;background:#fcfcfb!important}'
       + '.adaptify-step-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;color:#333!important;margin-bottom:6px}'
