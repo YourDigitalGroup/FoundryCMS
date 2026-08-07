@@ -352,7 +352,7 @@ function scanHtml($root, $dir, $skipFiles, &$pages, $depth = 0) {
 function cmsListMedia() {
     $root      = PUBLIC_HTML;
     $imageExts = ['jpg','jpeg','png','webp','gif','svg','ico'];
-    $videoExts = ['mp4','mov','webm','ogg'];
+    $videoExts = ['mp4','m4v','mov','webm','ogv','ogg'];
     $docExts   = ['pdf','doc','docx','xls','xlsx','ppt','pptx'];
     $allExts   = array_merge($imageExts, $videoExts, $docExts);
     $files     = [];
@@ -513,19 +513,59 @@ function handleUpload() {
         if (!$cand || strpos($cand, PUBLIC_HTML) !== 0 || !is_dir($cand)) { echo json_encode(['error' => 'Destination folder not found']); return; }
         $destDir = $cand; $toRel = $to . '/';
     }
-    $allowed = ['html','htm','css','jsx','js','json','svg','jpg','jpeg','png','webp','gif','ico','woff','woff2','ttf','otf','pdf'];
-    $blocked  = ['php','php3','php4','phtml','phar','asp','aspx','cgi','pl','sh','exe','bat'];
+    // Every type the CMS actually works with: page/web assets, the images and
+    // documents the media library lists, and video for the video block.
+    //
+    // This list is now ENFORCED. It has existed since the first version of this
+    // function but nothing ever consulted it — only $blocked was checked, and a
+    // deny-list can't cover what it hasn't thought of. ".htaccess" passed it, and
+    // an .htaccess in the web root can turn on PHP execution for any extension;
+    // so could .phps/.pht/.php7/.module. An allow-list can't be outflanked that
+    // way. $blocked is kept as a second line of defence.
+    $allowed = [
+        'html','htm','css','jsx','js','json','svg','xml','txt','csv',            // web + data
+        'jpg','jpeg','png','webp','gif','ico','avif','bmp','tif','tiff',          // images
+        'mp4','m4v','mov','webm','ogv','ogg',                                     // video
+        'mp3','wav','m4a','aac',                                                  // audio
+        'woff','woff2','ttf','otf','eot',                                         // fonts
+        'pdf','doc','docx','xls','xlsx','ppt','pptx','zip',                       // documents
+    ];
+    $blocked  = ['php','php3','php4','php5','php7','php8','phtml','phps','pht','phar','htaccess','htpasswd','asp','aspx','jsp','cgi','pl','py','rb','sh','bash','exe','bat','cmd','com','dll','so'];
     $results  = [];
     $names    = (array)$_FILES['files']['name'];
     $tmps     = (array)$_FILES['files']['tmp_name'];
     $errors   = (array)$_FILES['files']['error'];
+    // A video is the first file most people upload that is big enough to hit the
+    // server's own limits, and "Upload error 1" is not a useful thing to read.
+    $errText = function ($code) {
+        switch ($code) {
+            case UPLOAD_ERR_INI_SIZE:
+            case UPLOAD_ERR_FORM_SIZE:
+                $lim = trim((string)ini_get('upload_max_filesize'));
+                return 'Bigger than this server accepts' . ($lim !== '' ? ' (limit ' . $lim . ')' : '')
+                     . ' — compress the video or raise upload_max_filesize and post_max_size in PHP.';
+            case UPLOAD_ERR_PARTIAL:   return 'The upload was cut off before it finished — try again.';
+            case UPLOAD_ERR_NO_FILE:   return 'No file was received.';
+            case UPLOAD_ERR_NO_TMP_DIR:
+            case UPLOAD_ERR_CANT_WRITE: return 'The server could not write the file to disk.';
+            default: return 'Upload failed (code ' . (int)$code . ').';
+        }
+    };
 
     for ($i = 0; $i < count($names); $i++) {
         $orig = $names[$i]; $tmp = $tmps[$i]; $err = $errors[$i];
-        if ($err !== UPLOAD_ERR_OK) { $results[] = ['name'=>$orig,'success'=>false,'error'=>'Upload error '.$err]; continue; }
+        if ($err !== UPLOAD_ERR_OK) { $results[] = ['name'=>$orig,'success'=>false,'error'=>$errText($err)]; continue; }
         $safe = preg_replace('/[^a-zA-Z0-9._\-]/', '', $orig);
+        // A name that is nothing but dots/extension ("...", ".htaccess" once the
+        // leading dot survives sanitising) has no basename to speak of.
+        if ($safe === '' || ltrim($safe, '.') === '' || strpos($safe, '.') === false) {
+            $results[] = ['name'=>$orig,'success'=>false,'error'=>'Needs a normal filename with an extension']; continue;
+        }
         $ext  = strtolower(pathinfo($safe, PATHINFO_EXTENSION));
-        if (in_array($ext, $blocked)) { $results[] = ['name'=>$orig,'success'=>false,'error'=>'File type blocked']; continue; }
+        if (in_array($ext, $blocked, true) || $safe[0] === '.') { $results[] = ['name'=>$orig,'success'=>false,'error'=>'File type blocked']; continue; }
+        if (!in_array($ext, $allowed, true)) {
+            $results[] = ['name'=>$orig,'success'=>false,'error'=>'.' . $ext . ' files are not accepted']; continue;
+        }
         $dest = $destDir . '/' . $safe;
         if (move_uploaded_file($tmp, $dest)) {
             $results[] = ['name'=>$safe,'success'=>true,'path'=>$toRel . $safe];
