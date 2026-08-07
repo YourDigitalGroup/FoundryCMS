@@ -2323,7 +2323,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.86';
+const CMS_VERSION='1.14.87';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3844,6 +3844,8 @@ function veFinalizePageHtml(html, pg){
   // Pages carrying a post-list block get the freshest list runtime on every
   // save (and lose it cleanly if the block was deleted in the editor).
   try{ html=ensurePostsRuntime(html); }catch(e){}
+  // Same for a video block's stylesheet.
+  try{ html=ensureVideoRuntime(html); }catch(e){}
   // Every saved page carries the CURRENT favicon tags — pages created after the
   // favicon was set used to miss out until someone re-ran "apply to all".
   try{ html=faviconInjectIntoHtml(html); }catch(e){}
@@ -4470,6 +4472,7 @@ function buildPageHtml(title,body,hero){
     +'.pg-wrap{max-width:820px;margin:0 auto;padding:48px 24px}.pg-hero{height:320px;background-size:cover;background-position:center;border-radius:14px;margin-bottom:32px}'
     +'.pg-wrap h1{font-size:40px;font-weight:800;letter-spacing:-.02em;margin-bottom:20px}.pg-wrap h2{font-size:30px;font-weight:700;margin:32px 0 12px}.pg-wrap h3{font-size:24px;font-weight:700;margin:24px 0 10px}'
     +'.pg-wrap p{margin-bottom:18px;font-size:17px}.pg-wrap ul,.pg-wrap ol{margin:0 0 18px 24px}.pg-wrap figure{margin:24px 0}.pg-wrap figure img{border-radius:12px}'
+    +'.pg-wrap figure video{width:100%;height:auto;display:block;border-radius:12px;background:#000}'
     +'.pg-wrap blockquote{border-left:4px solid var(--ember);padding-left:20px;margin:24px 0;font-style:italic;font-size:20px}'
     +'</style>\n</head>\n<body>\n<main class="pg-wrap">\n'+heroHtml+body+'\n</main>\n</body>\n</html>';
 }
@@ -4789,6 +4792,7 @@ const POST_BLOCK_TYPES=[
   {type:'paragraph', label:'Paragraph', icon:'¶'},
   {type:'heading',   label:'Heading',   icon:'H'},
   {type:'image',     label:'Image',     icon:'▦'},
+  {type:'video',     label:'Video',     icon:'▶'},
   {type:'quote',     label:'Quote',     icon:'"'},
   {type:'list',      label:'List',      icon:'≔'},
   {type:'embed',     label:'Embed',     icon:'▶'},
@@ -5111,6 +5115,16 @@ function renderOneBlock(b,i){
       +'<input type="text" value="'+esc(b.caption||'')+'" oninput="updateBlockField('+i+',\'caption\',this.value)" placeholder="Caption (optional)" style="width:100%;margin-bottom:6px">'
       +'<input type="text" value="'+esc(b.alt||'')+'" oninput="updateBlockField('+i+',\'alt\',this.value)" placeholder="Alt text (accessibility)" style="width:100%">'
       +'</div>';
+  }else if(b.type==='video'){
+    const u=b.url||'';
+    inner='<div class="pe-img-block">'
+      +(u?'<video src="'+esc(u)+'" preload="metadata" muted playsinline controls style="max-width:100%;border-radius:8px;display:block;margin-bottom:8px;background:#000"></video>':'')
+      +'<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-o btn-xs" onclick="pickBlockVideo('+i+')">'+(u?'Replace video':'Choose video')+'</button>'
+      +(u?'<button class="btn btn-o btn-xs" onclick="pickBlockPoster('+i+')">'+(b.poster?'Change cover':'Add cover image')+'</button>':'')
+      +'</div>'
+      +(b.poster?'<div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;font-size:11px;color:var(--muted)"><img src="'+esc(b.poster)+'" style="width:44px;height:30px;object-fit:cover;border-radius:4px">Cover image<button class="btn btn-o btn-xs" style="margin-left:auto" onclick="updateBlockField('+i+',\'poster\',\'\');renderPostBlocks()">Remove</button></div>':'')
+      +'<input type="text" value="'+esc(b.caption||'')+'" oninput="updateBlockField('+i+',\'caption\',this.value)" placeholder="Caption (optional)" style="width:100%">'
+      +'</div>';
   }else if(b.type==='quote'){
     inner='<div class="pe-quote-block">'
       +'<textarea oninput="updateBlockField('+i+',\'text\',this.value)" placeholder="Quote text" rows="2" style="width:100%;margin-bottom:6px">'+esc(b.text||'')+'</textarea>'
@@ -5186,6 +5200,18 @@ function pickBlockImage(i){
     renderPostBlocks();
   });
 }
+function pickBlockVideo(i){
+  openPostImgPicker(function(url){
+    updateBlockField(i,'url',url);
+    renderPostBlocks();
+  },'video');
+}
+function pickBlockPoster(i){
+  openPostImgPicker(function(url){
+    updateBlockField(i,'poster',url);
+    renderPostBlocks();
+  },'image');
+}
 
 // Rich text formatting for paragraph blocks
 function peFormat(cmd){
@@ -5197,8 +5223,8 @@ function peLink(){
 }
 
 // ── POST IMAGE PICKER (dedicated, callback-based) ─────────────────
-function openPostImgPicker(cb){
-  _postImgCb=cb;
+function openPostImgPicker(cb,kind){
+  _postImgCb=cb; _pipKind=kind||'image';
   if(!_media||!_media.length){ veLoadMediaLib().then(()=>renderPostImgPicker()); }
   let modal=document.getElementById('post-img-picker');
   if(!modal){
@@ -5208,22 +5234,25 @@ function openPostImgPicker(cb){
     modal.innerHTML='<div class="ve-img-picker-box" style="max-width:720px;width:100%;max-height:82vh;display:flex;flex-direction:column">'
       +'<div class="ve-img-picker-head"><h3>Media Library <span style="font-size:10.5px;font-weight:400;color:var(--muted)">engine v'+CMS_VERSION+'</span></h3>'
       +'<button class="ve-img-picker-close" onclick="document.getElementById(\'post-img-picker\').style.display=\'none\'">&times;</button></div>'
-      +'<div class="ve-img-picker-toolbar"><input class="ve-img-picker-search" id="pip-search" placeholder="Filter images…" oninput="renderPostImgPicker(this.value)">'
-      +'<label class="ve-img-picker-upload-btn"><input type="file" accept="image/*,.svg" style="display:none" onchange="postImgPickerUpload(this)"> Upload</label></div>'
+      +'<div class="ve-img-picker-toolbar"><input class="ve-img-picker-search" id="pip-search" placeholder="Filter media…" oninput="renderPostImgPicker(this.value)">'
+      +'<label class="ve-img-picker-upload-btn"><input type="file" id="pip-file" accept="image/*,video/*,.svg" style="display:none" onchange="postImgPickerUpload(this)"> Upload</label></div>'
       +'<div id="pip-grid" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-wrap:wrap;gap:10px;justify-content:space-evenly;align-content:flex-start;align-items:flex-start"></div>'
       +'</div>';
     document.body.appendChild(modal);
   }
+  const ps=modal.querySelector('#pip-search'); if(ps){ ps.placeholder='Filter '+(_pipKind==='video'?'videos':'images')+'…'; ps.value=''; }
   modal.style.display='flex';
   renderPostImgPicker();
 }
+let _pipKind='image';
 function renderPostImgPicker(filter=''){
   const grid=document.getElementById('pip-grid');
   if(!grid)return;
+  const want=_pipKind==='video'?fourgeIsVideo:fourgeIsImage;
   const items=(filter?_media.filter(m=>m.name.toLowerCase().includes(filter.toLowerCase())):_media)
-    .filter(m=>/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name));
+    .filter(m=>want(m.name));
   if(!items.length){
-    grid.innerHTML='<div class="ve-img-picker-empty"><strong>No images found</strong><span>Upload one with the button above.</span></div>';
+    grid.innerHTML='<div class="ve-img-picker-empty"><strong>No '+(_pipKind==='video'?'videos':'images')+' found</strong><span>Upload one with the button above'+(_pipKind==='video'?' — MP4 (H.264) plays everywhere':'')+'.</span></div>';
     return;
   }
   _pipItems=items; _pipShown=Math.min(80,items.length);
@@ -5235,7 +5264,7 @@ let _pipItems=[], _pipShown=0;
 function pipPaint(){
   const grid=document.getElementById('pip-grid'); if(!grid) return;
   grid.innerHTML=_pipItems.slice(0,_pipShown).map((m,i)=>'<div onclick="pipPick('+i+')" title="'+esc(m.name)+'" style="flex:0 0 140px;width:140px;max-width:140px;border-radius:8px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:var(--bg);transition:border-color .12s" onmouseover="this.style.borderColor=\'var(--ember)\'" onmouseout="this.style.borderColor=\'transparent\'">'
-    +vipThumb(100,0.75,vipImgTag(m.url))
+    +vipThumb(100,0.75,fourgeIsVideo(m.url)?vipVideoTag(m.url):vipImgTag(m.url))
     +'<div style="font-size:10px;color:var(--muted);padding:5px 7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div></div>').join('')
     +(_pipShown<_pipItems.length?'<button type="button" class="fd-btn-secondary" style="grid-column:1/-1;width:100%;flex:1 1 100%;padding:10px;font-size:12.5px" onclick="_pipShown+=80;pipPaint()">Show more — '+(_pipItems.length-_pipShown)+' more</button>':'');
   vipGuard(grid,100,140);
@@ -5318,6 +5347,16 @@ function blockToHtml(b){
   if(b.type==='image'){
     if(!b.url)return'';
     let h='<figure><img src="'+esc(b.url)+'" alt="'+esc(b.alt||'')+'" loading="lazy">';
+    if(b.caption) h+='<figcaption>'+esc(b.caption)+'</figcaption>';
+    return h+'</figure>';
+  }
+  if(b.type==='video'){
+    if(!b.url)return'';
+    // Same markup the page editor's video block writes, so a post promoted to a
+    // page (postToPage) keeps working and picks up the same stylesheet.
+    let h='<figure class="fourge-video" data-fourge-video><video src="'+esc(b.url)+'"'
+      +(b.poster?' poster="'+esc(b.poster)+'"':'')
+      +' controls playsinline preload="metadata"></video>';
     if(b.caption) h+='<figcaption>'+esc(b.caption)+'</figcaption>';
     return h+'</figure>';
   }
@@ -5413,6 +5452,7 @@ a:hover{text-decoration:underline}
 .single .content h4{font-size:20px;font-weight:700;margin:24px 0 10px}
 .single .content figure{margin:28px 0}
 .single .content figure img{width:100%;border-radius:12px}
+.single .content figure video{width:100%;height:auto;display:block;border-radius:12px;background:#000}
 .single .content figcaption{text-align:center;font-size:14px;color:var(--muted);margin-top:8px}
 .single .content blockquote{border-left:4px solid var(--ember);padding:8px 0 8px 24px;margin:28px 0;font-size:22px;font-style:italic;color:var(--text)}
 .single .content blockquote cite{display:block;font-size:15px;font-style:normal;color:var(--muted);margin-top:10px;font-weight:600}
@@ -5466,6 +5506,7 @@ function blockToHtml(b){
   if(b.type==='paragraph')return b.html?'<p>'+b.html+'</p>':'';
   if(b.type==='heading')return '<'+(b.level||'h2')+'>'+esc(b.text||'')+'</'+(b.level||'h2')+'>';
   if(b.type==='image'){if(!b.url)return'';var h='<figure><img src="'+esc(b.url)+'" alt="'+esc(b.alt||'')+'" loading="lazy">';if(b.caption)h+='<figcaption>'+esc(b.caption)+'</figcaption>';return h+'</figure>';}
+  if(b.type==='video'){if(!b.url)return'';var h='<figure class="fourge-video" data-fourge-video><video src="'+esc(b.url)+'"'+(b.poster?' poster="'+esc(b.poster)+'"':'')+' controls playsinline preload="metadata"></video>';if(b.caption)h+='<figcaption>'+esc(b.caption)+'</figcaption>';return h+'</figure>';}
   if(b.type==='quote'){var h='<blockquote><p>'+esc(b.text||'')+'</p>';if(b.cite)h+='<cite>'+esc(b.cite)+'</cite>';return h+'</blockquote>';}
   if(b.type==='list'){var tag=b.ordered?'ol':'ul';var items=(b.items||'').split('\\n').filter(function(x){return x.trim();}).map(function(x){return '<li>'+esc(x.trim())+'</li>';}).join('');return '<'+tag+'>'+items+'</'+tag+'>';}
   if(b.type==='embed'){if(!b.url)return'';var src=b.url;var yt=b.url.match(/(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([\\w-]+)/);var vm=b.url.match(/vimeo\\.com\\/(\\d+)/);if(yt)src='https://www.youtube.com/embed/'+yt[1];else if(vm)src='https://player.vimeo.com/video/'+vm[1];return '<div class="embed"><iframe src="'+esc(src)+'" frameborder="0" allowfullscreen></iframe></div>';}
@@ -5700,6 +5741,132 @@ function ensurePostsRuntime(html){
   html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
   html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
   return html;
+}
+// ── VIDEO ───────────────────────────────────────────────────────────────────
+// Self-hosted video: a file from the media library played by the browser's own
+// <video>, no third-party embed and nothing phoning home. YouTube/Vimeo links
+// are a different thing and already have the post editor's Embed block.
+const FOURGE_VIDEO_EXT=/\.(mp4|m4v|mov|webm|ogv|ogg)$/i;
+const FOURGE_IMAGE_EXT=/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i;
+// Test the path only: a URL with ?query or #hash still names its file type.
+function fourgeIsVideo(u){ return FOURGE_VIDEO_EXT.test(String(u||'').split(/[?#]/)[0]); }
+function fourgeIsImage(u){ return FOURGE_IMAGE_EXT.test(String(u||'').split(/[?#]/)[0]); }
+// .mov files carry video/quicktime, which Safari plays and Chrome often does
+// too (H.264 inside). Declaring the type lets a browser skip a file it can't
+// play instead of showing a broken player.
+function fourgeVideoMime(u){
+  const e=(String(u||'').split(/[?#]/)[0].match(/\.([a-z0-9]+)$/i)||[,''])[1].toLowerCase();
+  return {mp4:'video/mp4',m4v:'video/mp4',mov:'video/quicktime',webm:'video/webm',ogv:'video/ogg',ogg:'video/ogg'}[e]||'';
+}
+// Keep the video stylesheet correct on every save: re-stamped when the page
+// has a video block, removed cleanly when the last one is deleted. Without this
+// a page whose <style> got lost (a post promoted to a page, a hand-edited file)
+// would render the video at its intrinsic pixel size instead of filling its box.
+function ensureVideoRuntime(html){
+  html=String(html||'');
+  html=html.replace(/<style id="fourge-video-css">[\s\S]*?<\/style>\s*/gi,'');
+  if(!/data-fourge-video\b/.test(html) && !/class=["'][^"']*fourge-video/.test(html)) return html;
+  const css=videoRuntimeCss();
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
+}
+function videoRuntimeCss(){
+  return '<style id="fourge-video-css">'
+    +'.fourge-video{margin:0 0 26px;max-width:100%}'
+    +'.fourge-video video{display:block;width:100%;height:auto;border-radius:12px;background:#000}'
+    +'.fourge-video figcaption{font-size:14px;line-height:1.55;opacity:.72;margin-top:9px}'
+    +'</style>';
+}
+// The markup a video block saves as. Attributes are deliberately explicit rather
+// than inherited from a config object, because this string ends up in the
+// customer's page source and has to read like something a person would write.
+//
+// A muted+loop+autoplay video is the "moving background" case and must not show
+// controls; anything else gets controls. Browsers refuse to autoplay a video
+// with sound, so autoplay always implies muted — the option is not offered
+// separately, it just gets set.
+function videoSnippet(o){
+  o=o||{};
+  const src=String(o.src||'').trim(); if(!src) return '';
+  const auto=!!o.autoplay;
+  const attrs=[' src="'+esc(src)+'"'];
+  if(o.poster) attrs.push(' poster="'+esc(o.poster)+'"');
+  if(auto){ attrs.push(' autoplay',' muted',' loop',' playsinline'); }
+  else{
+    attrs.push(' controls');
+    if(o.loop) attrs.push(' loop');
+    if(o.muted) attrs.push(' muted');
+    attrs.push(' playsinline',' preload="metadata"');
+  }
+  const cap=String(o.caption||'').trim();
+  return '<figure class="fourge-video" data-fourge-video>'
+    +'<video'+attrs.join('')+'></video>'
+    +(cap?'<figcaption>'+esc(cap)+'</figcaption>':'')
+    +'</figure>';
+}
+// Insert a video block where the user is standing. Opens the library filtered to
+// video; picking a file completes the insert.
+function veInsertVideo(){
+  if(!_veCurSel?.fid){ toast('Click where the video should go first — a section or column works best','err'); return; }
+  veOpenMediaPicker({purpose:'insertVideo',kind:'video',fid:_veCurSel.fid});
+}
+function veInsertVideoAt(fid,src){
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow||!fid||!src) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,
+    html:videoSnippet({src}),css:videoRuntimeCss()},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Video added — select it to set a cover image or turn on autoplay, then Save','ok');
+}
+// "Turn a photo into a video": the selected <img> becomes a <video> in the same
+// spot, inheriting its classes, id, inline style and size so the layout does not
+// move, and keeping the photo as the poster frame — so the page looks unchanged
+// until someone presses play.
+function veImgToVideo(){
+  const sel=_veCurSel;
+  if(!sel?.fid || !(sel.isImg && sel.src)){
+    toast('Select a photo on the page first, then Use video instead','err'); return;
+  }
+  veOpenMediaPicker({purpose:'imgToVideo',kind:'video',fid:sel.fid,poster:sel.src});
+}
+function veImgToVideoAt(fid,src,poster){
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow||!fid||!src) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'imgToVideo',fid,value:src,
+    poster:poster||'',mime:fourgeVideoMime(src),css:videoRuntimeCss()},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Photo replaced with the video — the photo stays as its cover frame. Undo restores it until you leave the page.','ok');
+}
+// Cover image (poster) for a selected video.
+function veChooseVideoPoster(){
+  if(!_veCurSel?.fid){ toast('Select the video first','err'); return; }
+  veOpenMediaPicker({purpose:'poster',kind:'image',fid:_veCurSel.fid});
+}
+function veClearVideoPoster(){
+  if(!_veCurSel?.fid) return;
+  const ifrm=document.getElementById('visual-iframe');
+  ifrm?.contentWindow?.postMessage({type:'ve-update',fid:_veCurSel.fid,field:'poster',value:''},'*');
+  const el=document.getElementById('vp-poster'); if(el) el.value='';
+  document.getElementById('ve-unsaved')?.classList.add('on');
+}
+// Playback options → attributes. Autoplay owns muted/controls (see videoSnippet).
+function veVideoFlags(){
+  if(!_veCurSel?.fid) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm?.contentWindow) return;
+  const on=id=>!!document.getElementById(id)?.checked;
+  const auto=on('vp-vid-autoplay');
+  ifrm.contentWindow.postMessage({type:'ve-update',fid:_veCurSel.fid,field:'videoFlags',
+    value:{autoplay:auto,controls:auto?false:on('vp-vid-controls'),
+           loop:auto?true:on('vp-vid-loop'),muted:auto?true:on('vp-vid-muted')}},'*');
+  // Reflect the forced state so the panel never claims something untrue.
+  if(auto){
+    const m=document.getElementById('vp-vid-muted'); if(m){ m.checked=true; m.disabled=true; }
+    const c=document.getElementById('vp-vid-controls'); if(c){ c.checked=false; c.disabled=true; }
+    const l=document.getElementById('vp-vid-loop'); if(l){ l.checked=true; l.disabled=true; }
+  }else{
+    ['vp-vid-muted','vp-vid-controls','vp-vid-loop'].forEach(id=>{ const e=document.getElementById(id); if(e) e.disabled=false; });
+  }
+  document.getElementById('ve-unsaved')?.classList.add('on');
 }
 // The insertable block. The preview card inside is what you see in the editor;
 // on the live page the runtime replaces the container's contents with the real
@@ -9949,6 +10116,14 @@ return '(function(){\n'
 +'  }\n'
 // Robust image setter: handles <img srcset>, lazy-load attrs, <picture>, <video>
 +'  function setImage(el,val){\n'
++'    if(el.tagName==="VIDEO"){\n'
++'      // A <source> child beats the src attribute, so a leftover one would\n'
++'      // silently keep playing the old file. Drop them and use src.\n'
++'      el.querySelectorAll("source").forEach(function(sc){sc.remove();});\n'
++'      el.setAttribute("src",val); el.src=val;\n'
++'      try{el.load();}catch(e){}\n'
++'      return;\n'
++'    }\n'
 +'    if(el.tagName==="PICTURE"){\n'
 +'      el.querySelectorAll("source").forEach(function(s){s.remove();});\n'
 +'      var im=el.querySelector("img");\n'
@@ -9996,6 +10171,12 @@ return '(function(){\n'
 +'      isFaq:isFaq, faqQuestion:faqQ, faqAnswer:faqA, faqCount:faqCount,\n'
 +'      imgW:imgW, imgH:imgH, imgNatW:imgNatW, imgNatH:imgNatH,\n'
 +'      bgImage:(function(){try{var b=cs.backgroundImage;if(b&&b!=="none"){var m=b.match(/url\\(([^)]+)\\)/);if(m)return m[1].replace(/["]/g,"").replace(/[\\x27]/g,"");return "";}return "";}catch(e){return "";}}()),\n'
++'      isVideo:(t.tagName==="VIDEO"),\n'
++'      video:(t.tagName==="VIDEO"?{poster:t.getAttribute("poster")||"",\n'
++'        autoplay:t.hasAttribute("autoplay"),controls:t.hasAttribute("controls"),\n'
++'        loop:t.hasAttribute("loop"),muted:t.hasAttribute("muted"),\n'
++'        dur:(function(){try{return isFinite(t.duration)?Math.round(t.duration):0;}catch(e){return 0;}}()),\n'
++'        natW:t.videoWidth||0,natH:t.videoHeight||0}:null),\n'
 +'      inHeader:inH, inFooter:inF, inNav:inN,\n'
 +'      isFlex:(function(){try{var dsp=cs.display;return dsp==="flex"||dsp==="inline-flex";}catch(e){return false;}}()), flexDir:(function(){try{return cs.flexDirection||"";}catch(e){return "";}}()),\n'
 +'      isBtn:(t.tagName==="BUTTON")||(typeof t.className==="string"&&/(^|\\s)(btn|button)/i.test(t.className))||(t.getAttribute&&t.getAttribute("role")==="button"),\n'
@@ -10103,6 +10284,35 @@ return '(function(){\n'
 // Replace the selected element with a block of real page markup — used to swap
 // an old hand-made posts section for the live post archive. History was pushed
 // above, so Undo restores the original section.
++'      }else if(m.action==="imgToVideo"){\n'
++'        // Swap an <img> for a <video> IN PLACE. The point is that the page\n'
++'        // does not move: the video inherits the image\'s classes, id, inline\n'
++'        // style, width/height and alignment, and the photo becomes the poster\n'
++'        // frame — so the layout is identical until someone presses play.\n'
++'        if(m.css){ var vcw=document.createElement("div"); vcw.innerHTML=String(m.css); var vcs=vcw.firstElementChild; if(vcs && !(vcs.id && document.getElementById(vcs.id))) (document.head||document.documentElement).appendChild(vcs); }\n'
++'        var tgt=el;\n'
++'        if(tgt.tagName!=="IMG"&&tgt.tagName!=="PICTURE"){ window.parent.postMessage({type:"ve-toast",kind:"err",msg:"That is not a photo — select the image itself."},"*"); return; }\n'
++'        var vid=document.createElement("video");\n'
++'        vid.setAttribute("src",String(m.value||""));\n'
++'        var ps=String(m.poster||"")||tgt.getAttribute("src")||"";\n'
++'        if(ps) vid.setAttribute("poster",ps);\n'
++'        vid.setAttribute("controls",""); vid.setAttribute("playsinline",""); vid.setAttribute("preload","metadata");\n'
++'        // Carry over everything that positions or sizes the element. src/alt\n'
++'        // and the lazy-loading attributes are image-only and are dropped.\n'
++'        var SKIP={src:1,srcset:1,alt:1,loading:1,decoding:1,sizes:1,"data-src":1,"data-srcset":1,"data-lazy-src":1,"data-lazy-srcset":1,"data-original":1};\n'
++'        [].slice.call(tgt.attributes).forEach(function(a){ if(!SKIP[a.name]) { try{ vid.setAttribute(a.name,a.value); }catch(e){} } });\n'
++'        // A rendered width/height that only existed as an HTML attribute must\n'
++'        // become real CSS, or the video will render at its own intrinsic size.\n'
++'        try{\n'
++'          var rect=tgt.getBoundingClientRect(), cs=window.getComputedStyle(tgt);\n'
++'          if(!vid.style.width  && rect.width)  vid.style.width=Math.round(rect.width)+"px";\n'
++'          if(!vid.style.height && rect.height && cs.height!=="auto") vid.style.maxHeight=Math.round(rect.height)+"px";\n'
++'          if(cs.objectFit&&cs.objectFit!=="fill") vid.style.objectFit=cs.objectFit;\n'
++'          if(cs.display==="block"&&!vid.style.display) vid.style.display="block";\n'
++'        }catch(e){}\n'
++'        tgt.parentElement.replaceChild(vid,tgt);\n'
++'        selectEl(vid);\n'
++'        try{ vid.scrollIntoView({block:"center",behavior:"smooth"}); }catch(e11){}\n'
 +'      }else if(m.action==="replaceHtml"){\n'
 +'        if(m.css){ var rcw=document.createElement("div"); rcw.innerHTML=String(m.css); var rcs=rcw.firstElementChild; if(rcs && !(rcs.id && document.getElementById(rcs.id))) (document.head||document.documentElement).appendChild(rcs); }\n'
 +'        var rwrap=document.createElement("div");\n'
@@ -10124,6 +10334,19 @@ return '(function(){\n'
 +'    if(m.field==="text"&&el2.tagName!=="IMG") el2.innerText=m.value;\n'
 +'    if(m.field==="html"&&el2.tagName!=="IMG") el2.innerHTML=m.value;\n'
 +'    if(m.field==="src") setImage(el2,m.value);\n'
++'    if(m.field==="poster"){ if(m.value) el2.setAttribute("poster",m.value); else el2.removeAttribute("poster"); }\n'
++'    if(m.field==="videoFlags"&&el2.tagName==="VIDEO"){\n'
++'      var vf=m.value||{};\n'
++'      // autoplay only ever works muted, and a self-playing video with a\n'
++'      // control bar over it is nobody\'s intent — the admin side sends the\n'
++'      // resolved combination, this just applies it.\n'
++'      ["autoplay","controls","loop","muted"].forEach(function(a){\n'
++'        if(vf[a]){ el2.setAttribute(a,""); el2[a]=true; } else { el2.removeAttribute(a); el2[a]=false; }\n'
++'      });\n'
++'      if(vf.autoplay){ el2.setAttribute("playsinline",""); el2.removeAttribute("preload"); }\n'
++'      else { el2.setAttribute("playsinline",""); el2.setAttribute("preload","metadata"); }\n'
++'      try{ el2.pause(); }catch(e){}\n'
++'    }\n'
 +'    if(m.field==="bgImage"){\n'
 +'      ["data-bg","data-background","data-bg-url"].forEach(function(a){el2.removeAttribute(a);});\n'
 +'      if(m.value){el2.style.setProperty("background-image","url("+m.value+")","important");}else{el2.style.removeProperty("background-image");}\n'
@@ -10311,6 +10534,7 @@ window.addEventListener('message',function(e){
   if(e.data.type==='ve-select'&&e.data.data) veShowProps(e.data.data);
   if(e.data.type==='ve-deselect') veDeselect();
   if(e.data.type==='ve-inline-dirty') document.getElementById('ve-unsaved')?.classList.add('on');
+  if(e.data.type==='ve-toast'&&e.data.msg) toast(String(e.data.msg),e.data.kind||'');
   if(e.data.type==='ve-history'){
     const u=document.getElementById('ve-undo-btn'), r=document.getElementById('ve-redo-btn');
     if(u) u.disabled=!e.data.canUndo;
@@ -10481,7 +10705,37 @@ function veShowProps(info){
         ${info.anchorId?`<div class="desc" style="margin:6px 0 0;font-size:11px">Link to this spot: <code style="background:var(--surface-3);padding:1px 5px;border-radius:4px">#${esc(info.anchorId)}</code></div>`:''}
       </div>`, 'anchor');
 
-  if(isImg){
+  if(info.isVideo){
+    // A selected <video>: its file, its cover frame, and how it plays.
+    const v=info.video||{};
+    const vsrc=info.src||'';
+    const dur=v.dur?(Math.floor(v.dur/60)+':'+String(v.dur%60).padStart(2,'0')):'';
+    const cb=(id,label,on,hint,dis)=>`<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text);margin:0 0 9px;cursor:pointer">
+        <input type="checkbox" id="${id}"${on?' checked':''}${dis?' disabled':''} onchange="veVideoFlags()" style="width:auto;margin:2px 0 0;cursor:pointer;flex:0 0 auto">
+        <span>${label}${hint?`<br><span style="color:var(--muted);font-size:11px;line-height:1.45">${hint}</span>`:''}</span></label>`;
+    fields = `
+      ${v.poster?`<div class="ve-img-url-preview" onclick="veChooseVideoPoster()" title="Click to change the cover image" style="cursor:pointer;position:relative"><img src="${esc(v.poster)}" onerror="this.style.display='none'"><span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;pointer-events:none">Cover</span></div>`:''}
+      <div class="ve-field"><label>Video file</label>
+        <input type="url" id="vp-src" value="${esc(vsrc)}" placeholder="/videos/clip.mp4" onchange="veAutoApply()">
+      </div>
+      <button class="ve-apply-btn" style="margin:0 0 10px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veOpenMediaPicker({purpose:'src',kind:'video',fid:_veCurSel&&_veCurSel.fid})"><i class="fa-solid fa-film"></i> Choose a different video</button>
+      <div class="ve-field"><label>Cover image <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(the still frame shown before play)</span></label>
+        <input type="url" id="vp-poster" value="${esc(v.poster||'')}" placeholder="Blank = the browser picks a frame" onchange="veAutoApply()">
+      </div>
+      <div style="display:flex;gap:6px;margin:0 0 12px">
+        <button class="ve-apply-btn" style="margin:0;flex:1;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veChooseVideoPoster()">Choose cover</button>
+        ${v.poster?`<button class="ve-apply-btn" style="margin:0;flex:0 0 auto;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veClearVideoPoster()">Clear</button>`:''}
+      </div>
+      <div class="ve-field" style="margin-bottom:6px"><label>Playback</label></div>
+      ${cb('vp-vid-autoplay','Play automatically, no sound',!!v.autoplay,'For a moving background. Browsers only allow this with sound off, so it turns on Muted and Loop and hides the controls.')}
+      ${cb('vp-vid-controls','Show the play bar',v.autoplay?false:v.controls!==false,'',!!v.autoplay)}
+      ${cb('vp-vid-loop','Loop',v.autoplay?true:!!v.loop,'',!!v.autoplay)}
+      ${cb('vp-vid-muted','Start muted',v.autoplay?true:!!v.muted,'',!!v.autoplay)}
+      <div class="desc" style="margin:2px 0 10px">${(v.natW&&v.natH)?`Video is ${v.natW}×${v.natH}${dur?` · ${dur}`:''}. `:''}Set Width only (below) and leave Height blank to keep the shape.</div>
+      ${headerField}
+      ${spacingFields}
+      ${anchorField}`;
+  } else if(isImg){
     const imgSrc = info.src || info.bgImage || '';
     fields = `
       ${imgSrc?`<div class="ve-img-url-preview" onclick="veOpenImgPicker()" title="Click to open the Media Library" style="cursor:pointer;position:relative"><img src="${esc(imgSrc)}" onerror="this.style.display='none'"><span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;pointer-events:none">Change</span></div>`:''}
@@ -10499,7 +10753,8 @@ function veShowProps(info){
       ${headerField}
       ${spacingFields}
       ${anchorField}
-      <button class="ve-apply-btn" style="margin:8px 0 12px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veOpenImgPicker()">Browse Library</button>
+      <button class="ve-apply-btn" style="margin:8px 0 8px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veOpenImgPicker()">Browse Library</button>
+      ${info.src?`<button class="ve-apply-btn" style="margin:0 0 12px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veImgToVideo()" title="Swap this photo for a video. It keeps this photo as the cover frame and does not move anything on the page."><i class="fa-solid fa-film"></i> Use a video here instead</button>`:''}
       <div class="ve-img-upload-zone" onclick="document.getElementById('vp-img-file').click()" 
            style="border:1.5px dashed var(--border);border-radius:8px;padding:14px;text-align:center;cursor:pointer;color:var(--muted);font-size:12px;transition:border-color .15s"
            onmouseover="this.style.borderColor='var(--ember)'" onmouseout="this.style.borderColor='var(--border)'">
@@ -10589,7 +10844,8 @@ function veShowProps(info){
   _veOrigStyles = st;
   const iconBtn = '<button class="ve-apply-btn" style="margin:10px 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openIconPicker()"><i class="fa-solid fa-icons"></i> Insert an icon</button>';
   const formBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openFormPicker()"><i class="fa-solid fa-rectangle-list"></i> Insert a form</button>';
-  const postsBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertPostList()" title="A live list of your published posts, newest first — updates automatically whenever you publish"><i class="fa-solid fa-newspaper"></i> Insert post list</button>';
+  const postsBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertPostList()" title="A live list of your published posts, newest first — updates automatically whenever you publish"><i class="fa-solid fa-newspaper"></i> Insert post list</button>'
+    +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertVideo()" title="Add a video from your media library — played by the browser itself, no third-party embed"><i class="fa-solid fa-film"></i> Insert video</button>';
   const postsRepBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veReplaceWithPostList()" title="Swap the selected element (e.g. an old hand-made posts section) for the live post archive"><i class="fa-solid fa-right-left"></i> Replace with post archive</button>';
   body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + postsBtn + postsRepBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
@@ -11013,6 +11269,13 @@ function veApplyImg(){
   } else {
     if(src) send({field:'src',value:src});
     if(alt!==undefined && alt!==_veCurSel.alt) send({field:'alt',value:alt});
+  }
+  // A selected <video> reaches veApplyImg too (the bridge reports it as image-
+  // like). Its cover frame is the one extra field.
+  const posterEl=document.getElementById('vp-poster');
+  if(posterEl && _veCurSel.isVideo){
+    const np=posterEl.value.trim();
+    if(np!==((_veCurSel.video&&_veCurSel.video.poster)||'')) send({field:'poster',value:np});
   }
   const anchorEl=document.getElementById('vp-anchor');
   if(anchorEl){ const av=anchorEl.value.trim(); if(av!==(_veCurSel.anchorId||'')) send({field:'anchorId',value:av}); }
@@ -11760,19 +12023,45 @@ async function veSaveTemplateToAll(zone){
 let _imgPickerSel = null;
 let _imgPickerFid = null;   // element the picker was opened FOR (prevents mis-targeting)
 let _imgPickerIsBg = false;
+// What the picker is being used for this time round, so one library modal can
+// serve "change this image", "insert a video block", "swap this photo for a
+// video" and "pick a cover frame" without four near-identical modals.
+//   purpose: 'src' (default) | 'insertVideo' | 'imgToVideo' | 'poster'
+//   kind:    'image' | 'video' | 'all'  — which files are listed
+let _vipPurpose='src', _vipKind='image', _vipPoster='';
+function veOpenMediaPicker(o){
+  o=o||{};
+  _vipPurpose=o.purpose||'src';
+  _vipKind=o.kind||'image';
+  _vipPoster=o.poster||'';
+  return veOpenImgPicker(false,o.fid||null);
+}
+// Label the action button after whatever the picker is actually about to do.
+function vipApplyLabel(){
+  if(_vipPurpose==='insertVideo') return 'Insert video';
+  if(_vipPurpose==='imgToVideo')  return 'Replace photo';
+  if(_vipPurpose==='poster')      return 'Use as cover';
+  return _vipKind==='video' ? 'Use video' : 'Use image';
+}
+function vipKindLabel(){
+  return _vipKind==='video' ? 'videos' : _vipKind==='all' ? 'media' : 'images';
+}
 
 function veImgUrlPreview(url){
   const p = document.querySelector('.ve-img-url-preview img');
   if(p && url){ p.src=url; p.style.display='block'; }
 }
 
-async function veOpenImgPicker(forceBg){
+async function veOpenImgPicker(forceBg,fid){
+  // Called directly (Change image / Browse Library / background) rather than
+  // through veOpenMediaPicker → it is the plain "set this element's image" case.
+  if(fid===undefined){ _vipPurpose='src'; _vipKind='image'; _vipPoster=''; }
   // Lock the picker to the element selected RIGHT NOW — applying later
   // targets this element even if the selection changes in between
-  _imgPickerFid = _veCurSel?.fid || null;
+  _imgPickerFid = fid || _veCurSel?.fid || null;
   // forceBg lets the Background "Image" button set a background-image on any
   // element (not just ones that already use one).
-  _imgPickerIsBg = forceBg===true || !!(_veCurSel && _veCurSel.bgImage && !_veCurSel.src);
+  _imgPickerIsBg = _vipPurpose==='src' && (forceBg===true || !!(_veCurSel && _veCurSel.bgImage && !_veCurSel.src));
   // Ensure media is loaded
   if(!_media || !_media.length){ await veLoadMediaLib(); }
   veRenderImgPicker();
@@ -11788,7 +12077,7 @@ async function veOpenImgPicker(forceBg){
           <button class="ve-img-picker-close" onclick="document.getElementById('ve-img-picker-modal').style.display='none'">&times;</button>
         </div>
         <div class="ve-img-picker-toolbar">
-          <input class="ve-img-picker-search" id="vip-search" placeholder="Filter images…" oninput="veFilterImgPicker(this.value)">
+          <input class="ve-img-picker-search" id="vip-search" placeholder="Filter media…" oninput="veFilterImgPicker(this.value)">
           <label class="ve-img-picker-upload-btn">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             Upload
@@ -11799,7 +12088,7 @@ async function veOpenImgPicker(forceBg){
         <div class="ve-img-picker-foot">
           <span style="margin-right:auto;align-self:center;font-size:10.5px;color:var(--muted)">engine v${CMS_VERSION}</span>
           <button class="fd-btn-secondary" onclick="document.getElementById('ve-img-picker-modal').style.display='none'">Cancel</button>
-          <button class="ve-apply-btn" style="margin:0;padding:9px 20px" onclick="vePickerApply()">Use Image</button>
+          <button class="ve-apply-btn" id="vip-apply" style="margin:0;padding:9px 20px" onclick="vePickerApply()">Use Image</button>
         </div>
         <div class="ve-img-picker-resize" title="Drag to resize" onpointerdown="veImgPickerResizeStart(event)"></div>
       </div>`;
@@ -11816,6 +12105,10 @@ async function veOpenImgPicker(forceBg){
       else { box.style.width=Math.round(window.innerWidth*0.92)+'px'; box.style.height=Math.round(window.innerHeight*0.9)+'px'; }
     }
   }catch{}
+  const ab=modal.querySelector('#vip-apply'); if(ab) ab.textContent=vipApplyLabel();
+  const sb=modal.querySelector('#vip-search'); if(sb){ sb.placeholder='Filter '+vipKindLabel()+'…'; sb.value=''; }
+  const hd=modal.querySelector('.ve-img-picker-head h3');
+  if(hd) hd.textContent=_vipKind==='video'?'Media Library — videos':'Media Library';
   modal.style.display='flex';
   veRenderImgPicker();
 }
@@ -11911,13 +12204,22 @@ let _vipItems=[], _vipShown=0;
 function veRenderImgPicker(filter=''){
   const grid = document.getElementById('vip-grid');
   if(!grid) return;
+  const wanted = _vipKind==='video' ? fourgeIsVideo
+               : _vipKind==='all'   ? (u=>fourgeIsVideo(u)||fourgeIsImage(u))
+               : fourgeIsImage;
   _vipItems = (filter
     ? _media.filter(m=>m.name.toLowerCase().includes(filter.toLowerCase()))
     : _media
-  ).filter(m=>/\.(jpg|jpeg|png|webp|gif|svg|avif)$/i.test(m.name));
+  ).filter(m=>wanted(m.name));
   _vipShown = Math.min(VIP_PAGE, _vipItems.length);
   if(!_vipItems.length){
-    grid.innerHTML='<div class="ve-img-picker-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><strong>No images found</strong><span>Upload images using the button above, or run Site Foundry → Import to scan your server.</span></div>';
+    const vid=_vipKind==='video';
+    grid.innerHTML='<div class="ve-img-picker-empty">'
+      +(vid?'<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="2.5" y="5" width="14" height="14" rx="2"/><path d="M16.5 10l5-3v10l-5-3z"/></svg>'
+           :'<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>')
+      +'<strong>No '+(vid?'videos':'images')+' found</strong>'
+      +'<span>'+(vid?'Upload an MP4 or WebM with the button above. MP4 (H.264) plays everywhere; keep it under a few MB so pages stay fast.'
+                   :'Upload images using the button above, or run Site Foundry → Import to scan your server.')+'</span></div>';
     return;
   }
   vipPaint();
@@ -11931,7 +12233,7 @@ function vipPaint(){
     // each other), and forced track sizes proved un-overridable in practice.
     // Flex has no row tracks to attack; each item is a fixed 250px island.
     '<div class="ve-img-picker-item'+(_imgPickerSel===m.url?' sel':'')+'" data-vip="'+i+'" onclick="vipPick('+i+')" ondblclick="vipPick('+i+');vePickerApply()" title="'+esc(m.name)+'" style="flex:0 0 250px;width:250px;max-width:250px">'
-      +vipThumb(250,1,vipImgTag(m.url),'var(--surface-3)',250)
+      +vipThumb(250,1,fourgeIsVideo(m.url)?vipVideoTag(m.url):vipImgTag(m.url),'var(--surface-3)',250)
       +'<div class="ve-img-picker-item-name">'+esc(m.name)+'</div>'
     +'</div>').join('')
     +(_vipShown<_vipItems.length
@@ -11962,6 +12264,16 @@ function vipThumb(px,ratio,inner,bg,w){
 }
 function vipImgTag(url){
   return '<img class="vip-img" src="'+esc(url)+'" loading="lazy" decoding="async" style="position:absolute !important;top:0 !important;left:0 !important;width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;object-fit:contain !important" onerror="vipImgFail(this)">';
+}
+// A video tile shows a real frame from the file (preload=metadata is enough for
+// the first frame) plus a play badge, so videos are recognisable at a glance and
+// don't look like broken images. Muted and never autoplayed: a library of tiles
+// all fetching full video would be brutal.
+function vipVideoTag(url){
+  return '<video class="vip-img" src="'+esc(url)+'" preload="metadata" muted playsinline'
+    +' style="position:absolute !important;top:0 !important;left:0 !important;width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;object-fit:contain !important;background:#000"></video>'
+    +'<span style="position:absolute;bottom:7px;right:7px;display:flex;align-items:center;gap:4px;background:rgba(0,0,0,.66);color:#fff;font-size:10px;font-weight:700;padding:3px 7px;border-radius:5px;pointer-events:none;letter-spacing:.04em">'
+    +'<svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M1 0l8 5-8 5z"/></svg>VIDEO</span>';
 }
 // Measure every thumb and, if anything deviates, re-assert the geometry via
 // JS-set inline !important (outranks any AUTHOR stylesheet, hostile or not).
@@ -12133,6 +12445,9 @@ function vipPick(i){
   const m=_vipItems[i]; if(!m) return;
   _imgPickerSel=m.url;
   document.querySelectorAll('#vip-grid .ve-img-picker-item').forEach(el=>el.classList.toggle('sel', +el.getAttribute('data-vip')===i));
+  // Only the plain "change this element's image" purpose previews into vp-src —
+  // an insert or a photo→video swap must not rewrite the current element's URL.
+  if(_vipPurpose!=='src') return;
   const srcInput = document.getElementById('vp-src');
   if(srcInput){ srcInput.value=m.url; veImgUrlPreview(m.url); }
 }
@@ -12149,23 +12464,36 @@ function vePickerSelect(url, el){
 }
 
 function vePickerApply(){
-  if(!_imgPickerSel){ toast('Click an image to select it first','err'); return; }
+  if(!_imgPickerSel){ toast('Click a'+(_vipKind==='video'?' video':'n image')+' to select it first','err'); return; }
   const src = _imgPickerSel;
+  const fid = _imgPickerFid, purpose=_vipPurpose, poster=_vipPoster;
+  const close=()=>{ document.getElementById('ve-img-picker-modal').style.display='none';
+    _imgPickerSel=null; _imgPickerFid=null; _vipPurpose='src'; _vipKind='image'; _vipPoster=''; };
+
+  // The video paths own their own messaging and markup.
+  if(purpose==='insertVideo'){ close(); veInsertVideoAt(fid,src); return; }
+  if(purpose==='imgToVideo'){  close(); veImgToVideoAt(fid,src,poster); return; }
+  if(purpose==='poster'){
+    const pEl=document.getElementById('vp-poster'); if(pEl) pEl.value=src;
+    const ifr=document.getElementById('visual-iframe');
+    if(fid&&ifr){ ifr.contentWindow.postMessage({type:'ve-update',fid,field:'poster',value:src},'*');
+      document.getElementById('ve-unsaved')?.classList.add('on'); }
+    close(); toast('Cover image set — it shows until the video is played','ok'); return;
+  }
+
   const srcInput = document.getElementById('vp-src');
   if(srcInput) srcInput.value = src;
   veImgUrlPreview(src);
-  document.getElementById('ve-img-picker-modal').style.display='none';
-  _imgPickerSel = null;
+  close();
   // Apply directly to the element the picker was opened for
   const ifrm=document.getElementById('visual-iframe');
-  if(_imgPickerFid && ifrm){
-    ifrm.contentWindow.postMessage({type:'ve-update',fid:_imgPickerFid,field:_imgPickerIsBg?'bgImage':'src',value:src},'*');
+  if(fid && ifrm){
+    ifrm.contentWindow.postMessage({type:'ve-update',fid,field:_imgPickerIsBg?'bgImage':'src',value:src},'*');
     document.getElementById('ve-unsaved')?.classList.add('on');
-    toast('Image applied — click Save to publish','ok');
+    toast((fourgeIsVideo(src)?'Video':'Image')+' applied — click Save to publish','ok');
   } else {
-    toast('Image selected — click Apply to update the page element','ok');
+    toast('Selected — click Apply to update the page element','ok');
   }
-  _imgPickerFid = null;
 }
 
 async function vePickerUpload(file){
