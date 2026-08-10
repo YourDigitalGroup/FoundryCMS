@@ -2132,6 +2132,13 @@ textarea.fb-input{resize:vertical}
           </div>
 
           <div class="si-sec">
+            <h2>Key safety</h2>
+            <div class="desc" style="margin-bottom:12px">The key is encrypted on the server and never sent to a browser — but two things are worth proving rather than assuming: that the files holding it cannot be downloaded, and that the key would be useless to anyone who got it anyway.</div>
+            <button class="fd-btn-secondary" onclick="grCheckExposure()">Check that my secrets are not downloadable</button>
+            <div id="gr-exposure" style="margin-top:12px"></div>
+          </div>
+
+          <div class="si-sec">
             <h2>Saved reviews</h2>
             <div class="desc" style="margin-bottom:12px">Google's API hands back <strong>at most five reviews at a time</strong>, and picks which five. Every fetch is merged into this list rather than replacing it, so the collection grows as Google rotates them — and your show/hide choices are never overwritten.</div>
             <div id="gr-summary" style="margin-bottom:14px"></div>
@@ -2397,7 +2404,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.88';
+const CMS_VERSION='1.14.89';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6042,6 +6049,48 @@ function grUsePlace(id){
   const box=document.getElementById('gr-find-results'); if(box) box.innerHTML='';
   toast('Place ID filled in — press Save settings, then Fetch reviews','ok');
 }
+// Prove the key cannot be downloaded, rather than trusting that it cannot.
+// A deny rule in .htaccess does nothing on a host with AllowOverride None, and
+// that failure is silent — so the server fetches its own secret files over real
+// HTTP and reports what the web server actually sends back.
+async function grCheckExposure(){
+  const box=document.getElementById('gr-exposure');
+  if(box) box.innerHTML='<div style="font-size:12px;color:var(--muted)">Asking the web server for those files…</div>';
+  try{
+    const r=await apiCall('secret_exposure',{base:fourgeCanonicalBase()||''});
+    if(!r.ok){ if(box) box.innerHTML='<div style="font-size:12.5px;color:var(--muted)">'+esc(r.error||'Could not run the check.')+'</div>'; return; }
+    const ip=(r.serverIp&&(r.serverIp.outbound||r.serverIp.local))||'';
+    const rows=(r.findings||[]).map(f=>{
+      const bad=f.verdict==='exposed', unk=f.verdict==='unknown';
+      const col=bad?'var(--err,#e1483b)':unk?'var(--muted)':'var(--ok,#16a34a)';
+      const mark=bad?'✕':unk?'?':'✓';
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 11px;border:1px solid '+(bad?'var(--err,#e1483b)':'var(--border)')+';border-radius:9px;margin-bottom:6px">'
+        +'<span style="flex:0 0 auto;font-weight:800;color:'+col+'">'+mark+'</span>'
+        +'<div style="min-width:0"><div style="font-size:12.5px;font-weight:600">'+esc(f.label)+' <code style="font-weight:400;color:var(--muted);font-size:11.5px">'+esc(f.path)+'</code></div>'
+        +'<div style="font-size:11.5px;color:'+(bad?col:'var(--muted)')+';line-height:1.5">'+esc(f.detail||'')+'</div></div></div>';
+    }).join('');
+    const verdict = r.exposed
+      ? '<div style="padding:11px 13px;border:1px solid var(--err,#e1483b);border-radius:9px;background:rgba(225,72,59,.08);margin-bottom:10px;font-size:12.5px;line-height:1.6">'
+        +'<strong>'+r.exposed+' file'+(r.exposed===1?'':'s')+' can be downloaded from this site.</strong><br>'
+        +'Fourge just wrote the blocking rules into <code>admin/.htaccess</code>' + (r.guardInstalled?'':' (and could not write that file — check its permissions)') + '. '
+        +'If they are still downloadable after re-running this check, this host is ignoring <code>.htaccess</code> — ask the host to allow overrides for that folder, or move the database out of the web root by setting <code>db_path</code> in <code>admin/config.secret.php</code>.'
+        +'</div>'
+      : (r.unknown
+        ? '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Could not reach '+r.unknown+' of the files from the server itself, so this is inconclusive. It usually means outbound HTTPS is blocked, not that anything is exposed.</div>'
+        : '<div style="padding:11px 13px;border:1px solid var(--ok,#16a34a);border-radius:9px;background:rgba(22,163,74,.08);margin-bottom:10px;font-size:12.5px;line-height:1.6"><strong>None of them can be downloaded.</strong> Checked over real HTTP against '+esc(r.base||'')+', so this is what a stranger would get.</div>');
+    const restrict='<div style="margin-top:14px;padding:12px 13px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);font-size:12.5px;line-height:1.65">'
+      +'<strong>Make the key useless if it ever does get out</strong><br>'
+      +'In Google Cloud → APIs &amp; Services → Credentials, open this key and set:<br>'
+      +'• <strong>Application restrictions</strong> → IP addresses → '+(ip?'<code>'+esc(ip)+'</code> (this server)':'this server\u2019s IP address')+'<br>'
+      +'• <strong>API restrictions</strong> → Restrict key → <em>Places API (New)</em> only<br>'
+      +'Then a copy of the key cannot be used from anywhere else, and cannot be used for anything but reviews.'
+      +(ip?'':'<br><span style="color:var(--muted)">Fourge could not determine this server\u2019s outbound address — your host can tell you.</span>')
+      +'</div>';
+    if(box) box.innerHTML=verdict+rows+restrict;
+  }catch(e){
+    if(box) box.innerHTML='<div style="font-size:12.5px;color:var(--muted)">'+esc(e.message||String(e))+'</div>';
+  }
+}
 // ── the page block ──────────────────────────────────────────────────────────
 // A container the runtime fills in. What is inside it in the editor is a
 // placeholder card, exactly like the post-list block: the real reviews come from
@@ -7709,6 +7758,27 @@ async function postLaunchCheck(){
       else if(/^ProfessionalService$/i.test(gsch.orgType||''))
         add('Structured data','warn','Business type is the deprecated “ProfessionalService”','schema.org has retired it. For an agency client use MarketingAgency (SEO panel → Organization type), then Save & Publish.');
       else add('Structured data','ok','Business entity looks complete ('+(gsch.orgType||'LocalBusiness')+')','');
+    }
+
+    // 6b ── Server secrets: can anyone download the files that hold the keys?
+    // Checked over real HTTP from the server, because a deny rule in .htaccess
+    // does nothing on a host with AllowOverride None and fails silently.
+    prog('Checking that server secrets are not downloadable…');
+    try{
+      const sx=await apiCall('secret_exposure',{base:canonBase||base});
+      if(!sx||!sx.ok){
+        add('Server secrets','warn','Could not verify whether secret files are downloadable',(sx&&sx.error)||'The check did not run. Try it from Reviews → Key safety.');
+      }else if(sx.exposed){
+        const bad=(sx.findings||[]).filter(f=>f.verdict==='exposed').map(f=>f.path);
+        add('Server secrets','fail',sx.exposed+' server secret file(s) can be downloaded by anyone',
+          bad.join(', ')+'. These hold password hashes, API keys and the key those keys are encrypted with. Fourge has just written the blocking rules into admin/.htaccess — re-run this check. If they are still downloadable, the host is ignoring .htaccess: ask it to allow overrides for that folder, or move the database out of the web root with db_path in admin/config.secret.php.');
+      }else if(sx.unknown){
+        add('Server secrets','warn','Inconclusive — the server could not reach '+sx.unknown+' of its own files','Usually means outbound HTTPS is blocked from the server, not that anything is exposed. Verify by loading '+((sx.findings||[])[0]||{}).path+' in a private browser window; it should not download.');
+      }else{
+        add('Server secrets','ok','No server secret file is downloadable',(sx.findings||[]).length+' file(s) requested over HTTP against '+(sx.base||'')+' — this is what a stranger would get.');
+      }
+    }catch(e){
+      add('Server secrets','warn','Could not verify whether secret files are downloadable',(e&&e.message)||'The check did not run.');
     }
 
     // 7 ── Media: alt text + unused images

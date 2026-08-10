@@ -243,6 +243,7 @@ try {
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
+        case 'secret_exposure':    ob_end_clean(); fourgeApiSecretExposure($authUser, $body); break;
         case 'reviews_fetch':      ob_end_clean(); fourgeApiReviewsFetch($authUser, $body); break;
         case 'reviews_find_place': ob_end_clean(); fourgeApiReviewsFindPlace($authUser, $body); break;
         case 'seo_package':     ob_end_clean(); fourgeApiSeoPackage($authUser, $body); break;
@@ -2535,6 +2536,130 @@ function fourgeWriteIndexingHtaccess() {
     }
     return cmsPkgSpliceHtaccess('# BEGIN Fourge Indexing', '# END Fourge Indexing', implode("\n", $L));
 }
+// ── SECRETS ARE NOT DOWNLOADABLE ────────────────────────────────────────────
+// admin/.htaccess denies direct HTTP access to the SQLite database (password
+// hashes + encrypted secrets), config.secret.php (the key those secrets are
+// encrypted WITH), and the Google service-account files. That file ships in the
+// repo, but it is not in the updater's fetch list and never was self-healed, so
+// a site deployed before it existed has no protection at all — and nobody would
+// know, because nothing ever checked. This writes it, marker-spliced, on every
+// login, preserving whatever else the operator put in that file.
+function fourgeWriteAdminHtaccess() {
+    $htPath   = __DIR__ . '/.htaccess';
+    $existing = is_file($htPath) ? (string)file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Secret Files';
+    $end   = '# END Fourge Secret Files';
+    $rules = <<<'HT'
+# Never serve these over HTTP. PHP source is not emitted by the interpreter, but
+# the .db and .json files here are not PHP and WOULD be sent as downloads.
+<FilesMatch "(\.secret\.php|service-account\.json|\.ga-token\.json|\.db|\.db-wal|\.db-shm|\.sqlite|\.sqlite3)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+// Prove it, rather than assume it. A deny rule in .htaccess does NOTHING on a
+// host configured with AllowOverride None, and that failure is completely
+// silent. So ask the web server for the files over real HTTP, from the server
+// itself, and report what it actually sends back.
+function fourgeSecretExposure($baseUrl = '') {
+    $base = rtrim((string)$baseUrl, '/');
+    if ($base === '') {
+        // Fall back to this site's configured domain, then the request host.
+        $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+        $w = trim((string)($site['website'] ?? ''));
+        if ($w !== '' && !preg_match('~^https?://~i', $w)) $w = 'https://' . $w;
+        if ($w === '' && !empty($_SERVER['HTTP_HOST'])) {
+            $w = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
+        }
+        $base = rtrim($w, '/');
+    }
+    if ($base === '') return ['ok' => false, 'error' => 'No site URL to test against — set Design → Website URL.'];
+
+    // The database, wherever it actually lives, plus the key file and the
+    // service-account files. Only paths inside the web root can be requested.
+    $targets = [];
+    $dbAbs = '';
+    try { $dbAbs = (string)fourgeDbPath(); } catch (Throwable $e) {}
+    if ($dbAbs !== '') {
+        $real = realpath($dbAbs) ?: $dbAbs;
+        $rootReal = realpath(PUBLIC_HTML) ?: PUBLIC_HTML;
+        if (strpos($real, $rootReal) === 0) {
+            $targets['database'] = ltrim(str_replace('\\', '/', substr($real, strlen($rootReal))), '/');
+        }
+    }
+    $adminRel = ltrim(str_replace(realpath(PUBLIC_HTML) ?: PUBLIC_HTML, '', realpath(__DIR__) ?: __DIR__), '/\\');
+    $adminRel = $adminRel === '' ? 'admin' : str_replace('\\', '/', $adminRel);
+    $targets['encryption key'] = $adminRel . '/config.secret.php';
+    if (is_file(__DIR__ . '/service-account.json')) $targets['Google service account'] = $adminRel . '/service-account.json';
+    if (is_file(__DIR__ . '/protect.secret.php'))   $targets['page passwords']          = $adminRel . '/protect.secret.php';
+
+    $findings = []; $exposed = 0; $unknown = 0;
+    foreach ($targets as $label => $rel) {
+        if ($rel === '') continue;
+        $url = $base . '/' . $rel;
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_SSL_VERIFYPEER => true, CURLOPT_RANGE => '0-512',
+        ]);
+        $body = (string)curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err  = curl_error($ch);
+        curl_close($ch);
+        $row = ['label' => $label, 'path' => '/' . $rel, 'status' => $code];
+        if ($code === 0) { $row['verdict'] = 'unknown'; $row['detail'] = 'Could not reach the site from the server itself' . ($err ? ' (' . $err . ')' : '') . '.'; $unknown++; }
+        elseif ($code === 200 || $code === 206) {
+            // A PHP file that executed to nothing is fine; real bytes are not.
+            $looksSource = (strpos($body, '<?php') !== false);
+            $isPhp = (substr($rel, -4) === '.php');
+            if ($isPhp && !$looksSource && trim($body) === '') { $row['verdict'] = 'ok'; $row['detail'] = 'Served empty — PHP executed it instead of sending the source.'; }
+            else { $row['verdict'] = 'exposed'; $row['detail'] = 'DOWNLOADABLE by anyone who knows the URL.'; $exposed++; }
+        }
+        elseif ($code === 403 || $code === 401) { $row['verdict'] = 'ok'; $row['detail'] = 'Blocked (HTTP ' . $code . ').'; }
+        elseif ($code === 404)                  { $row['verdict'] = 'ok'; $row['detail'] = 'Not found (HTTP 404) — nothing to download.'; }
+        else                                    { $row['verdict'] = 'ok'; $row['detail'] = 'Not served (HTTP ' . $code . ').'; }
+        $findings[] = $row;
+    }
+    return ['ok' => true, 'base' => $base, 'exposed' => $exposed, 'unknown' => $unknown, 'findings' => $findings];
+}
+function fourgeApiSecretExposure($me, $body) {
+    if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
+    if (fourgeLevel($me) < 3) { http_response_code(403); echo json_encode(['error' => 'Super Admin access required']); return; }
+    $installed = false;
+    try { $installed = fourgeWriteAdminHtaccess(); } catch (Throwable $e) {}
+    $res = fourgeSecretExposure((string)($body['base'] ?? ''));
+    $res['guardInstalled'] = $installed;
+    // The server's own outbound address, so an API key can be pinned to it in
+    // Google Cloud. A restricted key is worthless to anyone who copies it.
+    $res['serverIp'] = fourgeOutboundIp();
+    echo json_encode($res);
+}
+// Best-effort: what Google (or anyone) sees as this server's source address.
+function fourgeOutboundIp() {
+    $local = (string)($_SERVER['SERVER_ADDR'] ?? '');
+    $ch = curl_init('https://api.ipify.org');
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_SSL_VERIFYPEER => true]);
+    $ip = trim((string)curl_exec($ch));
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code === 200 && filter_var($ip, FILTER_VALIDATE_IP)) return ['outbound' => $ip, 'local' => $local];
+    return ['outbound' => '', 'local' => $local];
+}
 function fourgeApiInstallCleanUrls($me) {
     if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
     if (!fourgeWriteCleanUrlHtaccess()) {
@@ -2550,8 +2675,12 @@ function fourgeApiInstallCleanUrls($me) {
     try { $cors   = fourgeWritePostsCorsHtaccess(); } catch (Throwable $e) { $cors = false; }
     try { $seoApi = fourgeWriteSeoApiHtaccess();    } catch (Throwable $e) { $seoApi = false; }
     try { $idx    = fourgeWriteIndexingHtaccess(); } catch (Throwable $e) { $idx = false; }
+    // Make sure this site's secret files cannot be downloaded. Sites deployed
+    // before admin/.htaccess existed have had no protection at all.
+    $sec = false;
+    try { $sec    = fourgeWriteAdminHtaccess();    } catch (Throwable $e) { $sec = false; }
     try { $due    = cmsPkgTick(false);              } catch (Throwable $e) { $due = []; }
-    echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx, 'published' => count($due)]);
+    echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx, 'secretGuard' => $sec, 'published' => count($due)]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
