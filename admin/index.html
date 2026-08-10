@@ -1690,6 +1690,21 @@ textarea.fb-input{resize:vertical}
             </div>
             <div id="pkg-token-out" style="margin-top:10px"></div>
           </div>
+          <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">AI auto-fix</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">Fills the gaps an audit grades, using this site's Anthropic key: page titles and meta descriptions that are <strong>missing or the wrong length</strong>, images with no alt text, and internal links to the pages a campaign is targeting. <strong>It only ever fills gaps</strong> — a title or description that reads well and measures well is never touched. Preview first; it reports exactly what it would write.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button type="button" class="fd-btn-secondary" onclick="aiFixRun(true)"><i class="fa-solid fa-magnifying-glass"></i> Preview auto-fix</button>
+              <button type="button" class="fd-btn-primary" onclick="aiFixRun(false)">Run auto-fix</button>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);cursor:pointer;margin-left:4px">
+                <input type="checkbox" id="ai-weekly" onchange="aiFixWeekly(this.checked)" style="width:auto;margin:0;cursor:pointer">
+                Run weekly, so new pages get covered
+              </label>
+            </div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:7px">Each run covers up to 10 pages of metadata, 8 pages of image alts, and 10 internal links, so it stays quick and cheap. Anything left over is picked up next time.</div>
+            <div id="ai-status" style="font-size:12px;color:var(--muted);margin-top:9px"></div>
+            <div id="ai-report" style="margin-top:10px"></div>
+          </div>
         </div>
 
         <div id="plugins-body"></div>
@@ -2404,7 +2419,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.91';
+const CMS_VERSION='1.14.92';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2641,7 +2656,7 @@ function goPanel(id){
   if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-leadgen':'Lead Generation','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
-  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-reviews')renderReviews();else if(id==='p-users')initUsers();
+  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}try{aiFixLoadState();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-reviews')renderReviews();else if(id==='p-users')initUsers();
 }
 
 // ── COLLAPSIBLE SIDE MENUS ──────────────────────────────────────
@@ -8046,6 +8061,60 @@ async function pkgToken(op){
     } else if(out){ out.innerHTML=''; toast('Key revoked','ok'); }
     pkgAdminRefresh();
   }catch(e){ toast('Failed: '+e.message,'err'); }
+}
+// ── AI auto-fix ─────────────────────────────────────────────────────────────
+// Preview and run. The report is deliberately explicit about what was written
+// versus skipped: a tool that edits pages on its own has to be auditable.
+async function aiFixRun(dry){
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  if(!dry && !confirm('Run the AI auto-fix on this site?\n\nIt fills missing or wrongly-sized titles and descriptions, adds alt text to images that have none, and adds internal links. It never changes a value that is already good, and every page it edits is backed up to data/bak/ first.')) return;
+  const st=document.getElementById('ai-status'), box=document.getElementById('ai-report');
+  if(st) st.textContent=dry?'Looking at the site…':'Working — this can take a minute…';
+  if(box) box.innerHTML='';
+  try{
+    const r=await apiCall('ai_autofix',{dry:!!dry});
+    if(!r||r.ok===false){ if(st) st.textContent=(r&&r.error)||'The auto-fix could not run.'; return; }
+    const t=r.totals||{};
+    if(st) st.textContent=(dry?'Preview — nothing was written. ':'Done. ')
+      +t.metas+' page(s) of metadata, '+t.alts+' page(s) of image alts, '+t.links+' internal link(s)'
+      +(t.skipped?', '+t.skipped+' skipped':'')+'.';
+    const list=(title,rows,fmt)=>rows&&rows.length
+      ? '<div style="font-size:12px;font-weight:700;margin:10px 0 5px">'+esc(title)+'</div>'
+        +'<ul style="margin:0 0 0 18px;padding:0;font-size:12px;line-height:1.65;color:var(--text)">'
+        +rows.map(x=>'<li>'+fmt(x)+'</li>').join('')+'</ul>'
+      : '';
+    if(box) box.innerHTML=
+       list(dry?'Would write metadata for':'Metadata written', r.metas, x=>esc(x.page)+' <span style="color:var(--muted)">('+esc(x.wrote)+')</span>')
+      +list(dry?'Would add alt text on':'Alt text added', r.alts, x=>esc(x.page)+' <span style="color:var(--muted)">('+x.images+' image'+(x.images===1?'':'s')+')</span>')
+      +list(dry?'Would link':'Internal links added', r.links, x=>'“'+esc(x.from)+'” → “'+esc(x.to)+'” <span style="color:var(--muted)">('+esc(x.keyword)+')</span>')
+      +list('Skipped', r.skipped, x=>esc(x.item)+' <span style="color:var(--muted)">— '+esc(x.reason)+'</span>');
+    if(!dry) toast('Auto-fix complete ✓','ok');
+  }catch(e){ if(st) st.textContent=e.message||String(e); }
+}
+async function aiFixWeekly(on){
+  try{
+    const d=await apiCall('read_file',{path:'data/ai_autofix.json'});
+    const st=JSON.parse(d.content||'{}')||{};
+    st.weekly=!!on;
+    await apiCall('write_file',{path:'data/ai_autofix.json',content:JSON.stringify(st,null,2)});
+    toast(on?'Weekly auto-fix on — it runs at your next sign-in each week':'Weekly auto-fix off','ok');
+  }catch(e){
+    try{ await apiCall('write_file',{path:'data/ai_autofix.json',content:JSON.stringify({weekly:!!on},null,2)}); toast(on?'Weekly auto-fix on':'Weekly auto-fix off','ok'); }
+    catch(e2){ toast('Could not save that setting: '+(e2.message||e2),'err'); }
+  }
+}
+async function aiFixLoadState(){
+  try{
+    const d=await apiCall('read_file',{path:'data/ai_autofix.json'});
+    const st=JSON.parse(d.content||'{}')||{};
+    const el=document.getElementById('ai-weekly'); if(el) el.checked=!!st.weekly;
+    const s=document.getElementById('ai-status');
+    if(s&&st.last&&st.last.ran_at){
+      const t=st.last.totals||{};
+      s.textContent='Last run '+String(st.last.ran_at).replace('T',' ').replace(/\..*$/,'')+' UTC — '
+        +(t.metas||0)+' metadata, '+(t.alts||0)+' alt text, '+(t.links||0)+' links.';
+    }
+  }catch(e){}
 }
 async function pkgTickNow(){
   try{
