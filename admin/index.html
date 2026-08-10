@@ -1167,6 +1167,9 @@ textarea.fb-input{resize:vertical}
         <div class="ni" onclick="navTo('adaptify')" id="ni-adaptify" title="Accessibility widget">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="7.6" r="1.15" fill="currentColor" stroke="none"/><path d="M7.2 10.2h9.6"/><path d="M12 9.4V14m0 0l-2.4 4.4M12 14l2.4 4.4"/></svg> ADAptify
         </div>
+        <div class="ni" onclick="navTo('reviews')" id="ni-reviews" title="Google reviews">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2.6 15 9 21.6 9.8 16.8 14.3 18.1 21 12 17.7 5.9 21 7.2 14.3 2.4 9.8 9 9"/></svg> Reviews
+        </div>
         <div class="sb-sec admin-only">SYSTEM</div>
         <div class="ni admin-only" onclick="navTo('users')" id="ni-users"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Users</div>
         <div class="ni" onclick="navTo('revisions')" id="ni-revisions"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg> Revisions</div>
@@ -2066,6 +2069,77 @@ textarea.fb-input{resize:vertical}
         </div>
       </div>
 
+      <!-- ══════════════════════════════════════════════════════
+           GOOGLE REVIEWS — fetch, store, curate, display
+      ═══════════════════════════════════════════════════════ -->
+      <div class="panel" id="p-reviews">
+        <div style="max-width:760px">
+          <h1 style="font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin-bottom:4px">Google Reviews</h1>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:24px">Pull reviews from this business's Google listing, keep them here, and choose which ones appear on the site. Add the <strong>Reviews block</strong> to any page in the page editor — it reads from this list, so hiding a review or fetching new ones updates every page without re-saving them.</p>
+
+          <div class="si-sec">
+            <h2>Google connection</h2>
+            <div class="desc" style="margin-bottom:12px">The API key is stored encrypted on the server and is never sent back to the browser or written into any public file. Only the server calls Google with it.</div>
+            <div class="fg"><label>Google API key</label>
+              <input type="password" id="gr-key" placeholder="Paste a Places API key" autocomplete="off">
+              <small id="gr-key-state">Checking…</small>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:18px">
+              <button class="fd-btn-primary" onclick="grSaveKey()">Save key</button>
+              <button class="fd-btn-secondary" onclick="grClearKey()">Remove key</button>
+            </div>
+            <div class="fg"><label>Place ID</label>
+              <input type="text" id="gr-place" placeholder="ChIJ… (the business's Google Place ID)">
+              <small>The ID of this business's Google listing. Press Find if you do not have it.</small>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+              <button class="fd-btn-secondary" onclick="grFindPlace()">Find my Place ID</button>
+              <input type="text" id="gr-find-q" placeholder="Business name and city (optional)" style="flex:1;min-width:200px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px">
+            </div>
+            <div id="gr-find-results" style="margin-bottom:14px"></div>
+            <div class="fg"><label>Google Business Profile link <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+              <input type="url" id="gr-gbp" placeholder="https://g.page/… or the Google Maps listing URL">
+              <small>Used for the “Leave a review” / “See all reviews” link on the block.</small>
+            </div>
+          </div>
+
+          <div class="si-sec">
+            <h2>What shows on the site</h2>
+            <div class="fr">
+              <div class="fg"><label>Minimum rating</label>
+                <select id="gr-min">
+                  <option value="0">Show every review</option>
+                  <option value="3">3 stars and up</option>
+                  <option value="4">4 stars and up</option>
+                  <option value="5">5 stars only</option>
+                </select>
+                <small>Applies on top of the individual show/hide switches below.</small>
+              </div>
+              <div class="fg"><label>Most to show at once</label>
+                <input type="number" id="gr-limit" min="1" max="50" step="1" placeholder="12">
+                <small>Newest first. Leave blank for all of them.</small>
+              </div>
+            </div>
+            <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:2px 0 6px">
+              <input type="checkbox" id="gr-hide-empty" style="width:auto;margin:2px 0 0;cursor:pointer">
+              <span>Skip star-only reviews<br><small style="color:var(--muted)">Hides reviews with a rating but no written comment.</small></span>
+            </label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
+              <button class="fd-btn-primary" onclick="grSaveSettings()">Save settings</button>
+              <button class="fd-btn-secondary" onclick="grFetch()">Fetch reviews from Google</button>
+            </div>
+            <div id="gr-status" style="font-size:12px;color:var(--muted);margin-top:10px"></div>
+          </div>
+
+          <div class="si-sec">
+            <h2>Saved reviews</h2>
+            <div class="desc" style="margin-bottom:12px">Google's API hands back <strong>at most five reviews at a time</strong>, and picks which five. Every fetch is merged into this list rather than replacing it, so the collection grows as Google rotates them — and your show/hide choices are never overwritten.</div>
+            <div id="gr-summary" style="margin-bottom:14px"></div>
+            <div id="gr-list" style="display:flex;flex-direction:column;gap:10px"></div>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /main -->
   </div><!-- /body-row -->
 </div><!-- /shell -->
@@ -2323,7 +2397,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.87';
+const CMS_VERSION='1.14.88';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2541,7 +2615,7 @@ function uiConfirm(msg, okLabel, title){
 function uiConfirmResolve(val){ closeM('m-uiconfirm'); const cb=_uiConfirmCb; _uiConfirmCb=null; if(cb) cb(!!val); }
 function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');p.parentElement.querySelectorAll('.tab-panel').forEach(t=>t.classList.remove('on'));const el=document.getElementById(panelId);if(el)el.classList.add('on');}
 function switchPropsTab(){}
-const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','users':'p-users'};
+const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','reviews':'p-reviews','users':'p-users'};
 function navTo(name){goPanel(NAV_MAP[name]||('p-'+name));}
 function goPanel(id){
   closeConversation();   // dismiss any open Lead Generation chat when switching modules
@@ -2560,7 +2634,7 @@ function goPanel(id){
   if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-leadgen':'Lead Generation','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
-  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-users')initUsers();
+  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-reviews')renderReviews();else if(id==='p-users')initUsers();
 }
 
 // ── COLLAPSIBLE SIDE MENUS ──────────────────────────────────────
@@ -3846,6 +3920,8 @@ function veFinalizePageHtml(html, pg){
   try{ html=ensurePostsRuntime(html); }catch(e){}
   // Same for a video block's stylesheet.
   try{ html=ensureVideoRuntime(html); }catch(e){}
+  // …and for the reviews block's stylesheet + runtime.
+  try{ html=ensureReviewsRuntime(html); }catch(e){}
   // Every saved page carries the CURRENT favicon tags — pages created after the
   // favicon was set used to miss out until someone re-ran "apply to all".
   try{ html=faviconInjectIntoHtml(html); }catch(e){}
@@ -5768,6 +5844,327 @@ function ensureVideoRuntime(html){
   if(!/data-fourge-video\b/.test(html) && !/class=["'][^"']*fourge-video/.test(html)) return html;
   const css=videoRuntimeCss();
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
+}
+// ── GOOGLE REVIEWS ──────────────────────────────────────────────────────────
+// Three parts: the admin panel (fetch + curate), a page block, and the runtime
+// that renders it. The block reads data/reviews.json at page load, so hiding a
+// review or pulling new ones takes effect everywhere WITHOUT re-saving pages —
+// same arrangement as the post-list block.
+//
+// The API key never appears here: it lives encrypted server-side and only
+// api.php talks to Google. See fourgeApiReviewsFetch().
+let _grData=null;                       // the saved store, as loaded from disk
+function grCfg(){ if(!_site.reviews||typeof _site.reviews!=='object') _site.reviews={}; return _site.reviews; }
+function grStars(n){
+  n=Math.max(0,Math.min(5,Math.round(+n||0)));
+  let h='';
+  for(let i=1;i<=5;i++) h+='<span class="fr-star'+(i<=n?' on':'')+'" aria-hidden="true">★</span>';
+  return '<span class="fr-stars" role="img" aria-label="'+n+' out of 5 stars">'+h+'</span>';
+}
+// "3 months ago" from a unix seconds stamp. Google gives us its own phrasing for
+// fresh pulls; this covers reviews saved before it did, and keeps old ones from
+// silently claiming to be recent.
+function grAgo(sec){
+  const t=+sec||0; if(!t) return '';
+  const d=Math.floor((Date.now()/1000-t)/86400);
+  if(d<1) return 'today';
+  if(d<2) return 'yesterday';
+  if(d<30) return d+' days ago';
+  const m=Math.floor(d/30.44);
+  if(m<12) return m===1?'a month ago':m+' months ago';
+  const y=Math.floor(d/365.25);
+  return y===1?'a year ago':y+' years ago';
+}
+// The filter the site applies, in one place: the admin preview and the published
+// runtime must agree, or what you approve is not what visitors see.
+function grVisible(items,cfg){
+  const min=+((cfg&&cfg.minRating)||0)||0;
+  const hideEmpty=!!(cfg&&cfg.hideEmpty);
+  const lim=+((cfg&&cfg.limit)||0)||0;
+  let out=(items||[]).filter(r=>r && !r.hidden && (+r.rating||0)>=min && !(hideEmpty && !String(r.text||'').trim()));
+  out.sort((a,b)=>(+b.time||0)-(+a.time||0));
+  return lim>0?out.slice(0,lim):out;
+}
+async function grLoad(){
+  try{ const d=await apiCall('read_file',{path:'data/reviews.json'});
+    const j=JSON.parse(d.content||'{}');
+    _grData=(j&&typeof j==='object')?j:{};
+  }catch(e){ _grData={}; }
+  if(!Array.isArray(_grData.items)) _grData.items=[];
+  return _grData;
+}
+async function grSaveStore(){
+  // The feed carries the display rules with the reviews, so the runtime needs
+  // one request and cannot fall out of step with what the panel shows.
+  const cfg=grCfg();
+  _grData.display={minRating:+cfg.minRating||0,limit:+cfg.limit||0,
+                   hideEmpty:!!cfg.hideEmpty,gbpUrl:cfg.gbpUrl||''};
+  await apiCall('write_file',{path:'data/reviews.json',content:JSON.stringify(_grData,null,2)});
+}
+async function renderReviews(){
+  const cfg=grCfg();
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v==null?'':v; };
+  set('gr-place',cfg.placeId); set('gr-gbp',cfg.gbpUrl);
+  set('gr-min',String(cfg.minRating||0)); set('gr-limit',cfg.limit||'');
+  const he=document.getElementById('gr-hide-empty'); if(he) he.checked=!!cfg.hideEmpty;
+  // Key status only — the value is never sent to the browser.
+  const ks=document.getElementById('gr-key-state');
+  if(ks){
+    ks.textContent='Checking…';
+    try{ const r=await apiCall('get_secrets');
+      const has=!!(r&&r.status&&r.status.google_places_key);
+      ks.textContent=has?'A key is saved on the server. Paste a new one to replace it.':'No key saved yet.';
+      ks.style.color=has?'var(--ok,#16a34a)':'var(--muted)';
+    }catch(e){ ks.textContent='Could not check the saved key.'; ks.style.color='var(--muted)'; }
+  }
+  await grLoad();
+  grRenderList();
+}
+function grRenderList(){
+  const sum=document.getElementById('gr-summary'), list=document.getElementById('gr-list');
+  if(!sum||!list) return;
+  const cfg=grCfg(), items=(_grData&&_grData.items)||[], pl=(_grData&&_grData.place)||{};
+  const shown=grVisible(items,cfg).length;
+  if(!items.length){
+    sum.innerHTML='';
+    list.innerHTML='<div class="empty" style="padding:22px"><h3>No reviews saved yet</h3>'
+      +'<p style="font-size:13px;color:var(--muted);margin-top:6px">Save a Google API key and a Place ID above, then press <strong>Fetch reviews from Google</strong>.</p></div>';
+    return;
+  }
+  sum.innerHTML='<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">'
+    +(pl.name?'<div style="font-weight:700;font-size:13.5px">'+esc(pl.name)+'</div>':'')
+    +(pl.rating?'<div style="font-size:13px;color:var(--muted)">'+grStars(pl.rating)+' <strong style="color:var(--text)">'+(+pl.rating).toFixed(1)+'</strong> on Google'+(pl.total?(' · '+pl.total+' review'+(pl.total===1?'':'s')+' total'):'')+'</div>':'')
+    +'<div style="font-size:13px;color:var(--muted);margin-left:auto">'+items.length+' saved · <strong style="color:var(--text)">'+shown+'</strong> showing on the site</div>'
+    +'</div>'
+    +(_grData.updated?'<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Last fetched '+esc(String(_grData.updated).replace('T',' ').replace(/\..*$/,''))+' UTC'+(_grData.api?(' via '+esc(_grData.api)):'')+'</div>':'');
+  const min=+((cfg.minRating)||0)||0;
+  list.innerHTML=items.map((r,i)=>{
+    const belowMin=(+r.rating||0)<min;
+    const emptyCut=!!cfg.hideEmpty && !String(r.text||'').trim();
+    const off=!!r.hidden;
+    const why=off?'Hidden by you':belowMin?('Below the '+min+'-star minimum'):emptyCut?'No written comment':'';
+    return '<div style="display:flex;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface)'+((off||belowMin||emptyCut)?';opacity:.55':'')+'">'
+      +'<label style="flex:0 0 auto;display:flex;align-items:flex-start;padding-top:2px;cursor:pointer" title="Show this review on the site">'
+      +'<input type="checkbox"'+(off?'':' checked')+' onchange="grToggle('+i+',this.checked)" style="width:16px;height:16px;accent-color:var(--ember);cursor:pointer"></label>'
+      +'<div style="min-width:0;flex:1">'
+      +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'
+      +grStars(r.rating)
+      +'<strong style="font-size:13px">'+esc(r.author||'Anonymous')+'</strong>'
+      +'<span style="font-size:11.5px;color:var(--muted)">'+esc(r.relative||grAgo(r.time)||r.date||'')+'</span>'
+      +(why?'<span style="font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:1px 6px">'+esc(why.toUpperCase())+'</span>':'')
+      +'</div>'
+      +(String(r.text||'').trim()
+        ? '<div style="font-size:12.5px;line-height:1.55;color:var(--text)">'+esc(r.text)+'</div>'
+        : '<div style="font-size:12.5px;color:var(--muted);font-style:italic">Star rating only — no written comment.</div>')
+      +'</div></div>';
+  }).join('');
+}
+async function grToggle(i,on){
+  if(!_grData||!_grData.items||!_grData.items[i]) return;
+  _grData.items[i].hidden=!on;
+  grRenderList();
+  try{ await grSaveStore(); toast(on?'Review shown on the site ✓':'Review hidden ✓','ok'); }
+  catch(e){ toast('Could not save: '+(e.message||e),'err'); }
+}
+async function grSaveKey(){
+  const el=document.getElementById('gr-key'); const v=(el?.value||'').trim();
+  if(!v){ toast('Paste a key first','err'); return; }
+  try{ await apiCall('set_secret',{name:'google_places_key',value:v});
+    if(el) el.value='';
+    toast('API key saved on the server ✓','ok');
+    await renderReviews();
+  }catch(e){ toast('Could not save the key: '+(e.message||e),'err'); }
+}
+async function grClearKey(){
+  if(!confirm('Remove the saved Google API key? Reviews already saved here stay, but new fetches will stop working until a key is added again.')) return;
+  try{ await apiCall('set_secret',{name:'google_places_key',value:''});
+    toast('API key removed','ok'); await renderReviews();
+  }catch(e){ toast('Could not remove the key: '+(e.message||e),'err'); }
+}
+async function grSaveSettings(){
+  const cfg=grCfg();
+  const g=id=>(document.getElementById(id)?.value||'').trim();
+  cfg.placeId=g('gr-place'); cfg.gbpUrl=g('gr-gbp');
+  cfg.minRating=+g('gr-min')||0;
+  const lim=g('gr-limit'); cfg.limit=(lim!==''&&isFinite(+lim))?Math.max(1,Math.min(50,Math.round(+lim))):0;
+  cfg.hideEmpty=!!document.getElementById('gr-hide-empty')?.checked;
+  try{
+    await gaPersistSite();
+    if(!_grData) await grLoad();
+    await grSaveStore();          // republish the feed with the new rules
+    grRenderList();
+    toast('Review settings saved ✓ — pages using the Reviews block pick this up right away','ok');
+  }catch(e){ toast('Could not save: '+(e.message||e),'err'); }
+}
+async function grFetch(){
+  const st=document.getElementById('gr-status');
+  const placeId=(document.getElementById('gr-place')?.value||'').trim();
+  if(!placeId){ toast('A Place ID is needed first','err'); return; }
+  if(st) st.textContent='Asking Google…';
+  try{
+    const r=await apiCall('reviews_fetch',{placeId});
+    await grLoad(); grRenderList();
+    const bits=[];
+    bits.push('Google returned '+r.returned+' review'+(r.returned===1?'':'s'));
+    if(r.added)   bits.push(r.added+' new');
+    if(r.updated) bits.push(r.updated+' changed');
+    bits.push(r.total+' saved in total');
+    if(st) st.textContent=bits.join(' · ')+'.'+(r.returned<5?'':' Google caps each pull at five — fetch again over time to build the list up.');
+    toast(r.added?('Added '+r.added+' new review'+(r.added===1?'':'s')+' ✓'):'Up to date — nothing new from Google','ok');
+  }catch(e){
+    if(st) st.textContent=e.message||String(e);
+    toast('Fetch failed — see the message above','err');
+  }
+}
+async function grFindPlace(){
+  const box=document.getElementById('gr-find-results');
+  const q=(document.getElementById('gr-find-q')?.value||'').trim();
+  if(box) box.innerHTML='<div style="font-size:12px;color:var(--muted)">Searching…</div>';
+  try{
+    const r=await apiCall('reviews_find_place',{query:q});
+    if(!r.results||!r.results.length){
+      if(box) box.innerHTML='<div style="font-size:12px;color:var(--muted)">Nothing found for “'+esc(r.query||q)+'”. Try the business name plus the city.</div>';
+      return;
+    }
+    if(box) box.innerHTML='<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Searched for “'+esc(r.query||q)+'” — pick the right listing:</div>'
+      +r.results.map(x=>'<div style="display:flex;gap:10px;align-items:center;padding:9px 11px;border:1px solid var(--border);border-radius:9px;margin-bottom:6px">'
+        +'<div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.name)+'</div>'
+        +'<div style="font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.address)
+        +(x.rating?(' · '+(+x.rating).toFixed(1)+'★'+(x.total?(' ('+x.total+')'):'')):'')+'</div></div>'
+        +'<button class="fd-btn-primary" style="flex:0 0 auto;font-size:12px;padding:6px 11px" onclick="grUsePlace(\''+esc(x.placeId)+'\')">Use this →</button>'
+        +'</div>').join('');
+  }catch(e){
+    if(box) box.innerHTML='<div style="font-size:12px;color:var(--muted)">'+esc(e.message||String(e))+'</div>';
+  }
+}
+function grUsePlace(id){
+  const el=document.getElementById('gr-place'); if(el) el.value=id;
+  const box=document.getElementById('gr-find-results'); if(box) box.innerHTML='';
+  toast('Place ID filled in — press Save settings, then Fetch reviews','ok');
+}
+// ── the page block ──────────────────────────────────────────────────────────
+// A container the runtime fills in. What is inside it in the editor is a
+// placeholder card, exactly like the post-list block: the real reviews come from
+// data/reviews.json when the page loads.
+function reviewsSnippet(){
+  return '<div data-fourge-reviews class="fourge-reviews">'
+    +'<div class="fr-track"><div class="fr-card" style="pointer-events:none">'
+    +'<div class="fr-top">'+grStars(5)+'</div>'
+    +'<p class="fr-text">Your Google reviews appear here automatically. Choose which ones show in the Reviews panel — this preview is replaced by the real list on the published page.</p>'
+    +'<div class="fr-who"><strong>A happy customer</strong><span>a month ago</span></div>'
+    +'</div></div></div>';
+}
+function reviewsRuntimeCss(){
+  return '<style id="fourge-reviews-css">'
+    +'.fourge-reviews{margin:26px 0;position:relative}'
+    // Scroll-snap carousel: no jQuery, no Flickity, no external anything. Swipes
+    // on a phone, drags on a trackpad, and degrades to a plain scroller.
+    +'.fourge-reviews .fr-track{display:flex;gap:18px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:4px 2px 14px;scrollbar-width:thin}'
+    +'.fourge-reviews .fr-card{scroll-snap-align:center;flex:0 0 min(340px,84%);display:flex;flex-direction:column;gap:10px;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:20px 22px;box-shadow:0 1px 3px rgba(0,0,0,.05)}'
+    +'.fourge-reviews .fr-top{display:flex;align-items:center;gap:9px}'
+    +'.fourge-reviews .fr-stars{white-space:nowrap;letter-spacing:1px;line-height:1}'
+    +'.fourge-reviews .fr-star{color:rgba(0,0,0,.18)}'
+    +'.fourge-reviews .fr-star.on{color:#fbbc04}'
+    +'.fourge-reviews .fr-text{margin:0;font-size:15px;line-height:1.6}'
+    +'.fourge-reviews .fr-more{background:none;border:0;padding:0;font:inherit;font-size:13px;font-weight:600;color:inherit;opacity:.7;text-decoration:underline;cursor:pointer;align-self:flex-start}'
+    +'.fourge-reviews .fr-who{margin-top:auto;display:flex;align-items:center;gap:9px;font-size:13px;opacity:.75}'
+    +'.fourge-reviews .fr-who img{width:32px;height:32px;border-radius:50%;object-fit:cover;flex:0 0 auto}'
+    +'.fourge-reviews .fr-who strong{font-size:13.5px;opacity:1}'
+    +'.fourge-reviews .fr-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;font-size:14px}'
+    +'.fourge-reviews .fr-head a{margin-left:auto;font-size:13px;font-weight:600}'
+    +'.fourge-reviews .fr-nav{display:flex;gap:8px;justify-content:center;margin-top:2px}'
+    +'.fourge-reviews .fr-nav button{width:34px;height:34px;border-radius:50%;border:1px solid rgba(0,0,0,.14);background:#fff;cursor:pointer;font-size:15px;line-height:1;color:inherit}'
+    +'.fourge-reviews .fr-nav button:disabled{opacity:.35;cursor:default}'
+    +'@media (max-width:640px){.fourge-reviews .fr-card{flex-basis:88%}}'
+    +'</style>';
+}
+// The runtime. Plain ES5-ish, no dependencies, and it fails silently to nothing
+// rather than leaving a broken widget on a client's page.
+function reviewsRuntimeJs(){
+  var j='';
+  j+='<script id="fourge-reviews-js">\n';
+  j+='(function(){\n';
+  j+='  var hosts=document.querySelectorAll("[data-fourge-reviews]");\n';
+  j+='  if(!hosts.length) return;\n';
+  j+='  function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}\n';
+  j+='  function stars(n){n=Math.max(0,Math.min(5,Math.round(+n||0)));var h="";for(var i=1;i<=5;i++)h+=\'<span class="fr-star\'+(i<=n?" on":"")+\'" aria-hidden="true">\\u2605</span>\';return \'<span class="fr-stars" role="img" aria-label="\'+n+\' out of 5 stars">\'+h+\'</span>\';}\n';
+  j+='  function ago(t){t=+t||0;if(!t)return "";var d=Math.floor((Date.now()/1000-t)/86400);if(d<1)return "today";if(d<2)return "yesterday";if(d<30)return d+" days ago";var m=Math.floor(d/30.44);if(m<12)return m===1?"a month ago":m+" months ago";var y=Math.floor(d/365.25);return y===1?"a year ago":y+" years ago";}\n';
+  // The published filter must match grVisible() in the admin, or what the client
+  // approved is not what visitors get.
+  j+='  function visible(items,cfg){var min=+(cfg.minRating||0)||0,lim=+(cfg.limit||0)||0;\n';
+  j+='    var out=(items||[]).filter(function(r){return r&&!r.hidden&&(+r.rating||0)>=min&&!(cfg.hideEmpty&&!String(r.text||"").trim());});\n';
+  j+='    out.sort(function(a,b){return (+b.time||0)-(+a.time||0);});\n';
+  j+='    return lim>0?out.slice(0,lim):out;}\n';
+  j+='  var CUT=180;\n';
+  j+='  function card(r){\n';
+  j+='    var t=String(r.text||"").trim(), body="";\n';
+  j+='    if(t.length>CUT){\n';
+  j+='      body=\'<p class="fr-text">\'+esc(t.slice(0,CUT)).replace(/\\s+\\S*$/,"")+\'<span hidden>\'+esc(t.slice(CUT))+\'</span>\\u2026</p><button type="button" class="fr-more">Read more</button>\';\n';
+  j+='    }else if(t){ body=\'<p class="fr-text">\'+esc(t)+\'</p>\'; }\n';
+  j+='    var when=esc(r.relative||ago(r.time)||r.date||"");\n';
+  j+='    return \'<div class="fr-card">\'\n';
+  j+='      +\'<div class="fr-top">\'+stars(r.rating)+\'</div>\'+body\n';
+  j+='      +\'<div class="fr-who">\'\n';
+  j+='        +(r.photo?\'<img src="\'+esc(r.photo)+\'" alt="" loading="lazy" referrerpolicy="no-referrer">\':"")\n';
+  j+='        +\'<span><strong>\'+esc(r.author||"Google user")+\'</strong>\'+(when?\'<br>\'+when:"")+\'</span>\'\n';
+  j+='      +\'</div></div>\';\n';
+  j+='  }\n';
+  j+='  function paint(host,data,cfg){\n';
+  j+='    var items=visible(data.items||[],cfg||{});\n';
+  j+='    if(!items.length){ host.innerHTML=""; host.style.display="none"; return; }\n';
+  j+='    var pl=data.place||{}, link=cfg.gbpUrl||pl.mapUrl||"";\n';
+  j+='    var head=\'<div class="fr-head">\'+stars(pl.rating||0)\n';
+  j+='      +(pl.rating?\'<strong>\'+(+pl.rating).toFixed(1)+\'</strong>\':"")\n';
+  j+='      +\'<span>\'+(pl.total?esc(pl.total)+" Google review"+(pl.total==1?"":"s"):"Google reviews")+\'</span>\'\n';
+  j+='      +(link?\'<a href="\'+esc(link)+\'" target="_blank" rel="noopener nofollow">See them on Google</a>\':"")\n';
+  j+='      +\'</div>\';\n';
+  j+='    var nav=items.length>1?\'<div class="fr-nav"><button type="button" class="fr-prev" aria-label="Previous review">\\u2039</button><button type="button" class="fr-next" aria-label="Next review">\\u203a</button></div>\':"";\n';
+  j+='    host.innerHTML=head+\'<div class="fr-track">\'+items.map(card).join("")+\'</div>\'+nav;\n';
+  j+='    var track=host.querySelector(".fr-track");\n';
+  j+='    host.addEventListener("click",function(e){\n';
+  j+='      var m=e.target.closest?e.target.closest(".fr-more"):null;\n';
+  j+='      if(m){ var p=m.previousElementSibling; if(p){ var hid=p.querySelector("[hidden]"); if(hid){hid.removeAttribute("hidden");} var last=p.lastChild; if(last&&last.nodeType===3&&/\\u2026$/.test(last.nodeValue)) last.nodeValue=last.nodeValue.replace(/\\u2026$/,""); } m.remove(); return; }\n';
+  j+='      var pv=e.target.closest?e.target.closest(".fr-prev"):null, nx=e.target.closest?e.target.closest(".fr-next"):null;\n';
+  j+='      if((pv||nx)&&track){ var one=track.querySelector(".fr-card"); var step=one?one.getBoundingClientRect().width+18:320; track.scrollBy({left:nx?step:-step,behavior:"smooth"}); }\n';
+  j+='    });\n';
+  j+='  }\n';
+  // data-src lets a white-label site read the flagship's reviews; without it the
+  // feed is this site's own.
+  j+='  var base=(hosts[0].getAttribute("data-src")||"").replace(/\\/+$/,"");\n';
+  j+='  var url=base+"/data/reviews.json";\n';
+  j+='  fetch(url,{cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).then(function(d){\n';
+  j+='    if(!d||!d.items){ for(var i=0;i<hosts.length;i++){hosts[i].innerHTML="";hosts[i].style.display="none";} return; }\n';
+  j+='    var cfg=d.display||{};\n';
+  j+='    for(var i=0;i<hosts.length;i++) paint(hosts[i],d,cfg);\n';
+  j+='  }).catch(function(){ for(var i=0;i<hosts.length;i++){hosts[i].innerHTML="";hosts[i].style.display="none";} });\n';
+  j+='}());\n';
+  j+='<\/script>';
+  return j;
+}
+function reviewsRuntimeAssets(){ return reviewsRuntimeCss()+'\n'+reviewsRuntimeJs(); }
+// Same self-heal contract as the posts and video blocks: re-stamped when a page
+// carries the block, removed cleanly when the last one is deleted.
+function ensureReviewsRuntime(html){
+  html=String(html||'');
+  html=html.replace(/<style id="fourge-reviews-css">[\s\S]*?<\/style>\s*/gi,'');
+  html=html.replace(/<script id="fourge-reviews-js">[\s\S]*?<\/script>\s*/gi,'');
+  if(!/data-fourge-reviews\b/.test(html)) return html;
+  const assets=reviewsRuntimeAssets();
+  const cut=assets.indexOf('</style>')+'</style>'.length;
+  const css=assets.slice(0,cut), js=assets.slice(cut).replace(/^\s+/,'');
+  html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
+  html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
+  return html;
+}
+function veInsertReviews(){
+  const fid=_veCurSel?.fid;
+  if(!fid){ toast('Click where the reviews should go first — a section or column works best','err'); return; }
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,
+    html:reviewsSnippet(),css:reviewsRuntimeCss()},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Reviews block added — Save the page, then curate which reviews show in the Reviews panel','ok');
 }
 function videoRuntimeCss(){
   return '<style id="fourge-video-css">'
@@ -10845,7 +11242,8 @@ function veShowProps(info){
   const iconBtn = '<button class="ve-apply-btn" style="margin:10px 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openIconPicker()"><i class="fa-solid fa-icons"></i> Insert an icon</button>';
   const formBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openFormPicker()"><i class="fa-solid fa-rectangle-list"></i> Insert a form</button>';
   const postsBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertPostList()" title="A live list of your published posts, newest first — updates automatically whenever you publish"><i class="fa-solid fa-newspaper"></i> Insert post list</button>'
-    +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertVideo()" title="Add a video from your media library — played by the browser itself, no third-party embed"><i class="fa-solid fa-film"></i> Insert video</button>';
+    +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertVideo()" title="Add a video from your media library — played by the browser itself, no third-party embed"><i class="fa-solid fa-film"></i> Insert video</button>'
+    +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertReviews()" title="Your Google reviews, curated in the Reviews panel — updates without re-saving the page"><i class="fa-solid fa-star"></i> Insert reviews</button>';
   const postsRepBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veReplaceWithPostList()" title="Swap the selected element (e.g. an old hand-made posts section) for the live post archive"><i class="fa-solid fa-right-left"></i> Replace with post archive</button>';
   body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + postsBtn + postsRepBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)

@@ -317,6 +317,11 @@ function fourgeSecretPolicy() {
         // encrypted server-side; never written into data/site.json (that file is
         // publicly readable).
         'seo_pkg_token' => 3,
+        // Google Places API key for the reviews plugin — Super Admin and above.
+        // Encrypted server-side and never returned to the browser: the key is
+        // billable, and data/site.json is publicly readable so it cannot live
+        // there. Only the server ever calls Google with it.
+        'google_places_key' => 3,
     ];
 }
 

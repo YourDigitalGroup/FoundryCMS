@@ -243,6 +243,8 @@ try {
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
+        case 'reviews_fetch':      ob_end_clean(); fourgeApiReviewsFetch($authUser, $body); break;
+        case 'reviews_find_place': ob_end_clean(); fourgeApiReviewsFindPlace($authUser, $body); break;
         case 'seo_package':     ob_end_clean(); fourgeApiSeoPackage($authUser, $body); break;
         case 'seo_pkg_tick':    ob_end_clean(); fourgeApiSeoPkgTick($authUser, $body); break;
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
@@ -2147,7 +2149,7 @@ function fourgeWritePostsCorsHtaccess() {
     $end   = '# END Fourge Posts CORS';
     $rules = <<<'HT'
 <IfModule mod_headers.c>
-  <FilesMatch "^posts\.json$">
+  <FilesMatch "^(posts|reviews)\.json$">
     Header set Access-Control-Allow-Origin "*"
     Header set Access-Control-Allow-Methods "GET"
   </FilesMatch>
@@ -2193,6 +2195,272 @@ HT;
         else $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
     return file_put_contents($htPath, $existing) !== false;
+}
+// ── GOOGLE REVIEWS ──────────────────────────────────────────────────────────
+// Reviews are fetched HERE, on the server, because the Places API key is
+// billable and data/site.json is publicly readable. The key lives encrypted in
+// the secrets table and is never returned to the browser.
+//
+// WHAT GOOGLE ACTUALLY GIVES YOU: the Places API returns at most FIVE reviews
+// per place, and only the ones it considers most relevant. There is no
+// pagination and no parameter to ask for more — the full review list needs the
+// Business Profile API, which is OAuth against the owner's Google account, not
+// an API key. So this endpoint MERGES: every fetch folds new reviews into
+// data/reviews.json and leaves existing ones alone, which means the saved set
+// grows past five over time as Google rotates which five it hands back. That
+// merge is also what makes the per-review show/hide toggles durable.
+function fourgeReviewsPath() { return PUBLIC_HTML . '/data/reviews.json'; }
+function fourgeReviewsLoad() {
+    $f = fourgeReviewsPath();
+    $d = is_file($f) ? json_decode((string)@file_get_contents($f), true) : null;
+    if (!is_array($d)) $d = [];
+    if (!isset($d['items']) || !is_array($d['items'])) $d['items'] = [];
+    if (!isset($d['place']) || !is_array($d['place'])) $d['place'] = [];
+    return $d;
+}
+function fourgeReviewsSave($data) {
+    $dir = PUBLIC_HTML . '/data';
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    return @file_put_contents(fourgeReviewsPath(), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) !== false;
+}
+// A review has no stable id in the legacy Places response, so identity is a hash
+// of the things that cannot change for a given review: who wrote it, when, and
+// what it says. The New API's resource name is preferred when present.
+function fourgeReviewId($r) {
+    if (!empty($r['gid'])) return substr(sha1('gid:' . $r['gid']), 0, 16);
+    return substr(sha1(strtolower(trim((string)($r['author'] ?? ''))) . '|' . (string)($r['time'] ?? '') . '|' . substr((string)($r['text'] ?? ''), 0, 120)), 0, 16);
+}
+function fourgeReviewsHttpGet($url, $headers = []) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_TIMEOUT        => 15,
+        CURLOPT_HTTPHEADER     => $headers,
+    ]);
+    $body = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
+    curl_close($ch);
+    return ['body' => (string)$body, 'code' => $code, 'err' => $err];
+}
+// Normalise both API shapes into one review record.
+function fourgeReviewsNormNew($rev) {
+    $txt = $rev['originalText']['text'] ?? ($rev['text']['text'] ?? '');
+    $when = (string)($rev['publishTime'] ?? '');
+    return [
+        'gid'      => (string)($rev['name'] ?? ''),
+        'author'   => (string)($rev['authorAttribution']['displayName'] ?? ''),
+        'photo'    => (string)($rev['authorAttribution']['photoUri'] ?? ''),
+        'url'      => (string)($rev['authorAttribution']['uri'] ?? ''),
+        'rating'   => (int)($rev['rating'] ?? 0),
+        'text'     => (string)$txt,
+        'time'     => $when !== '' ? (int)strtotime($when) : 0,
+        'date'     => $when !== '' ? gmdate('Y-m-d', (int)strtotime($when)) : '',
+        'relative' => (string)($rev['relativePublishTimeDescription'] ?? ''),
+        'source'   => 'places-v1',
+    ];
+}
+function fourgeReviewsNormLegacy($rev) {
+    $t = (int)($rev['time'] ?? 0);
+    return [
+        'gid'      => '',
+        'author'   => (string)($rev['author_name'] ?? ''),
+        'photo'    => (string)($rev['profile_photo_url'] ?? ''),
+        'url'      => (string)($rev['author_url'] ?? ''),
+        'rating'   => (int)($rev['rating'] ?? 0),
+        'text'     => (string)($rev['text'] ?? ''),
+        'time'     => $t,
+        'date'     => $t ? gmdate('Y-m-d', $t) : '',
+        'relative' => (string)($rev['relative_time_description'] ?? ''),
+        'source'   => 'places-legacy',
+    ];
+}
+// Try the current Places API first, then the legacy endpoint. Which one a client's
+// Google Cloud project has enabled varies, and a 403 from one is not a reason to
+// tell the operator their key is broken.
+function fourgeReviewsFetchGoogle($key, $placeId) {
+    $tried = [];
+    $url = 'https://places.googleapis.com/v1/places/' . rawurlencode($placeId);
+    $r = fourgeReviewsHttpGet($url, [
+        'X-Goog-Api-Key: ' . $key,
+        'X-Goog-FieldMask: id,displayName,rating,userRatingCount,googleMapsUri,reviews',
+    ]);
+    $tried[] = 'places-v1 HTTP ' . $r['code'];
+    if ($r['code'] === 200) {
+        $d = json_decode($r['body'], true);
+        if (is_array($d)) {
+            $items = [];
+            foreach ((array)($d['reviews'] ?? []) as $rev) $items[] = fourgeReviewsNormNew($rev);
+            return ['ok' => true, 'api' => 'places-v1', 'tried' => $tried, 'items' => $items, 'place' => [
+                'name'   => (string)($d['displayName']['text'] ?? ''),
+                'rating' => (float)($d['rating'] ?? 0),
+                'total'  => (int)($d['userRatingCount'] ?? 0),
+                'mapUrl' => (string)($d['googleMapsUri'] ?? ''),
+            ]];
+        }
+    }
+    $newErr = '';
+    if ($r['code'] !== 200) {
+        $e = json_decode($r['body'], true);
+        $newErr = (string)($e['error']['message'] ?? $r['err']);
+    }
+    // Legacy Place Details
+    $url2 = 'https://maps.googleapis.com/maps/api/place/details/json?place_id=' . rawurlencode($placeId)
+          . '&fields=name,rating,user_ratings_total,url,reviews&reviews_sort=newest&key=' . rawurlencode($key);
+    $r2 = fourgeReviewsHttpGet($url2);
+    $tried[] = 'places-legacy HTTP ' . $r2['code'];
+    $d2 = json_decode($r2['body'], true);
+    $status = (string)($d2['status'] ?? '');
+    if ($r2['code'] === 200 && $status === 'OK' && isset($d2['result'])) {
+        $res = $d2['result'];
+        $items = [];
+        foreach ((array)($res['reviews'] ?? []) as $rev) $items[] = fourgeReviewsNormLegacy($rev);
+        return ['ok' => true, 'api' => 'places-legacy', 'tried' => $tried, 'items' => $items, 'place' => [
+            'name'   => (string)($res['name'] ?? ''),
+            'rating' => (float)($res['rating'] ?? 0),
+            'total'  => (int)($res['user_ratings_total'] ?? 0),
+            'mapUrl' => (string)($res['url'] ?? ''),
+        ]];
+    }
+    // Both failed — say which, and what it usually means.
+    $legacyErr = (string)($d2['error_message'] ?? ($status !== '' ? $status : $r2['err']));
+    $hint = '';
+    $blob = $newErr . ' ' . $legacyErr;
+    if (stripos($blob, 'not authorized') !== false || stripos($blob, 'REQUEST_DENIED') !== false || stripos($blob, 'API_KEY') !== false)
+        $hint = ' Enable "Places API (New)" (or the legacy "Places API") on this key\'s Google Cloud project, and check the key\'s API restrictions.';
+    elseif (stripos($blob, 'NOT_FOUND') !== false || stripos($blob, 'INVALID_REQUEST') !== false)
+        $hint = ' The Place ID looks wrong — use Find my Place ID below.';
+    elseif (stripos($blob, 'OVER_QUERY_LIMIT') !== false || stripos($blob, 'billing') !== false)
+        $hint = ' Billing is not enabled on the Google Cloud project, or the key is over its quota.';
+    return ['ok' => false, 'tried' => $tried,
+            'error' => 'Google refused the request. ' . trim($newErr . ($newErr && $legacyErr ? ' / ' : '') . $legacyErr) . $hint];
+}
+function fourgeApiReviewsFetch($me, $body) {
+    if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
+    $key = '';
+    try { $key = (string)fourgeGetSecret(fourgeDb(), 'google_places_key'); } catch (Throwable $e) {}
+    if (trim($key) === '') { http_response_code(400); echo json_encode(['error' => 'No Google API key saved yet — add one above and press Save key.']); return; }
+    $placeId = trim((string)($body['placeId'] ?? ''));
+    if ($placeId === '') {
+        $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+        $placeId = trim((string)($site['reviews']['placeId'] ?? ''));
+    }
+    if ($placeId === '' || !preg_match('~^[A-Za-z0-9_\-]{10,}$~', $placeId)) {
+        http_response_code(400); echo json_encode(['error' => 'A Place ID is required — press "Find my Place ID" if you do not have it.']); return;
+    }
+
+    $got = fourgeReviewsFetchGoogle($key, $placeId);
+    if (empty($got['ok'])) { http_response_code(502); echo json_encode(['error' => $got['error'], 'tried' => $got['tried']]); return; }
+
+    $store = fourgeReviewsLoad();
+    $byId  = [];
+    foreach ($store['items'] as $it) { if (!empty($it['id'])) $byId[$it['id']] = $it; }
+
+    $added = 0; $updated = 0;
+    foreach ($got['items'] as $rev) {
+        $id = fourgeReviewId($rev);
+        $rev['id'] = $id;
+        if (isset($byId[$id])) {
+            // Keep the operator's decisions; refresh only what Google owns.
+            $old = $byId[$id];
+            $rev['hidden'] = !empty($old['hidden']);
+            $rev['added']  = (string)($old['added'] ?? gmdate('c'));
+            if ($old['text'] !== $rev['text'] || (int)$old['rating'] !== (int)$rev['rating']) $updated++;
+            $byId[$id] = array_merge($old, $rev);
+        } else {
+            $rev['hidden'] = false;          // new reviews are visible by default
+            $rev['added']  = gmdate('c');
+            $byId[$id] = $rev;
+            $added++;
+        }
+    }
+    $items = array_values($byId);
+    // Newest first; a review with no date sorts last rather than to the top.
+    usort($items, function ($a, $b) { return ((int)($b['time'] ?? 0)) <=> ((int)($a['time'] ?? 0)); });
+
+    $store['items']   = $items;
+    $store['place']   = $got['place'];
+    $store['placeId'] = $placeId;
+    $store['api']     = $got['api'];
+    $store['updated'] = gmdate('c');
+    if (!fourgeReviewsSave($store)) { http_response_code(500); echo json_encode(['error' => 'Could not write data/reviews.json (check that the data folder is writable)']); return; }
+
+    echo json_encode([
+        'ok' => true, 'api' => $got['api'], 'returned' => count($got['items']),
+        'added' => $added, 'updated' => $updated, 'total' => count($items),
+        'place' => $got['place'], 'tried' => $got['tried'],
+    ]);
+}
+// Place ID discovery, so nobody has to go hunting in Google's ID finder tool.
+function fourgeApiReviewsFindPlace($me, $body) {
+    if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
+    $key = '';
+    try { $key = (string)fourgeGetSecret(fourgeDb(), 'google_places_key'); } catch (Throwable $e) {}
+    if (trim($key) === '') { http_response_code(400); echo json_encode(['error' => 'Save a Google API key first.']); return; }
+    $q = trim((string)($body['query'] ?? ''));
+    if ($q === '') {
+        // Default to this site's own business name + address.
+        $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+        $a = $site['address'] ?? [];
+        $q = trim(((string)($site['name'] ?? '')) . ' ' . implode(' ', array_filter([
+            (string)($a['street'] ?? ''), (string)($a['city'] ?? ''), (string)($a['state'] ?? ''), (string)($a['zip'] ?? '')
+        ])));
+    }
+    if ($q === '') { http_response_code(400); echo json_encode(['error' => 'Type the business name and city to search for.']); return; }
+
+    // searchText is POST-only, so this one does not go through the GET helper.
+    $ch = curl_init('https://places.googleapis.com/v1/places:searchText');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_TIMEOUT => 15, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_POSTFIELDS => json_encode(['textQuery' => $q, 'maxResultCount' => 5]),
+        CURLOPT_HTTPHEADER => [
+            'X-Goog-Api-Key: ' . $key,
+            'X-Goog-FieldMask: places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount',
+            'Content-Type: application/json',
+        ],
+    ]);
+    $body2 = (string)curl_exec($ch);
+    $code  = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err   = curl_error($ch);
+    curl_close($ch);
+    $d = json_decode($body2, true);
+    if ($code === 200 && isset($d['places'])) {
+        $out = [];
+        foreach ((array)$d['places'] as $pl) {
+            $out[] = [
+                'placeId' => (string)($pl['id'] ?? ''),
+                'name'    => (string)($pl['displayName']['text'] ?? ''),
+                'address' => (string)($pl['formattedAddress'] ?? ''),
+                'rating'  => (float)($pl['rating'] ?? 0),
+                'total'   => (int)($pl['userRatingCount'] ?? 0),
+            ];
+        }
+        echo json_encode(['ok' => true, 'query' => $q, 'results' => $out]);
+        return;
+    }
+    // Fall back to the legacy Find Place endpoint for keys that only have it.
+    $u = 'https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=' . rawurlencode($q)
+       . '&inputtype=textquery&fields=place_id,name,formatted_address,rating,user_ratings_total&key=' . rawurlencode($key);
+    $r2 = fourgeReviewsHttpGet($u);
+    $d2 = json_decode($r2['body'], true);
+    if ($r2['code'] === 200 && (($d2['status'] ?? '') === 'OK')) {
+        $out = [];
+        foreach ((array)($d2['candidates'] ?? []) as $pl) {
+            $out[] = [
+                'placeId' => (string)($pl['place_id'] ?? ''),
+                'name'    => (string)($pl['name'] ?? ''),
+                'address' => (string)($pl['formatted_address'] ?? ''),
+                'rating'  => (float)($pl['rating'] ?? 0),
+                'total'   => (int)($pl['user_ratings_total'] ?? 0),
+            ];
+        }
+        echo json_encode(['ok' => true, 'query' => $q, 'results' => $out, 'api' => 'legacy']);
+        return;
+    }
+    $msg = (string)($d['error']['message'] ?? ($d2['error_message'] ?? ($err ?: 'Google returned HTTP ' . $code)));
+    http_response_code(502);
+    echo json_encode(['error' => 'Place search failed: ' . $msg . ' Make sure "Places API (New)" is enabled for this key.']);
 }
 // ── INDEXING SCAFFOLD ───────────────────────────────────────────────────────
 // Three server-level indexing controls, in one marker-spliced block placed
