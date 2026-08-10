@@ -2404,7 +2404,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.89';
+const CMS_VERSION='1.14.90';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -7075,7 +7075,32 @@ async function genSEO(pid){
 async function genAllSEO(){ const pages=getPageList(); for(const p of pages){ await genSEO(p.id); await new Promise(r=>setTimeout(r,400)); } await saveSEO(); }
 
 // ── Apply SEO to the actual page files (managed meta + JSON-LD) ─────────────
-function seoBuildSchema(pg,s,canon){
+// Harvest a page's OWN question-and-answer content: an <h2>/<h3> that ends in a
+// question mark, plus the copy that follows it up to the next heading. Real
+// content only — a page with no Q&A material simply gets no FAQPage node, and a
+// hand-entered aeoFAQs list always wins over this.
+function seoFaqFromDoc(doc){
+  const out=[];
+  try{
+    const heads=doc.querySelectorAll('h2,h3');
+    for(const h of heads){
+      const q=(h.textContent||'').trim();
+      if(!/\?\s*$/.test(q) || q.length<8 || q.length>200) continue;
+      let a='', n=h.nextElementSibling;
+      while(n && !/^H[1-6]$/.test(n.tagName)){
+        a+=' '+(n.textContent||'');
+        if(a.length>900) break;
+        n=n.nextElementSibling;
+      }
+      a=a.replace(/\s+/g,' ').trim().slice(0,500);
+      if(a.length>=40) out.push({q,a});
+      if(out.length>=10) break;
+    }
+  }catch(e){}
+  // One Q&A pair is not an FAQ; Google wants a real set.
+  return out.length>=2?out:[];
+}
+function seoBuildSchema(pg,s,canon,docFaqs){
   const g=seoGlobal(), site=_site||{}, graph=[];
   if(g.includeOrg!==false && site.name){
     const org={'@type':g.orgType||'Organization', name:site.name};
@@ -7088,7 +7113,39 @@ function seoBuildSchema(pg,s,canon){
     if(site.email) org.email=site.email;
     const a=site.address||{};
     if(a.street||a.city) org.address={'@type':'PostalAddress',streetAddress:a.street||'',addressLocality:a.city||'',addressRegion:a.state||'',postalCode:a.zip||'',addressCountry:a.country||'US'};
-    const sameAs=Object.values(site.social||{}).filter(Boolean); if(sameAs.length) org.sameAs=sameAs;
+    const sameAs=Object.values(site.social||{}).filter(Boolean);
+    // ── Approved business facts from a deploy package (site.business) ────────
+    // The SEO platform's console holds facts Site Info has no field for: opening
+    // hours, the service area, the Google listing, and a REAL aggregate rating.
+    // They only ever add to the node — nothing here can blank out a value the
+    // rest of the panel already produced.
+    const bz=(site.business&&typeof site.business==='object')?site.business:{};
+    if(!org.description && bz.description) org.description=bz.description;
+    if(!org.telephone && bz.phone) org.telephone=bz.phone;
+    if(!org.email && bz.email) org.email=bz.email;
+    if(org.telephone) org.contactPoint={'@type':'ContactPoint',telephone:org.telephone,contactType:'customer service'};
+    if(!org.address && (bz.street||bz.city)){
+      org.address={'@type':'PostalAddress',streetAddress:bz.street||'',addressLocality:bz.city||'',
+                   addressRegion:bz.state||'',postalCode:bz.zip||'',addressCountry:'US'};
+    }
+    // "Mon-Fri 08:00-17:00; Sat 09:00-13:00" → the list schema.org expects.
+    if(bz.hours){
+      const hrs=String(bz.hours).split(/[;,]/).map(x=>x.trim()).filter(Boolean);
+      if(hrs.length) org.openingHours=hrs;
+    }
+    if(bz.gbp_url){ org.hasMap=bz.gbp_url; if(sameAs.indexOf(bz.gbp_url)<0) sameAs.push(bz.gbp_url); }
+    (bz.sameas||[]).forEach(u=>{ if(u && sameAs.indexOf(u)<0) sameAs.push(u); });
+    const sa=bz.service_area||{}, area=[];
+    if(sa.primary) area.push({'@type':'City',name:sa.primary});
+    (sa.secondary||[]).forEach(t=>{ if(t) area.push({'@type':'City',name:t}); });
+    if(area.length) org.areaServed=area;
+    // ONLY from a rating the platform actually delivered. An invented or
+    // half-filled AggregateRating is a structured-data violation, so a partial
+    // one is not emitted at all.
+    if(bz.rating_value && bz.rating_count){
+      org.aggregateRating={'@type':'AggregateRating',ratingValue:String(bz.rating_value),reviewCount:String(bz.rating_count)};
+    }
+    if(sameAs.length) org.sameAs=sameAs;
     graph.push(org);
   }
   const type=s.schemaType||'WebPage';
@@ -7124,9 +7181,11 @@ function seoBuildSchema(pg,s,canon){
   }
   // FAQPage from aeoFAQs: [{question,answer}] (or {q,a}) — rendered only when
   // real Q&A pairs exist.
-  const faqs=(Array.isArray(s.aeoFAQs)?s.aeoFAQs:[]).map(f=>({
+  let faqs=(Array.isArray(s.aeoFAQs)?s.aeoFAQs:[]).map(f=>({
     q:String((f&&(f.question||f.q))||'').trim(), a:String((f&&(f.answer||f.a))||'').trim()
   })).filter(f=>f.q&&f.a);
+  // Nothing entered by hand → use the page's own question headings.
+  if(!faqs.length && Array.isArray(docFaqs) && docFaqs.length) faqs=docFaqs;
   if(faqs.length){
     graph.push({'@type':'FAQPage', mainEntity:faqs.map(f=>({'@type':'Question', name:f.q, acceptedAnswer:{'@type':'Answer', text:f.a}}))});
   }
@@ -7187,8 +7246,16 @@ function seoInjectIntoHtml(html,pg,base){
     if(/^(og:(title|description|image|url)|twitter:(card|title|description|image)|description|robots)$/i.test(key)) return;
     add('meta', ((mt.attr==='property')?{property:key,content:val}:{name:key,content:val}));
   });
-  const schema=seoBuildSchema(pg,s,canon);
+  const schema=seoBuildSchema(pg,s,canon,seoFaqFromDoc(doc));
   if(schema){ const sc=add('script',{type:'application/ld+json'}); sc.textContent=JSON.stringify(schema); }
+  // Local hints. Harmless meta that reinforces the service area on every page,
+  // taken from the imported business facts or Site Info's address.
+  const bzg=(_site&&_site.business)||{}, adr=(_site&&_site.address)||{};
+  const gCity=(bzg.city||adr.city||'').trim(), gState=(bzg.state||adr.state||'').trim();
+  if(gCity){
+    add('meta',{name:'geo.placename',content:gCity});
+    if(gState) add('meta',{name:'geo.region',content:'US-'+gState.trim().slice(0,2).toUpperCase()});
+  }
   // Imported JSON-LD blocks ride alongside Fourge's own graph, each in its own
   // script tag exactly as the platform generated it.
   ((s.extraJsonld&&Array.isArray(s.extraJsonld))?s.extraJsonld:[]).forEach(blk=>{
@@ -7880,7 +7947,9 @@ function pkgFilePicked(){
     const n=k=>Array.isArray(j[k])?j[k].length:0;
     if(st) st.textContent='Loaded '+esc(f.name)+' — generated '+esc(String(j.generated_at||'?').slice(0,10))
       +' for '+esc(String(j.site||'?'))+'. Contains: '+n('seo_meta')+' meta, '+n('schema')+' schema, '+n('og_tags')+' social, '
-      +n('content')+' content, '+((j.redirects&&j.redirects.rules&&j.redirects.rules.length)||0)+' redirects, '+n('manual_tasks')+' manual task(s). Preview before applying.';
+      +n('content')+' content, '+((j.redirects&&j.redirects.rules&&j.redirects.rules.length)||0)+' redirects, '+n('manual_tasks')+' manual task(s)'
+      +((j.business&&j.business.name)?', business profile for “'+esc(String(j.business.name))+'”':'')
+      +'. Preview before applying.';
     if(pv) pv.disabled=false; if(ap) ap.disabled=false;
   };
   fr.onerror=()=>{ if(st) st.textContent='Could not read that file.'; };
