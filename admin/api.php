@@ -244,6 +244,7 @@ try {
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'secret_exposure':    ob_end_clean(); fourgeApiSecretExposure($authUser, $body); break;
+        case 'ai_autofix':         ob_end_clean(); fourgeApiAiAutofix($authUser, $body); break;
         case 'reviews_fetch':      ob_end_clean(); fourgeApiReviewsFetch($authUser, $body); break;
         case 'reviews_find_place': ob_end_clean(); fourgeApiReviewsFindPlace($authUser, $body); break;
         case 'seo_package':     ob_end_clean(); fourgeApiSeoPackage($authUser, $body); break;
@@ -2755,6 +2756,318 @@ function fourgeEnsureLlms($force = false) {
     if ($body === '') return false;
     return @file_put_contents($f, FOURGE_LLMS_MARK . "\n" . $body) !== false;
 }
+// ── AI AUTO-FIX ─────────────────────────────────────────────────────────────
+// Fills the gaps an audit grades — SEO titles, meta descriptions, image alt
+// text, internal links — using the Anthropic key this site already has.
+//
+// The absolute rule: IT ONLY EVER FILLS GAPS. A title or description a human
+// wrote is never touched. A "weak" value (outside the length the audit grades)
+// IS rewritten, because a 12-character title is a gap wearing a hat — but a
+// value that reads fine and measures fine is left exactly alone.
+//
+// Every run is capped so it stays cheap and quick, and every item lands in the
+// report as written or skipped-with-a-reason. Nothing is ever silently dropped.
+define('FOURGE_AI_MODEL', 'claude-haiku-4-5-20251001');
+define('FOURGE_AI_STATE', 'ai_autofix.json');
+// The lengths the audit grades. Outside these a value is "weak" and gets redone.
+define('FOURGE_TITLE_MIN', 20); define('FOURGE_TITLE_MAX', 65);
+define('FOURGE_DESC_MIN', 70);  define('FOURGE_DESC_MAX', 165);
+
+function fourgeAiKey() {
+    $key = '';
+    try { $key = (string)fourgeGetSecret(fourgeDb(), 'claude_key'); } catch (Throwable $e) { $key = ''; }
+    if ($key === '') { $cfg = foundrySecret(); $key = trim((string)($cfg['anthropic_key'] ?? '')); }
+    if ($key === '' || strpos($key, 'REPLACE') !== false) return '';
+    return $key;
+}
+// One server-side Claude call that RETURNS text (claudeProxy echoes to the
+// client, which is no use to a batch job). Returns a string, or ['error'=>…].
+function fourgeAiText($system, $user, $max = 400) {
+    $key = fourgeAiKey();
+    if ($key === '') return ['error' => 'No Anthropic API key is configured for this site.'];
+    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 45,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'x-api-key: ' . $key, 'anthropic-version: 2023-06-01'],
+        CURLOPT_POSTFIELDS => json_encode(['model' => FOURGE_AI_MODEL, 'max_tokens' => (int)$max,
+            'system' => (string)$system, 'messages' => [['role' => 'user', 'content' => (string)$user]]]),
+    ]);
+    $res = (string)curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($err) return ['error' => 'Could not reach Anthropic: ' . $err];
+    $d = json_decode($res, true);
+    if ($code !== 200) {
+        return ['error' => 'Anthropic ' . $code . ': ' . mb_substr((string)($d['error']['message'] ?? $res), 0, 200)];
+    }
+    $text = '';
+    foreach ((array)($d['content'] ?? []) as $blk) if (($blk['type'] ?? '') === 'text') $text .= (string)($blk['text'] ?? '');
+    return trim($text);
+}
+// Models wrap JSON in ``` fences however you ask them not to.
+function fourgeAiJson($text) {
+    $t = trim(preg_replace('~^```(?:json)?|```$~m', '', (string)$text));
+    $d = json_decode($t, true);
+    if (is_array($d)) return $d;
+    if (preg_match('~\{[\s\S]*\}~', $t, $m)) { $d = json_decode($m[0], true); if (is_array($d)) return $d; }
+    return null;
+}
+function fourgeAiWeak($v, $min, $max) {
+    $v = trim((string)$v);
+    if ($v === '') return true;                       // missing
+    $n = mb_strlen($v);
+    return $n < $min || $n > $max;                    // weak
+}
+// "1. Some alt text" → indexed list, tolerant of 1) and stray blank lines.
+function fourgeAiNumbered($text) {
+    $out = [];
+    foreach (preg_split('~\r?\n~', (string)$text) as $line) {
+        if (preg_match('~^\s*(\d+)\s*[.)]\s*(.+)$~', $line, $m)) {
+            $v = trim($m[2]);
+            $v = trim(preg_replace('~^["\x27]|["\x27]$~', '', $v));
+            if ($v !== '') $out[(int)$m[1] - 1] = mb_substr($v, 0, 125);
+        }
+    }
+    return $out;
+}
+// Deterministic alt from a filename, used when the model skips an item:
+// "kitchen-remodel_lubbock-2-300x200.jpg" → "Kitchen remodel lubbock".
+function fourgeAiAltFromFile($file) {
+    $s = preg_replace('~\.[a-z0-9]+$~i', '', basename((string)$file));
+    $s = preg_replace('~-?\d+x\d+$|-scaled$|-copy(-\d+)?$|-e\d{10,}~i', '', $s);
+    $s = trim(preg_replace('~[-_]+~', ' ', $s));
+    $s = trim(preg_replace('~\s*\d+\s*$~', '', $s));
+    if ($s === '' || preg_match('~^(img|image|dsc|photo|screenshot|untitled|final|new)[\s\d]*$~i', $s)) return '';
+    return ucfirst(mb_strtolower($s));
+}
+// Link the FIRST plain-text mention of a keyword, walking the markup so it can
+// never land inside an existing link, a heading, a button, or a tag attribute.
+// Returns the new HTML, or null when there was nowhere safe to put one.
+function fourgeAiLinkKeyword($html, $kw, $url) {
+    $html = (string)$html;
+    if ($kw === '' || $url === '') return null;
+    if (stripos($html, 'href="' . $url) !== false) return null;      // already links there
+    $parts = preg_split('~(<[^>]+>)~', $html, -1, PREG_SPLIT_DELIM_CAPTURE);
+    $inA = 0; $inH = 0; $inBtn = 0; $inSkip = 0;
+    $rx = '~\b(' . preg_quote($kw, '~') . ')\b~i';
+    foreach ($parts as $i => $seg) {
+        if ($seg === '') continue;
+        if ($seg[0] === '<') {
+            if     (preg_match('~^<a\b~i', $seg))            $inA++;
+            elseif (preg_match('~^</a>~i', $seg))            $inA = max(0, $inA - 1);
+            elseif (preg_match('~^<h[1-6]\b~i', $seg))       $inH++;
+            elseif (preg_match('~^</h[1-6]>~i', $seg))       $inH = max(0, $inH - 1);
+            elseif (preg_match('~^<button\b~i', $seg))       $inBtn++;
+            elseif (preg_match('~^</button>~i', $seg))       $inBtn = max(0, $inBtn - 1);
+            // Never inside script/style/textarea — their text is not prose.
+            elseif (preg_match('~^<(script|style|textarea)\b~i', $seg)) $inSkip++;
+            elseif (preg_match('~^</(script|style|textarea)>~i', $seg)) $inSkip = max(0, $inSkip - 1);
+            continue;
+        }
+        if ($inA || $inH || $inBtn || $inSkip) continue;
+        if (preg_match($rx, $seg)) {
+            $parts[$i] = preg_replace($rx, '<a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">$1</a>', $seg, 1);
+            return implode('', $parts);
+        }
+    }
+    return null;
+}
+function fourgeAiState() { $s = cmsPkgReadJson(FOURGE_AI_STATE, []); return is_array($s) ? $s : []; }
+function fourgeAiSaveState($s) { cmsPkgWriteJson(FOURGE_AI_STATE, $s); }
+
+// The run. Caps keep each pass cheap; the weekly trigger picks up what is left.
+function fourgeAiAutofix($opts = []) {
+    $metaCap = max(0, (int)($opts['metaCap'] ?? 10));
+    $altCap  = max(0, (int)($opts['altCap']  ?? 8));
+    $linkCap = max(0, (int)($opts['linkCap'] ?? 10));
+    $dry     = !empty($opts['dry']);
+    if (fourgeAiKey() === '') {
+        return ['ok' => false, 'error' => 'No Anthropic API key is configured. Add one in Settings → Secrets (claude_key) first.'];
+    }
+    $rep = ['ok' => true, 'ran_at' => gmdate('c'), 'dry_run' => $dry,
+            'metas' => [], 'alts' => [], 'links' => [], 'skipped' => []];
+    $skip = function ($what, $why) use (&$rep) { $rep['skipped'][] = ['item' => $what, 'reason' => $why]; };
+
+    $site  = cmsPkgReadJson('site.json', []);  if (!is_array($site))  $site  = [];
+    $pages = cmsPkgReadJson('pages.json', []); if (!is_array($pages)) $pages = [];
+    $seo   = cmsPkgReadJson('seo.json', []);   if (!is_array($seo))   $seo   = [];
+    $siteName = trim((string)($site['name'] ?? ''));
+    $baseUrl  = trim((string)($site['website'] ?? ''));
+    if ($baseUrl !== '' && !preg_match('~^https?://~i', $baseUrl)) $baseUrl = 'https://' . $baseUrl;
+
+    // ── 1. missing OR weak SEO titles and descriptions ──────────────────────
+    $seoDirty = false; $done = 0;
+    foreach ($pages as $pid => $rec) {
+        if ($done >= $metaCap) break;
+        if (!is_array($rec) || !empty($rec['draft'])) continue;
+        $file = (string)($rec['path'] ?? ($rec['file'] ?? ''));
+        if ($file === '') continue;
+        $cur   = is_array($seo[$pid] ?? null) ? $seo[$pid] : [];
+        $needT = fourgeAiWeak($cur['title'] ?? '',       FOURGE_TITLE_MIN, FOURGE_TITLE_MAX);
+        $needD = fourgeAiWeak($cur['description'] ?? '', FOURGE_DESC_MIN,  FOURGE_DESC_MAX);
+        if (!$needT && !$needD) continue;
+        $abs = PUBLIC_HTML . '/' . ltrim($file, '/');
+        $html = is_file($abs) ? (string)@file_get_contents($abs) : '';
+        if (trim($html) === '') { $skip((string)($rec['title'] ?? $pid), 'The page file is missing or empty'); continue; }
+        // Body text only — the nav and footer are the same on every page and
+        // would make every description read the same.
+        $body = $html;
+        if (preg_match('~<main\b[^>]*>([\s\S]*?)</main>~i', $html, $m)) $body = $m[1];
+        $text = trim(preg_replace('~\s+~', ' ', strip_tags(preg_replace('~<(script|style)\b[\s\S]*?</\1>~i', ' ', $body))));
+        if (mb_strlen($text) < 60) { $skip((string)($rec['title'] ?? $pid), 'Not enough text on the page to describe it honestly'); continue; }
+        $out = fourgeAiText(
+            'You write SEO metadata. Reply with ONLY compact JSON, no markdown, no commentary: '
+            . '{"title":"a ' . FOURGE_TITLE_MIN . '-' . FOURGE_TITLE_MAX . ' character page title","description":"a '
+            . FOURGE_DESC_MIN . '-' . FOURGE_DESC_MAX . ' character meta description ending in a call to action"}. '
+            . 'Describe only what the page actually says. Never invent services, locations, credentials, prices or guarantees.',
+            'Site: ' . ($siteName ?: 'this business') . "\nPage title: " . (string)($rec['title'] ?? '')
+            . "\nPage content:\n" . mb_substr($text, 0, 1200), 300);
+        if (is_array($out)) { $skip((string)($rec['title'] ?? $pid), $out['error']); continue; }
+        $j = fourgeAiJson($out);
+        if (!$j) { $skip((string)($rec['title'] ?? $pid), 'The model did not return usable JSON'); continue; }
+        $wrote = [];
+        if ($needT && trim((string)($j['title'] ?? '')) !== '') {
+            $cur['title'] = mb_substr(trim(preg_replace('~[\r\n\t]+~', ' ', (string)$j['title'])), 0, 120);
+            $wrote[] = 'title';
+        }
+        if ($needD && trim((string)($j['description'] ?? '')) !== '') {
+            $cur['description'] = mb_substr(trim(preg_replace('~[\r\n\t]+~', ' ', (string)$j['description'])), 0, 320);
+            $wrote[] = 'description';
+        }
+        if (!$wrote) { $skip((string)($rec['title'] ?? $pid), 'The model returned nothing for the missing field'); continue; }
+        if (!$dry) { $seo[$pid] = $cur; $seoDirty = true; }
+        $rep['metas'][] = ['page' => (string)($rec['title'] ?? $pid), 'wrote' => implode(' + ', $wrote),
+                           'was' => ($needT && ($cur['title'] ?? '') !== '' ? 'weak/missing' : 'missing')];
+        $done++;
+    }
+    if ($seoDirty && !$dry) cmsPkgWriteJson('seo.json', $seo);
+
+    // ── 2. images with no alt text ──────────────────────────────────────────
+    $state = fourgeAiState();
+    $altDone = is_array($state['alts'] ?? null) ? $state['alts'] : [];
+    $done = 0;
+    foreach ($pages as $pid => $rec) {
+        if ($done >= $altCap) break;
+        if (!is_array($rec)) continue;
+        $file = (string)($rec['path'] ?? ($rec['file'] ?? ''));
+        if ($file === '') continue;
+        $abs = PUBLIC_HTML . '/' . ltrim($file, '/');
+        if (!is_file($abs)) continue;
+        $html = (string)@file_get_contents($abs);
+        $sig = md5($html);
+        if (($altDone[$pid] ?? '') === $sig) continue;          // unchanged since we last looked
+        // An <img> with no alt attribute at all, or one that is empty/whitespace.
+        // The value must START with a real character: writing it as [^"]*\S lets
+        // \S match the CLOSING QUOTE, so alt="" reads as "already described" and
+        // every empty alt on the site gets silently skipped.
+        $rx = '~<img\b(?![^>]*\balt\s*=\s*"\s*[^"\s])(?![^>]*\balt\s*=\s*\x27\s*[^\x27\s])[^>]*>~i';
+        if (!preg_match_all($rx, $html, $mm) || !$mm[0]) { $altDone[$pid] = $sig; continue; }
+        $tags = array_slice($mm[0], 0, 12);
+        $names = [];
+        foreach ($tags as $t) { preg_match('~\bsrc\s*=\s*["\x27]([^"\x27]+)["\x27]~i', $t, $m); $names[] = basename($m[1] ?? 'image'); }
+        $lines = []; foreach ($names as $i => $n) $lines[] = ($i + 1) . '. ' . $n;
+        $out = fourgeAiText(
+            'You write image alt text: max 12 words, describing what the image shows. No quotes, no "image of", '
+            . 'no marketing copy. Reply with a numbered list only, one line per input line, in the same order.',
+            'Site: ' . ($siteName ?: 'this business') . "\nPage: " . (string)($rec['title'] ?? '')
+            . "\nImage filenames:\n" . implode("\n", $lines), 500);
+        $alts = [];
+        if (is_array($out)) $skip('alt text on "' . (string)($rec['title'] ?? $pid) . '"', $out['error'] . ' — used filenames instead');
+        else $alts = fourgeAiNumbered($out);
+        $i = 0; $filled = 0;
+        $next = preg_replace_callback($rx, function ($m) use (&$i, $alts, $names, &$filled) {
+            $alt = trim((string)($alts[$i] ?? ''));
+            if ($alt === '') $alt = fourgeAiAltFromFile($names[$i] ?? '');
+            $i++;
+            if ($alt === '') return $m[0];
+            $filled++;
+            // Replace an empty alt="" if present, otherwise insert one.
+            if (preg_match('~\balt\s*=\s*("\s*"|\x27\s*\x27)~i', $m[0])) {
+                return preg_replace('~\balt\s*=\s*("\s*"|\x27\s*\x27)~i', 'alt="' . htmlspecialchars($alt, ENT_QUOTES, 'UTF-8') . '"', $m[0], 1);
+            }
+            return preg_replace('~^<img\b~i', '<img alt="' . htmlspecialchars($alt, ENT_QUOTES, 'UTF-8') . '"', $m[0], 1);
+        }, $html);
+        if ($next !== null && $next !== $html && $filled > 0) {
+            if (!$dry) { cmsPkgBackup($file); @file_put_contents($abs, $next); $altDone[$pid] = md5($next); }
+            $rep['alts'][] = ['page' => (string)($rec['title'] ?? $pid), 'images' => $filled];
+            $done++;
+        } else {
+            $altDone[$pid] = $sig;
+        }
+    }
+
+    // ── 3. internal links to the pages the campaign is targeting ────────────
+    $linked = 0;
+    if ($linkCap > 0 && $baseUrl !== '') {
+        $targets = [];
+        foreach ($pages as $pid => $rec) {
+            if (!is_array($rec) || !empty($rec['draft'])) continue;
+            $kw = trim((string)(($seo[$pid]['focusKeyword'] ?? '')));
+            if (mb_strlen($kw) < 6) continue;                   // too short to link safely
+            $file = (string)($rec['path'] ?? ($rec['file'] ?? ''));
+            if ($file === '') continue;
+            $targets[$pid] = ['kw' => $kw, 'url' => cmsPkgPageUrl($baseUrl, $file), 'title' => (string)($rec['title'] ?? $pid)];
+        }
+        foreach ($targets as $tid => $t) {
+            if ($linked >= $linkCap) break;
+            foreach ($pages as $did => $drec) {
+                if ($linked >= $linkCap) break;
+                if ($did === $tid || !is_array($drec) || !empty($drec['draft'])) continue;
+                $dfile = (string)($drec['path'] ?? ($drec['file'] ?? ''));
+                if ($dfile === '') continue;
+                $dabs = PUBLIC_HTML . '/' . ltrim($dfile, '/');
+                if (!is_file($dabs)) continue;
+                $dhtml = (string)@file_get_contents($dabs);
+                // Only inside <main> — a keyword in the shared nav or footer
+                // would link every page to the same target.
+                if (!preg_match('~(<main\b[^>]*>)([\s\S]*?)(</main>)~i', $dhtml, $mm)) continue;
+                $newInner = fourgeAiLinkKeyword($mm[2], $t['kw'], $t['url']);
+                if ($newInner === null) continue;
+                $next = str_replace($mm[0], $mm[1] . $newInner . $mm[3], $dhtml);
+                if (!$dry) { cmsPkgBackup($dfile); @file_put_contents($dabs, $next); }
+                $rep['links'][] = ['from' => (string)($drec['title'] ?? $did), 'to' => $t['title'], 'keyword' => $t['kw']];
+                $linked++;
+                break;                                          // one inbound link per target per run
+            }
+        }
+    } elseif ($linkCap > 0) {
+        $skip('internal links', 'Set Design → Website URL first — a link needs the site\'s real address');
+    }
+
+    if (!$dry) {
+        $state['alts'] = $altDone;
+        $state['last'] = $rep;
+        $state['last_run'] = time();
+        fourgeAiSaveState($state);
+    }
+    $rep['totals'] = ['metas' => count($rep['metas']), 'alts' => count($rep['alts']),
+                      'links' => count($rep['links']), 'skipped' => count($rep['skipped'])];
+    return $rep;
+}
+function fourgeApiAiAutofix($me, $body) {
+    if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
+    echo json_encode(fourgeAiAutofix([
+        'dry'     => !empty($body['dry']),
+        'metaCap' => isset($body['metaCap']) ? (int)$body['metaCap'] : 10,
+        'altCap'  => isset($body['altCap'])  ? (int)$body['altCap']  : 8,
+        'linkCap' => isset($body['linkCap']) ? (int)$body['linkCap'] : 10,
+    ]));
+}
+// Weekly upkeep, so pages created after the last run get covered too. Fourge has
+// no cron, so this rides the login self-heal — best-effort and time-boxed, and
+// it never blocks the login it runs inside.
+function fourgeAiWeeklyTick() {
+    $state = fourgeAiState();
+    if (empty($state['weekly'])) return false;
+    $last = (int)($state['last_run'] ?? 0);
+    if ($last && (time() - $last) < 7 * 86400) return false;
+    if (fourgeAiKey() === '') return false;
+    try { fourgeAiAutofix(['metaCap' => 5, 'altCap' => 4, 'linkCap' => 5]); return true; }
+    catch (Throwable $e) { return false; }
+}
+
 function fourgeApiInstallCleanUrls($me) {
     if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
     if (!fourgeWriteCleanUrlHtaccess()) {
@@ -2778,6 +3091,8 @@ function fourgeApiInstallCleanUrls($me) {
     $hdr = false; $llms = false;
     try { $hdr    = fourgeWriteDefaultHeaders();   } catch (Throwable $e) { $hdr = false; }
     try { $llms   = fourgeEnsureLlms();            } catch (Throwable $e) { $llms = false; }
+    // Weekly AI upkeep, if the operator turned it on.
+    try { fourgeAiWeeklyTick(); } catch (Throwable $e) {}
     try { $due    = cmsPkgTick(false);              } catch (Throwable $e) { $due = []; }
     echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due)]);
