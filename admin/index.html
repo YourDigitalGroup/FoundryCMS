@@ -2404,7 +2404,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.90';
+const CMS_VERSION='1.14.91';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -7102,6 +7102,17 @@ function seoFaqFromDoc(doc){
 }
 function seoBuildSchema(pg,s,canon,docFaqs){
   const g=seoGlobal(), site=_site||{}, graph=[];
+  // WebSite: the site's own identity node, so an answer engine can attribute a
+  // quote to the site rather than to a loose page. Deliberately carries NO
+  // SearchAction — Fourge sites have no search endpoint, and advertising one
+  // that 404s is worse than omitting it.
+  const wsBase=fourgeCanonicalBase();
+  if(wsBase && site.name){
+    const ws={'@type':'WebSite','@id':wsBase+'/#website',url:wsBase+'/',name:site.name,
+              inLanguage:(document.documentElement.lang||'en')};
+    if(g.includeOrg!==false) ws.publisher={'@id':wsBase+'/#business'};
+    graph.push(ws);
+  }
   if(g.includeOrg!==false && site.name){
     const org={'@type':g.orgType||'Organization', name:site.name};
     const base=fourgeCanonicalBase();
@@ -7153,11 +7164,19 @@ function seoBuildSchema(pg,s,canon,docFaqs){
     const node={'@type':type, name:s.title||pg.label||pg.title||''};
     if(canon)node.url=canon;
     if(s.description)node.description=s.description;
-    // Reference the business entity by @id rather than repeating it.
-    const orgId=(graph[0]&&graph[0]['@id'])||'';
+    // Reference the business entity by @id rather than repeating it. Found by
+    // IDENTITY, not position: the graph now starts with a WebSite node, and an
+    // index-based lookup silently pointed every page at the wrong entity.
+    const orgNode=graph.find(n=>n&&typeof n['@id']==='string'&&/#business$/.test(n['@id']));
+    const orgId=(orgNode&&orgNode['@id'])||'';
     if(orgId){
       if(type==='Service') node.provider={'@id':orgId};
-      else if(/^(WebPage|AboutPage|ContactPage|CollectionPage|ItemPage|FAQPage)$/.test(type)) node.isPartOf={'@id':orgId};
+      else if(/^(WebPage|AboutPage|ContactPage|CollectionPage|ItemPage|FAQPage)$/.test(type)){
+        // A page belongs to the SITE and is about the BUSINESS — those are two
+        // different relationships, and Google reads them differently.
+        node.isPartOf=wsBase?{'@id':wsBase+'/#website'}:{'@id':orgId};
+        node.about={'@id':orgId};
+      }
       else node.publisher={'@id':orgId};
     }
     // Breadcrumbs for everything except the home page — one level deep, which

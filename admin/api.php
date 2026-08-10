@@ -3083,7 +3083,7 @@ function cmsPkgWriteHeaders($pairs) {
 function cmsPkgBusiness($biz, &$pages_unused = null) {
     $txt = function ($v) { return trim(preg_replace('~[\r\n\t]+~', ' ', (string)$v)); };
     $out = [];
-    foreach (['name','description','phone','email','street','city','state','zip','hours','gbp_url'] as $k) {
+    foreach (['name','url','type','categories','description','phone','email','street','city','state','zip','hours','gbp_url'] as $k) {
         $v = $txt($biz[$k] ?? '');
         if ($v !== '') $out[$k] = mb_substr($v, 0, 500);
     }
@@ -3419,6 +3419,40 @@ function cmsPkgApply($pkg, $dry) {
         }
     }
 
+    // 6c ── site-level things a package cannot fix, surfaced so they are not
+    // silently missing. Checked against what this site actually has.
+    $siteNow = cmsPkgReadJson('site.json', []);
+    if (!is_array($siteNow)) $siteNow = [];
+    $hasFavicon = trim((string)($siteNow['favicon'] ?? '')) !== '' || is_file(PUBLIC_HTML . '/favicon.ico');
+    if (!$hasFavicon) {
+        $man('site_task', 'Favicon', 'This site has no favicon. Add one in Design → Favicon — browsers show a blank page icon without it, and the audit counts it.');
+    }
+    $an = is_array($siteNow['analytics'] ?? null) ? $siteNow['analytics'] : [];
+    if (trim((string)($an['ga4'] ?? '')) === '' && trim((string)($an['custom'] ?? '')) === '') {
+        $man('site_task', 'Analytics', 'No analytics tag is installed. Add the GA4 measurement ID in the Analytics tab, or nothing this package does can be measured.');
+    }
+    $hasPrivacy = false;
+    foreach ((array)$pages as $rec) {
+        if (!is_array($rec)) continue;
+        $hay = strtolower((string)($rec['title'] ?? '') . ' ' . (string)($rec['path'] ?? ($rec['file'] ?? '')));
+        if (strpos($hay, 'privacy') !== false) { $hasPrivacy = true; break; }
+    }
+    if (!$hasPrivacy) {
+        $man('site_task', 'Privacy policy', 'This site has no privacy policy page. The audit\'s trust pillar needs one, linked from the footer — create it in Pages.');
+    }
+    // Whether www or non-www is canonical cannot be inferred, and guessing 301s
+    // an indexed domain at a hostname that may have no certificate. It is a
+    // human decision, so it is listed rather than applied.
+    $wsite = trim((string)($siteNow['website'] ?? ''));
+    if ($wsite !== '') {
+        $wHost = (string)parse_url(preg_match('~^https?://~i', $wsite) ? $wsite : 'https://' . $wsite, PHP_URL_HOST);
+        if ($wHost !== '') {
+            $other = stripos($wHost, 'www.') === 0 ? substr($wHost, 4) : 'www.' . $wHost;
+            $man('site_task', 'Canonical host',
+                'Confirm that https://' . $other . ' redirects to https://' . $wHost . ' (your configured domain). Fourge does not add that redirect itself — a wrong guess sends an indexed domain to a hostname that may have no certificate. Set it at the host or in DNS.');
+        }
+    }
+
     // 7 ── content (external_id is the idempotency key)
     $posts = cmsPkgReadJson('posts.json', []);
     if (!is_array($posts)) $posts = [];
@@ -3437,6 +3471,17 @@ function cmsPkgApply($pkg, $dry) {
         $body = cmsPkgSanitizeHtml($bodyRaw);
         if ($body === '') { $skip('content', $title, 'Body was empty (or contained nothing that survived sanitizing)'); continue; }
         $status = strtolower(trim((string)($c['status'] ?? 'draft')));
+        // UNRESOLVED QA HOLDS PUBLICATION. The platform leaves markers like
+        // "[CLIENT TO CONFIRM] …" in qa[] for anything a human still has to
+        // answer. Publishing copy with an open question — a made-up statistic,
+        // an unconfirmed licence number, a placeholder price — is worse than
+        // publishing nothing, so the item is created as a draft for review no
+        // matter what the package's status field says.
+        $qa = array_values(array_filter(array_map(function ($q) {
+            return trim(is_array($q) ? (string)($q['note'] ?? ($q['text'] ?? '')) : (string)$q);
+        }, (array)($c['qa'] ?? []))));
+        $qaHold = count($qa) > 0;
+        if ($qaHold) $status = 'draft';
         $schedRaw = trim((string)($c['schedule'] ?? ''));
         $schedTs = $schedRaw !== '' ? strtotime($schedRaw) : false;
         $isPage = strtolower(trim((string)($c['post_type'] ?? 'post'))) === 'page';
@@ -3451,6 +3496,10 @@ function cmsPkgApply($pkg, $dry) {
         if ($publishNow && $status === 'schedule' && $schedTs !== false && $schedTs <= $nowTs) $noteBits[] = 'schedule date already passed — published now';
         elseif ($publishAt !== '') $noteBits[] = 'scheduled for ' . $publishAt;
         elseif (!$publishNow) $noteBits[] = 'draft, awaiting review';
+        if ($qaHold) {
+            $noteBits[] = 'HELD as a draft: ' . count($qa) . ' unresolved question' . (count($qa) === 1 ? '' : 's')
+                        . ' — ' . mb_substr(implode('; ', $qa), 0, 220);
+        }
 
         if ($isPage) {
             $slug = cmsPkgSlug($c['slug'] ?? $title);
@@ -3473,6 +3522,15 @@ function cmsPkgApply($pkg, $dry) {
             // draft — it keeps the schedule it has.
             $wasLive      = !$isNew && empty($rec['draft']);
             $wasScheduled = !$isNew && !empty($rec['draft']) && trim((string)($rec['publishAt'] ?? '')) !== '';
+            // Live page + unresolved questions in the new copy: do NOTHING.
+            // Un-publishing takes a working page off the site; overwriting puts
+            // unreviewed copy live. Leaving it exactly as it is, and saying so,
+            // is the only move that is not a regression.
+            if ($wasLive && $qaHold) {
+                $skip('content', $title, 'This page is live and the new copy still has ' . count($qa)
+                    . ' unresolved question(s) — left untouched rather than publishing unreviewed copy. Resolve in the platform and re-import: ' . mb_substr(implode('; ', $qa), 0, 200));
+                continue;
+            }
             if ($wasLive && !$publishNow) {
                 $publishNow = true; $publishAt = '';
                 $noteBits = ['already live — updated in place, not un-published'];
@@ -3516,6 +3574,11 @@ function cmsPkgApply($pkg, $dry) {
             // that is already live, and never drops a schedule already set.
             $wasLive      = !$isNew && !empty($rec['published']);
             $wasScheduled = !$isNew && empty($rec['published']) && trim((string)($rec['publishAt'] ?? '')) !== '';
+            if ($wasLive && $qaHold) {
+                $skip('content', $title, 'This post is live and the new copy still has ' . count($qa)
+                    . ' unresolved question(s) — left untouched rather than publishing unreviewed copy. Resolve in the platform and re-import: ' . mb_substr(implode('; ', $qa), 0, 200));
+                continue;
+            }
             if ($wasLive && !$publishNow) {
                 $publishNow = true; $publishAt = '';
                 $noteBits = ['already live — updated in place, not un-published'];
