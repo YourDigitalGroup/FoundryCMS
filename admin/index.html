@@ -1170,6 +1170,9 @@ textarea.fb-input{resize:vertical}
         <div class="ni" onclick="navTo('reviews')" id="ni-reviews" title="Google reviews">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2.6 15 9 21.6 9.8 16.8 14.3 18.1 21 12 17.7 5.9 21 7.2 14.3 2.4 9.8 9 9"/></svg> Reviews
         </div>
+        <div class="ni" onclick="navTo('map')" id="ni-map" title="Map pins">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 9.2c0 5.6-8.5 12.3-8.5 12.3S3.5 14.8 3.5 9.2a8.5 8.5 0 0117 0z"/><circle cx="12" cy="9.2" r="3"/></svg> Map
+        </div>
         <div class="sb-sec admin-only">SYSTEM</div>
         <div class="ni admin-only" onclick="navTo('users')" id="ni-users"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Users</div>
         <div class="ni" onclick="navTo('revisions')" id="ni-revisions"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg> Revisions</div>
@@ -2162,6 +2165,132 @@ textarea.fb-input{resize:vertical}
         </div>
       </div>
 
+      <!-- ══════════════════════════════════════════════════════
+           MAP — pins, categories, popup design
+      ═══════════════════════════════════════════════════════ -->
+      <div class="panel" id="p-map">
+        <div style="max-width:760px">
+          <h1 style="font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin-bottom:4px">Map</h1>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:24px">Locations with a pin and a popup — dealers, clinics, campuses, service areas, or points on an image you upload. Add the <strong>Map block</strong> to any page in the page editor; it reads this list when the page loads, so fixing an address or hiding a location updates every map on the site without re-saving pages.</p>
+
+          <div class="si-sec">
+            <h2>Where the map comes from</h2>
+            <div class="desc" style="margin-bottom:12px">All three draw the same pins and the same popups. Only the background changes.</div>
+            <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:0 0 10px">
+              <input type="radio" name="map-src" value="osm" onchange="mapSetSource('osm')" style="width:auto;margin:3px 0 0;cursor:pointer">
+              <span><strong>OpenStreetMap</strong> — recommended<br><small style="color:var(--muted)">No key, no account, nothing to bill. Works the moment you add a pin.</small></span>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:0 0 10px">
+              <input type="radio" name="map-src" value="google" onchange="mapSetSource('google')" style="width:auto;margin:3px 0 0;cursor:pointer">
+              <span><strong>Google Maps</strong><br><small style="color:var(--muted)">Google's own tiles and Street View imagery. Needs a billable API key — see below.</small></span>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:0 0 4px">
+              <input type="radio" name="map-src" value="image" onchange="mapSetSource('image')" style="width:auto;margin:3px 0 0;cursor:pointer">
+              <span><strong>An image you upload</strong><br><small style="color:var(--muted)">A campus map, floor plan, trail map or illustration — with the same drag and zoom. Pins are placed by clicking the image.</small></span>
+            </label>
+          </div>
+
+          <div class="si-sec" id="map-google-box" style="display:none">
+            <h2>Google Maps key</h2>
+            <div class="desc" style="margin-bottom:12px">Unlike the reviews key, <strong>this one cannot be hidden</strong>. Google's map runs in the visitor's browser, so the key is in the page for anyone to read — that is how the product works, not a flaw in Fourge. What makes it safe is restricting it, which takes a minute:<br><br>
+              In <strong>Google Cloud Console → Credentials → your key</strong>:<br>
+              • <strong>Application restrictions</strong> → Websites → add <code>yourdomain.com/*</code> and <code>www.yourdomain.com/*</code><br>
+              • <strong>API restrictions</strong> → Maps JavaScript API only<br>
+              • <strong>Billing → Budgets &amp; alerts</strong> → set a cap so a scraped key cannot run up a bill<br><br>
+              With those three in place a copied key does nothing on anyone else's site. Leave this blank and the map quietly uses OpenStreetMap instead.</div>
+            <div class="fg"><label>Maps JavaScript API key</label>
+              <input type="text" id="map-gkey" placeholder="AIza…" autocomplete="off">
+              <small>Saved in data/map.json, which is a public file — deliberately, because the page needs it.</small>
+            </div>
+          </div>
+
+          <div class="si-sec" id="map-image-box" style="display:none">
+            <h2>Map image</h2>
+            <div class="desc" style="margin-bottom:12px">Any image works. Bigger is better — visitors can zoom in, and a small image goes soft when they do.</div>
+            <div class="fg"><label>Image</label>
+              <div style="display:flex;gap:8px">
+                <input type="text" id="map-img-url" placeholder="/images/campus-map.png" style="flex:1">
+                <button class="fd-btn-secondary" style="padding:8px 13px" onclick="mapPickImage()">Choose</button>
+              </div>
+            </div>
+            <div id="map-img-stage" style="margin-top:12px"></div>
+          </div>
+
+          <div class="si-sec" id="map-tile-box">
+            <h2>Map tiles <span style="font-weight:400;color:var(--muted);font-size:13px">— advanced</span></h2>
+            <div class="desc" style="margin-bottom:12px">The default is OpenStreetMap's public tile service, which is free and fine for a normal business site. If a map ever gets heavy traffic, paste a tile URL from a provider here instead — the map itself does not change.</div>
+            <div class="fg"><label>Tile URL template</label>
+              <input type="text" id="map-tile-url" placeholder="https://tile.openstreetmap.org/{z}/{x}/{y}.png">
+            </div>
+            <div class="fr">
+              <div class="fg"><label>Attribution</label><input type="text" id="map-tile-attr"><small>Required by most tile providers, OpenStreetMap included.</small></div>
+              <div class="fg"><label>Deepest zoom</label><input type="number" id="map-tile-max" min="2" max="22" step="1"></div>
+            </div>
+          </div>
+
+          <div class="si-sec">
+            <h2>How the map opens</h2>
+            <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:2px 0 12px">
+              <input type="checkbox" id="map-fit" style="width:auto;margin:2px 0 0;cursor:pointer">
+              <span>Frame all the pins automatically<br><small style="color:var(--muted)">On by default, and almost always what you want. Turn it off to always open on a fixed point.</small></span>
+            </label>
+            <div class="fr" id="map-center-box">
+              <div class="fg"><label>Centre latitude</label><input type="number" id="map-lat" step="any" placeholder="44.9778"></div>
+              <div class="fg"><label>Centre longitude</label><input type="number" id="map-lng" step="any" placeholder="-93.2650"></div>
+            </div>
+            <div class="fr">
+              <div class="fg"><label>Zoom</label><input type="number" id="map-zoom" min="1" max="21" step="1" placeholder="12"><small>1 is the whole world, 15 is a neighbourhood, 18 is a street.</small></div>
+              <div class="fg"><label>Height on the page (px)</label><input type="number" id="map-height" min="180" max="1200" step="10" placeholder="420"></div>
+            </div>
+          </div>
+
+          <div class="si-sec">
+            <h2>Categories</h2>
+            <div class="desc" style="margin-bottom:12px">A colour and a marker, set once and shared by every pin that uses it — so restyling forty locations is one edit. With two or more, visitors get a legend they can click to filter, and a page can carry a map of just one category.</div>
+            <div id="map-cats" style="display:flex;flex-direction:column;gap:8px"></div>
+            <button class="fd-btn-secondary" style="margin-top:10px" onclick="mapCatAdd()">+ Add a category</button>
+          </div>
+
+          <div class="si-sec">
+            <h2>Pins</h2>
+            <div class="desc" style="margin-bottom:12px">Each pin is a set of fields, not a piece of code — which is what lets the same pins fill the popup, the location list under the map, and the structured data search engines read. Need something the fields do not cover? Add it under <strong>Extra fields</strong>.</div>
+            <div id="map-pins" style="display:flex;flex-direction:column;gap:10px"></div>
+            <button class="fd-btn-primary" style="margin-top:12px" onclick="mapPinAdd()">Add a pin</button>
+          </div>
+
+          <div class="si-sec">
+            <h2>Popup design</h2>
+            <div class="desc" style="margin-bottom:12px">One template for every pin. <code>{{title}}</code>, <code>{{subtitle}}</code>, <code>{{address}}</code>, <code>{{phone}}</code>, <code>{{url}}</code>, <code>{{image}}</code> and any extra field as <code>{{custom.hours}}</code>. Wrap a part in <code>{{#phone}}…{{/phone}}</code> and it disappears for pins that have no phone. <code>{{{body}}}</code> keeps the HTML in the description; everything else is escaped, and scripts are stripped.</div>
+            <div class="fg"><label>Template</label>
+              <textarea id="map-tpl" rows="9" spellcheck="false" oninput="mapPaintPreview()" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.6"></textarea>
+            </div>
+            <button class="fd-btn-secondary" style="margin-bottom:16px" onclick="mapResetTemplate()">Back to the built-in design</button>
+            <div id="map-tpl-preview" style="margin-bottom:18px"></div>
+            <div class="fg"><label>Section CSS <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+              <textarea id="map-css" rows="6" spellcheck="false" placeholder=".fourge-map .fm-title{font-family:Georgia,serif}" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.6"></textarea>
+              <small>Applies to every map on the site. Prefix rules with <code>.fourge-map</code> so nothing leaks into the rest of the page.</small>
+            </div>
+            <div class="fg"><label>Location list under the map</label>
+              <select id="map-list">
+                <option value="below">Show it — a plain list of every location</option>
+                <option value="off">Hide it</option>
+              </select>
+              <small>Worth keeping: it is what screen readers and search engines read, and it is the only part of the map that works with no JavaScript at all.</small>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px">
+              <button class="fd-btn-primary" onclick="mapSaveSettings()">Save map settings</button>
+            </div>
+          </div>
+
+          <div class="si-sec">
+            <h2>Where the map appears</h2>
+            <div class="desc" style="margin-bottom:12px">In the page editor, click a section and press <strong>Insert map</strong>. You can pick which categories that particular block shows, so a city page can carry only its own locations.<br><br>The map is always live. The written location list and the structured data are stamped into a page when it is saved — press this after a round of pin edits to bring them up to date everywhere without opening the editor.</div>
+            <button class="fd-btn-secondary" onclick="mapRefreshLists()">Refresh location lists on all pages</button>
+            <div id="map-refresh-status" style="font-size:12px;color:var(--muted);margin-top:10px"></div>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /main -->
   </div><!-- /body-row -->
 </div><!-- /shell -->
@@ -2169,6 +2298,17 @@ textarea.fb-input{resize:vertical}
 <div id="toast"></div>
 
 <!-- ══ MODALS ══ -->
+<div class="mw" id="m-mapins">
+  <div class="modal" style="width:460px">
+    <div class="mh"><h2>Insert map</h2><button class="ib" onclick="closeM('m-mapins')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb">
+      <div class="fg"><label>Which locations?</label><div id="map-ins-cats"></div></div>
+      <div class="fg" style="margin-top:12px"><label>Height on this page (px)</label>
+        <input type="number" id="map-ins-height" min="180" max="1200" step="10" value="420"></div>
+    </div>
+    <div class="mf"><button class="fd-btn-secondary" onclick="closeM('m-mapins')">Cancel</button><button class="fd-btn-primary" onclick="mapInsertConfirm()">Insert map</button></div>
+  </div>
+</div>
 <div class="mw" id="m-palette">
   <div class="modal" style="width:560px">
     <div class="mh"><h2>Add Block</h2><button class="ib" onclick="closeM('m-palette')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -2419,7 +2559,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.92';
+const CMS_VERSION='1.14.93';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2637,7 +2777,7 @@ function uiConfirm(msg, okLabel, title){
 function uiConfirmResolve(val){ closeM('m-uiconfirm'); const cb=_uiConfirmCb; _uiConfirmCb=null; if(cb) cb(!!val); }
 function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');p.parentElement.querySelectorAll('.tab-panel').forEach(t=>t.classList.remove('on'));const el=document.getElementById(panelId);if(el)el.classList.add('on');}
 function switchPropsTab(){}
-const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','reviews':'p-reviews','users':'p-users'};
+const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','reviews':'p-reviews','map':'p-map','users':'p-users'};
 function navTo(name){goPanel(NAV_MAP[name]||('p-'+name));}
 function goPanel(id){
   closeConversation();   // dismiss any open Lead Generation chat when switching modules
@@ -2656,7 +2796,7 @@ function goPanel(id){
   if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-leadgen':'Lead Generation','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
-  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}try{aiFixLoadState();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-reviews')renderReviews();else if(id==='p-users')initUsers();
+  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}try{aiFixLoadState();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-reviews')renderReviews();else if(id==='p-map')renderMapPanel();else if(id==='p-users')initUsers();
 }
 
 // ── COLLAPSIBLE SIDE MENUS ──────────────────────────────────────
@@ -3020,6 +3160,9 @@ async function initApp(){
   // SEO data loads at boot (non-blocking) so every page save can stamp the
   // page's SEO — filled-out SEO always applies, no panel visit required.
   try{ seoLoadData().catch(()=>{}); }catch(e){}
+  // Map pins load at boot for the same reason: veFinalizePageHtml stamps the
+  // location list from them on every save.
+  try{ mapLoad().catch(()=>{}); }catch(e){}
   await checkGH();
   await loadDash();
   localStorage.setItem('cd_version',CMS_VERSION);
@@ -3944,6 +4087,8 @@ function veFinalizePageHtml(html, pg){
   try{ html=ensureVideoRuntime(html); }catch(e){}
   // …and for the reviews block's stylesheet + runtime.
   try{ html=ensureReviewsRuntime(html); }catch(e){}
+  // …and the map block's runtime, location list and Place schema.
+  try{ html=ensureMapRuntime(html); }catch(e){}
   // Every saved page carries the CURRENT favicon tags — pages created after the
   // favicon was set used to miss out until someone re-ran "apply to all".
   try{ html=faviconInjectIntoHtml(html); }catch(e){}
@@ -6230,6 +6375,1129 @@ function veInsertReviews(){
   document.getElementById('ve-unsaved')?.classList.add('on');
   toast('Reviews block added — Save the page, then curate which reviews show in the Reviews panel','ok');
 }
+// ══════════════════════════════════════════════════════════════════════════
+// MAP — pins on a map, as a plugin
+// ══════════════════════════════════════════════════════════════════════════
+// Everything lives in ONE published file, data/map.json: where the map comes
+// from, the pins, the categories and the design. A map block on a page reads
+// that file when the page loads, so moving a pin, fixing a phone number or
+// hiding a location updates every map on the site without re-saving pages —
+// the same contract as posts and reviews.
+//
+// Pins are DATA, never markup. lat/lng (or x/y on an uploaded image), title,
+// address, phone, url, image, body, category, plus free-form custom fields.
+// The design is a single popup TEMPLATE applied to every pin rather than
+// hand-written HTML per pin: one edit changes every location, and because the
+// pins stay structured they can also feed the text location list and the Place
+// schema that crawlers read — neither of which is possible if a pin is a blob
+// of HTML.
+//
+// Three sources, one engine:
+//   osm    — OpenStreetMap raster tiles. No key, no billing, works out of the box.
+//   google — Google Maps JavaScript API. Needs a key that IS public by design
+//            (see the panel copy); falls back to tiles if the script fails.
+//   image  — an uploaded image (campus map, floor plan, illustrated map) with
+//            the same pan and zoom, pins placed by clicking.
+
+const MAP_TILE_URL  = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAP_TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
+const MAP_TPL_DEFAULT = [
+  '<h3 class="fm-title">{{title}}</h3>',
+  '{{#subtitle}}<p class="fm-sub">{{subtitle}}</p>{{/subtitle}}',
+  '{{#image}}<img class="fm-img" src="{{image}}" alt="{{title}}" loading="lazy">{{/image}}',
+  '{{#address}}<p class="fm-addr">{{address}}</p>{{/address}}',
+  '{{#phone}}<p class="fm-tel"><a href="tel:{{phone}}">{{phone}}</a></p>{{/phone}}',
+  '{{{body}}}',
+  '{{#url}}<p><a class="fm-link" href="{{url}}">More information</a></p>{{/url}}'
+].join('\n');
+
+function mapDefaults(){
+  return {
+    source:'osm',
+    view:{lat:39.5,lng:-98.35,zoom:12,height:420,fit:true},
+    tiles:{url:MAP_TILE_URL,attribution:MAP_TILE_ATTR,max:19},
+    google:{key:''},
+    image:{url:'',w:0,h:0},
+    categories:[],
+    pins:[],
+    design:{template:MAP_TPL_DEFAULT,css:'',list:'below'}
+  };
+}
+
+// ── the template engine ─────────────────────────────────────────────────────
+// Deliberately NOT a mirrored pair: this exact function is serialised into the
+// published page (see mapRuntimeJs), so the popup the panel previews and the
+// popup a visitor sees are the same code. They cannot drift.
+//   {{field}}            escaped
+//   {{{field}}}          raw — for the rich-text body only
+//   {{#field}}…{{/field}} kept only when the field has a value
+//   {{custom.hours}}     any free-form field added to a pin
+function fourgeMapEsc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fourgeMapTpl(tpl,pin){
+  var p=pin||{};
+  function get(k){
+    if(k.slice(0,7)==='custom.'){ var c=p.custom||{}; return c[k.slice(7)]; }
+    return p[k];
+  }
+  var s=String(tpl||'');
+  // Sections resolve outside-in, so a few passes cover nesting without a parser.
+  for(var i=0;i<5;i++){
+    var before=s;
+    s=s.replace(/\{\{#([\w.]+)\}\}([\s\S]*?)\{\{\/\1\}\}/g,function(m,k,inner){
+      var v=get(k);
+      return (v==null||v===''||v===false)?'':inner;
+    });
+    if(s===before) break;
+  }
+  s=s.replace(/\{\{\{([\w.]+)\}\}\}/g,function(m,k){ var v=get(k); return v==null?'':String(v); });
+  s=s.replace(/\{\{([\w.]+)\}\}/g,function(m,k){ var v=get(k); return v==null?'':fourgeMapEsc(v); });
+  // A template is content, not a script host: strip anything executable so a
+  // bad paste cannot put script into every page carrying a map.
+  s=s.replace(/<script[\s\S]*?<\/script\s*>/gi,'').replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,'');
+  return s;
+}
+// The one visibility filter the panel and the published page share.
+function fourgeMapVisible(pins,cats){
+  var want=String(cats||'').split(',').map(function(s){return s.trim();}).filter(Boolean);
+  return (pins||[]).filter(function(p){
+    if(!p||p.hidden) return false;
+    if(want.length && want.indexOf(String(p.cat||''))<0) return false;
+    return true;
+  });
+}
+// A pin is placeable when the source can actually put it somewhere.
+function fourgeMapPlaced(p,source){
+  if(!p) return false;
+  if(source==='image') return isFinite(+p.x)&&isFinite(+p.y);
+  return isFinite(+p.lat)&&isFinite(+p.lng)&&!(+p.lat===0&&+p.lng===0);
+}
+
+// ══ THE PUBLISHED RUNTIME ═══════════════════════════════════════════════════
+// Written as a real function rather than a string of concatenated lines: it is
+// serialised with toString() at save time, which means the syntax checker and
+// every editor treat it as ordinary code instead of an opaque blob.
+function fourgeMapEngine(){
+  var hosts=document.querySelectorAll('[data-fourge-map]');
+  if(!hosts.length) return;
+  var base=(hosts[0].getAttribute('data-src')||'').replace(/\/+$/,'');
+  fetch(base+'/data/map.json',{cache:'no-store'})
+    .then(function(r){ return r.ok?r.json():null; })
+    .then(function(cfg){ if(!cfg) return; for(var i=0;i<hosts.length;i++) build(hosts[i],cfg); })
+    .catch(function(){});
+
+  function el(tag,cls,html){ var d=document.createElement(tag); if(cls) d.className=cls; if(html!=null) d.innerHTML=html; return d; }
+  function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+  function catMap(cfg){ var m={}; (cfg.categories||[]).forEach(function(c){ if(c&&c.id) m[c.id]=c; }); return m; }
+  function svgPin(color){
+    var s='<svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44">'
+      +'<path d="M17 42.5S31.5 26 31.5 16A14.5 14.5 0 1 0 2.5 16C2.5 26 17 42.5 17 42.5Z" fill="'+color+'" stroke="rgba(0,0,0,.28)" stroke-width="1.4"/>'
+      +'<circle cx="17" cy="16" r="5.6" fill="#fff"/></svg>';
+    return 'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(s);
+  }
+
+  function build(host,cfg){
+    var wanted=host.getAttribute('data-cats')||'';
+    var source=cfg.source||'osm';
+    var all=fourgeMapVisible(cfg.pins,wanted);
+    var pins=all.filter(function(p){ return fourgeMapPlaced(p,source); });
+    var design=cfg.design||{}, view=cfg.view||{};
+    var cats=catMap(cfg);
+
+    // Section CSS is per-site design, scoped to map blocks by the runtime so it
+    // cannot leak into the rest of the page.
+    if(design.css && !document.getElementById('fourge-map-user-css')){
+      var st=document.createElement('style'); st.id='fourge-map-user-css';
+      st.textContent=String(design.css).replace(/<\/?style[^>]*>/gi,'');
+      document.head.appendChild(st);
+    }
+
+    host.innerHTML='';
+    var stage=el('div','fm-stage');
+    var h=host.getAttribute('data-height')||((+view.height||420)+'px');
+    stage.style.height=/^\d+$/.test(h)?(h+'px'):h;
+    host.appendChild(stage);
+
+    // Category legend doubles as a filter. Only worth showing when the block
+    // actually spans more than one category.
+    var used={}; pins.forEach(function(p){ if(p.cat&&cats[p.cat]) used[p.cat]=1; });
+    var legendIds=Object.keys(used);
+    var off={};
+    var legend=null;
+    if(legendIds.length>1){ legend=el('div','fm-legend'); host.appendChild(legend); }
+
+    var listBox=null;
+    if(design.list!=='off'){ listBox=el('div','fm-list'); host.appendChild(listBox); }
+
+    var api=null;
+    function shown(){ return pins.filter(function(p){ return !off[p.cat||'']; }); }
+    function refresh(){
+      if(legend) paintLegend();
+      if(listBox) paintList(listBox,shown(),design);
+      if(api) api.filter(function(p){ return !off[p.cat||'']; });
+    }
+    function paintLegend(){
+      legend.innerHTML='';
+      legendIds.forEach(function(id){
+        var c=cats[id]||{};
+        var b=el('button','fm-leg'+(off[id]?' fm-leg-off':''));
+        b.type='button';
+        b.setAttribute('aria-pressed',off[id]?'false':'true');
+        b.innerHTML='<span class="fm-leg-dot" style="background:'+fourgeMapEsc(c.color||'#e23b2e')+'"></span>'+fourgeMapEsc(c.name||id);
+        b.addEventListener('click',function(){ off[id]=!off[id]; refresh(); });
+        legend.appendChild(b);
+      });
+    }
+
+    if(!pins.length){
+      stage.remove();
+      if(legend) legend.remove();
+      if(listBox && !all.length){ host.style.display='none'; }
+      else if(listBox) paintList(listBox,all,design);
+      return;
+    }
+
+    if(source==='google') api=googleMap(stage,cfg,pins,cats);
+    else api=builtin(stage,cfg,pins,cats,source);
+    refresh();
+  }
+
+  // The crawlable, screen-reader-friendly half. Real content, not a fallback:
+  // it stays on the page under the map unless the design turns it off.
+  function paintList(box,pins,design){
+    if(!pins.length){ box.innerHTML=''; return; }
+    box.innerHTML='<ul class="fm-locs">'+pins.map(function(p){
+      var b='<strong class="fm-loc-name">'+fourgeMapEsc(p.title||'')+'</strong>';
+      if(p.subtitle) b+='<span class="fm-loc-sub">'+fourgeMapEsc(p.subtitle)+'</span>';
+      if(p.address)  b+='<span class="fm-loc-addr">'+fourgeMapEsc(p.address)+'</span>';
+      if(p.phone)    b+='<a class="fm-loc-tel" href="tel:'+fourgeMapEsc(p.phone)+'">'+fourgeMapEsc(p.phone)+'</a>';
+      if(p.url)      b+='<a class="fm-loc-link" href="'+fourgeMapEsc(p.url)+'">More information</a>';
+      return '<li class="fm-loc">'+b+'</li>';
+    }).join('')+'</ul>';
+  }
+
+  // ── the in-house pan/zoom engine ──────────────────────────────────────────
+  // Slippy-map maths in about a hundred lines, so a map costs no CDN request
+  // and no third-party script on a client's page.
+  function builtin(stage,cfg,pins,cats,source){
+    var mode=(source==='image'&&cfg.image&&cfg.image.url)?'image':'tiles';
+    var tiles=cfg.tiles||{};
+    var tileUrl=tiles.url||'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    var attribution=mode==='image'?'':(tiles.attribution||'');
+    var MINZ=mode==='image'?-5:1, MAXZ=mode==='image'?4:clamp(+tiles.max||19,2,22);
+    var imgW=+((cfg.image||{}).w)||1200, imgH=+((cfg.image||{}).h)||800;
+    var view=cfg.view||{}, design=cfg.design||{};
+
+    var vp=el('div','fm-vp'); vp.tabIndex=0;
+    vp.setAttribute('role','application');
+    vp.setAttribute('aria-label','Map of locations. Use the arrow keys to pan and the plus and minus keys to zoom.');
+    stage.appendChild(vp);
+    var layer=el('div','fm-tiles'); vp.appendChild(layer);
+    var mk=el('div','fm-marks'); vp.appendChild(mk);
+    var pop=el('div','fm-pop'); pop.hidden=true; vp.appendChild(pop);
+
+    var bg=null;
+    if(mode==='image'){
+      bg=el('img','fm-bg'); bg.alt=''; bg.decoding='async'; bg.src=cfg.image.url;
+      // Trust the image over stored dimensions — a re-upload should not need a
+      // trip back to the panel to fix the aspect ratio.
+      bg.addEventListener('load',function(){
+        if(bg.naturalWidth&&bg.naturalHeight&&(bg.naturalWidth!==imgW||bg.naturalHeight!==imgH)){
+          imgW=bg.naturalWidth; imgH=bg.naturalHeight; fit(); draw();
+        }
+      });
+      layer.appendChild(bg);
+    }
+
+    var ctl=el('div','fm-ctl');
+    ctl.innerHTML='<button type="button" class="fm-in" aria-label="Zoom in">+</button>'
+      +'<button type="button" class="fm-out" aria-label="Zoom out">\u2212</button>'
+      +'<button type="button" class="fm-reset" aria-label="Reset the view">\u2302</button>';
+    vp.appendChild(ctl);
+    if(attribution) vp.appendChild(el('div','fm-attr',attribution));
+    var hint=el('div','fm-hint','Use Ctrl + scroll to zoom the map');
+    hint.hidden=true; vp.appendChild(hint);
+    // Cooperative gestures: on touch the map does nothing until it is tapped,
+    // so a full-width map never swallows the page scroll.
+    var gate=el('div','fm-gate','<span>Tap to interact</span>');
+    vp.appendChild(gate);
+
+    var st={z:12,ox:0,oy:0};
+    function W(){ return mode==='image'?imgW*Math.pow(2,st.z):256*Math.pow(2,st.z); }
+    function H(){ return mode==='image'?imgH*Math.pow(2,st.z):256*Math.pow(2,st.z); }
+    function px(p){
+      var w=W(),h=H();
+      if(mode==='image') return {x:clamp(+p.x||0,0,100)/100*w,y:clamp(+p.y||0,0,100)/100*h};
+      var x=((+p.lng||0)+180)/360*w;
+      var s=Math.sin((+p.lat||0)*Math.PI/180); s=clamp(s,-0.9999,0.9999);
+      var y=(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*h;
+      return {x:x,y:y};
+    }
+    function vw(){ return vp.clientWidth||600; }
+    function vh(){ return vp.clientHeight||400; }
+
+    function fit(){
+      var live=pins.filter(function(p){ return !p.__off; });
+      if(!live.length) live=pins;
+      if(mode==='image'){
+        st.z=clamp(Math.log(Math.min(vw()/imgW,vh()/imgH))/Math.LN2,MINZ,MAXZ);
+        st.ox=(W()-vw())/2; st.oy=(H()-vh())/2;
+        return;
+      }
+      if(view.fit===false && isFinite(+view.lat) && isFinite(+view.lng)){
+        st.z=clamp(Math.round(+view.zoom||12),MINZ,MAXZ);
+        var c=px({lat:+view.lat,lng:+view.lng});
+        st.ox=c.x-vw()/2; st.oy=c.y-vh()/2;
+        return;
+      }
+      var lats=live.map(function(p){return +p.lat||0;}), lngs=live.map(function(p){return +p.lng||0;});
+      var la0=Math.min.apply(null,lats), la1=Math.max.apply(null,lats);
+      var ln0=Math.min.apply(null,lngs), ln1=Math.max.apply(null,lngs);
+      if(live.length===1){
+        st.z=clamp(Math.round(+view.zoom||14),MINZ,MAXZ);
+      }else{
+        for(var z=MAXZ;z>MINZ;z--){
+          st.z=z;
+          var a=px({lat:la1,lng:ln0}), b=px({lat:la0,lng:ln1});
+          if((b.x-a.x)<=(vw()-96) && (b.y-a.y)<=(vh()-96)) break;
+        }
+      }
+      var mid=px({lat:(la0+la1)/2,lng:(ln0+ln1)/2});
+      st.ox=mid.x-vw()/2; st.oy=mid.y-vh()/2;
+    }
+    function clampOrigin(){
+      var w=W(),h=H();
+      st.ox = w<=vw() ? (w-vw())/2 : clamp(st.ox,0,w-vw());
+      st.oy = h<=vh() ? (h-vh())/2 : clamp(st.oy,0,h-vh());
+    }
+    function zoomBy(d,ax,ay){
+      var nz=clamp(st.z+d,MINZ,MAXZ);
+      if(mode!=='image') nz=Math.round(nz);
+      if(nz===st.z) return;
+      var k=Math.pow(2,nz-st.z);
+      st.ox=(st.ox+ax)*k-ax; st.oy=(st.oy+ay)*k-ay;
+      st.z=nz;
+    }
+
+    var marks=pins.map(function(p){
+      var c=cats[p.cat]||{};
+      var b=el('button','fm-mark'); b.type='button';
+      b.setAttribute('aria-label',p.title||'Map location');
+      var img=el('img','fm-pinimg');
+      img.alt=''; img.src=c.image||svgPin(c.color||'#e23b2e');
+      b.appendChild(img);
+      b.addEventListener('click',function(e){ e.stopPropagation(); openPop(p,b); });
+      mk.appendChild(b);
+      return b;
+    });
+
+    var openPin=null;
+    function openPop(p,btn){
+      openPin=p;
+      pop.innerHTML='<button type="button" class="fm-pop-x" aria-label="Close">\u00d7</button>'
+        +'<div class="fm-pop-in">'+fourgeMapTpl(design.template||'',p)+'</div>';
+      pop.hidden=false;
+      marks.forEach(function(m){ m.classList.remove('fm-mark-on'); });
+      if(btn) btn.classList.add('fm-mark-on');
+      placePop();
+    }
+    function closePop(){ openPin=null; pop.hidden=true; marks.forEach(function(m){ m.classList.remove('fm-mark-on'); }); }
+    function placePop(){
+      if(!openPin) return;
+      var q=px(openPin), x=q.x-st.ox, y=q.y-st.oy;
+      var half=(pop.offsetWidth||260)/2;
+      pop.style.left=clamp(x,half+8,Math.max(half+8,vw()-half-8))+'px';
+      pop.style.top=Math.max(8,y-42)+'px';
+    }
+    pop.addEventListener('click',function(e){ if(e.target.closest('.fm-pop-x')) closePop(); });
+
+    var pool={};
+    function draw(){
+      clampOrigin();
+      if(mode==='image'){
+        bg.style.left=(-st.ox)+'px'; bg.style.top=(-st.oy)+'px';
+        bg.style.width=W()+'px'; bg.style.height=H()+'px';
+      }else{
+        var z=Math.round(st.z), n=Math.pow(2,z), keep={};
+        var x0=Math.floor(st.ox/256), x1=Math.floor((st.ox+vw())/256);
+        var y0=Math.floor(st.oy/256), y1=Math.floor((st.oy+vh())/256);
+        for(var ty=y0;ty<=y1;ty++){
+          if(ty<0||ty>=n) continue;
+          for(var tx=x0;tx<=x1;tx++){
+            var wx=((tx%n)+n)%n, key=z+':'+tx+':'+ty;
+            keep[key]=1;
+            var t=pool[key];
+            if(!t){
+              t=el('img','fm-tile');
+              t.alt=''; t.setAttribute('aria-hidden','true'); t.decoding='async';
+              t.src=tileUrl.replace('{z}',z).replace('{x}',wx).replace('{y}',ty).replace('{s}','a');
+              t.addEventListener('error',function(){ this.style.visibility='hidden'; });
+              layer.appendChild(t); pool[key]=t;
+            }
+            t.style.left=(tx*256-st.ox)+'px';
+            t.style.top =(ty*256-st.oy)+'px';
+          }
+        }
+        for(var k in pool){ if(!keep[k]){ pool[k].remove(); delete pool[k]; } }
+      }
+      for(var i=0;i<pins.length;i++){
+        var m=marks[i];
+        if(pins[i].__off){ m.style.display='none'; continue; }
+        m.style.display='';
+        var q=px(pins[i]);
+        m.style.left=(q.x-st.ox)+'px';
+        m.style.top =(q.y-st.oy)+'px';
+      }
+      placePop();
+    }
+
+    // ── gestures ──
+    var pts={}, dragging=false, last=null, pinchD=0, moved=0;
+    function live(){ var a=[]; for(var k in pts) a.push(pts[k]); return a; }
+    function mid(){ var a=live(),x=0,y=0; a.forEach(function(p){x+=p.x;y+=p.y;}); return {x:x/a.length,y:y/a.length}; }
+    function span(){ var a=live(); if(a.length<2) return 0; var dx=a[0].x-a[1].x,dy=a[0].y-a[1].y; return Math.sqrt(dx*dx+dy*dy); }
+    function touchReady(e){ return e.pointerType!=='touch' || vp.classList.contains('fm-on'); }
+
+    gate.addEventListener('click',function(){ vp.classList.add('fm-on'); gate.hidden=true; });
+    document.addEventListener('pointerdown',function(e){
+      if(!vp.contains(e.target) && vp.classList.contains('fm-on')){ vp.classList.remove('fm-on'); gate.hidden=false; }
+    },true);
+
+    vp.addEventListener('pointerdown',function(e){
+      if(e.target.closest('.fm-mark')||e.target.closest('.fm-pop')||e.target.closest('.fm-ctl')||e.target.closest('.fm-gate')) return;
+      if(!touchReady(e)) return;
+      pts[e.pointerId]={x:e.clientX,y:e.clientY};
+      try{ vp.setPointerCapture(e.pointerId); }catch(err){}
+      dragging=true; moved=0; last=mid(); pinchD=span();
+      vp.classList.add('fm-drag');
+    });
+    vp.addEventListener('pointermove',function(e){
+      if(!pts[e.pointerId]||!dragging) return;
+      pts[e.pointerId]={x:e.clientX,y:e.clientY};
+      e.preventDefault();
+      var m=mid(), r=vp.getBoundingClientRect();
+      moved+=Math.abs(m.x-last.x)+Math.abs(m.y-last.y);
+      st.ox-=(m.x-last.x); st.oy-=(m.y-last.y);
+      last=m;
+      if(live().length>=2){
+        var d=span();
+        if(pinchD>0&&d>0){
+          var f=Math.log(d/pinchD)/Math.LN2;
+          if(mode==='image'){ zoomBy(f,m.x-r.left,m.y-r.top); pinchD=d; }
+          else if(Math.abs(f)>0.5){ zoomBy(f>0?1:-1,m.x-r.left,m.y-r.top); pinchD=d; }
+        }
+      }
+      draw();
+    });
+    function endPointer(e){
+      delete pts[e.pointerId];
+      try{ vp.releasePointerCapture(e.pointerId); }catch(err){}
+      if(!live().length){
+        if(dragging && moved<4) closePop();
+        dragging=false; vp.classList.remove('fm-drag');
+      }else{ last=mid(); pinchD=span(); }
+    }
+    vp.addEventListener('pointerup',endPointer);
+    vp.addEventListener('pointercancel',endPointer);
+
+    var hintT=0;
+    vp.addEventListener('wheel',function(e){
+      if(!(e.ctrlKey||e.metaKey)){
+        hint.hidden=false; clearTimeout(hintT);
+        hintT=setTimeout(function(){ hint.hidden=true; },1400);
+        return;
+      }
+      e.preventDefault();
+      var r=vp.getBoundingClientRect();
+      zoomBy((e.deltaY<0?1:-1)*(mode==='image'?0.5:1),e.clientX-r.left,e.clientY-r.top);
+      draw();
+    },{passive:false});
+
+    ctl.addEventListener('click',function(e){
+      var t=e.target;
+      if(t.closest('.fm-in'))       { zoomBy(mode==='image'?0.5:1,vw()/2,vh()/2); draw(); }
+      else if(t.closest('.fm-out')) { zoomBy(mode==='image'?-0.5:-1,vw()/2,vh()/2); draw(); }
+      else if(t.closest('.fm-reset')){ closePop(); fit(); draw(); }
+    });
+    vp.addEventListener('keydown',function(e){
+      var step=80, k=e.key;
+      if(k==='ArrowLeft')      st.ox-=step;
+      else if(k==='ArrowRight')st.ox+=step;
+      else if(k==='ArrowUp')   st.oy-=step;
+      else if(k==='ArrowDown') st.oy+=step;
+      else if(k==='+'||k==='=')zoomBy(mode==='image'?0.5:1,vw()/2,vh()/2);
+      else if(k==='-'||k==='_')zoomBy(mode==='image'?-0.5:-1,vw()/2,vh()/2);
+      else if(k==='Escape')    { closePop(); return; }
+      else return;
+      e.preventDefault(); draw();
+    });
+
+    fit(); draw();
+    if(window.ResizeObserver){ try{ new ResizeObserver(function(){ draw(); }).observe(vp); }catch(err){} }
+    else window.addEventListener('resize',draw);
+
+    return { filter:function(keep){
+      pins.forEach(function(p){ p.__off=!keep(p); });
+      if(openPin&&openPin.__off) closePop();
+      draw();
+    } };
+  }
+
+  // ── Google Maps, when a site specifically wants Google's tiles ─────────────
+  var gmWaiting=[];
+  function loadGoogle(key,cb){
+    if(window.google&&window.google.maps){ cb(true); return; }
+    gmWaiting.push(cb);
+    if(document.getElementById('fourge-gmaps')) return;
+    window.__fourgeGmReady=function(){ gmWaiting.splice(0).forEach(function(f){ f(true); }); };
+    var s=document.createElement('script');
+    s.id='fourge-gmaps'; s.async=true;
+    s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&callback=__fourgeGmReady&loading=async';
+    s.onerror=function(){ gmWaiting.splice(0).forEach(function(f){ f(false); }); };
+    document.head.appendChild(s);
+  }
+  function googleMap(stage,cfg,pins,cats){
+    var key=String((cfg.google||{}).key||'').trim();
+    // No key, or Google refuses to load: the site still gets a working map
+    // rather than an empty grey box.
+    if(!key) return builtin(stage,cfg,pins,cats,'osm');
+    var handle={filter:function(){}};
+    loadGoogle(key,function(ok){
+      if(!ok||!window.google||!window.google.maps){
+        var fb=builtin(stage,cfg,pins,cats,'osm');
+        handle.filter=fb.filter;
+        return;
+      }
+      var view=cfg.view||{}, design=cfg.design||{};
+      var map=new google.maps.Map(stage,{
+        center:{lat:+view.lat||0,lng:+view.lng||0},
+        zoom:clamp(+view.zoom||12,1,21),
+        mapTypeId:view.type||'roadmap',
+        gestureHandling:'cooperative',
+        streetViewControl:false,
+        mapTypeControl:false,
+        fullscreenControl:false
+      });
+      var info=new google.maps.InfoWindow();
+      var bounds=new google.maps.LatLngBounds(), any=false, markers=[];
+      pins.forEach(function(p){
+        var c=cats[p.cat]||{};
+        var pos={lat:+p.lat,lng:+p.lng};
+        var m=new google.maps.Marker({
+          position:pos, map:map, title:p.title||'',
+          icon:{url:c.image||svgPin(c.color||'#e23b2e'),scaledSize:new google.maps.Size(34,44),anchor:new google.maps.Point(17,44)}
+        });
+        m.addListener('click',function(){
+          info.setContent('<div class="fourge-map"><div class="fm-pop-in">'+fourgeMapTpl(design.template||'',p)+'</div></div>');
+          info.open(map,m);
+        });
+        markers.push({pin:p,marker:m});
+        bounds.extend(pos); any=true;
+      });
+      if(any&&view.fit!==false){
+        map.fitBounds(bounds);
+        if(pins.length===1) map.setZoom(clamp(+view.zoom||15,1,21));
+      }
+      handle.filter=function(keep){
+        markers.forEach(function(r){ r.marker.setMap(keep(r.pin)?map:null); });
+      };
+    });
+    return handle;
+  }
+}
+
+// ── block markup, styles and the self-heal ──────────────────────────────────
+function mapRuntimeCss(){
+  return '<style id="fourge-map-css">'
+    +'.fourge-map{margin:26px 0}'
+    +'.fourge-map .fm-stage{position:relative;width:100%;border-radius:14px;overflow:hidden;background:#e8eaed}'
+    +'.fourge-map .fm-vp{position:absolute;inset:0;overflow:hidden;touch-action:pan-y;cursor:grab;outline-offset:2px}'
+    +'.fourge-map .fm-vp.fm-on{touch-action:none}'
+    +'.fourge-map .fm-vp.fm-drag{cursor:grabbing}'
+    +'.fourge-map .fm-tiles,.fourge-map .fm-marks{position:absolute;inset:0}'
+    +'.fourge-map .fm-marks{pointer-events:none}'
+    +'.fourge-map .fm-tile{position:absolute;width:256px;height:256px;max-width:none;user-select:none;-webkit-user-drag:none}'
+    +'.fourge-map .fm-bg{position:absolute;max-width:none;user-select:none;-webkit-user-drag:none}'
+    +'.fourge-map .fm-mark{position:absolute;transform:translate(-50%,-100%);background:none;border:0;padding:0;cursor:pointer;pointer-events:auto;line-height:0;filter:drop-shadow(0 2px 3px rgba(0,0,0,.3));transition:transform .12s ease}'
+    +'.fourge-map .fm-mark:hover,.fourge-map .fm-mark-on{transform:translate(-50%,-100%) scale(1.12)}'
+    +'.fourge-map .fm-pinimg{width:34px;height:44px;display:block}'
+    +'.fourge-map .fm-pop{position:absolute;transform:translate(-50%,-100%);z-index:5;width:min(280px,78%);background:#fff;color:#111;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.24);padding:14px 16px 12px;font-size:14px;line-height:1.5}'
+    +'.fourge-map .fm-pop[hidden]{display:none}'
+    +'.fourge-map .fm-pop-x{position:absolute;top:4px;right:6px;background:none;border:0;font-size:19px;line-height:1;color:inherit;opacity:.5;cursor:pointer;padding:4px}'
+    +'.fourge-map .fm-pop-in>*:first-child{margin-top:0}'
+    +'.fourge-map .fm-pop-in>*:last-child{margin-bottom:0}'
+    +'.fourge-map .fm-title{font-size:16px;margin:0 18px 4px 0}'
+    +'.fourge-map .fm-sub{margin:0 0 6px;opacity:.72;font-size:13px}'
+    +'.fourge-map .fm-img{width:100%;height:auto;border-radius:8px;margin:6px 0}'
+    +'.fourge-map .fm-addr{margin:0 0 4px;white-space:pre-line}'
+    +'.fourge-map .fm-ctl{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:6px;z-index:4}'
+    +'.fourge-map .fm-ctl button{width:32px;height:32px;border-radius:8px;border:1px solid rgba(0,0,0,.14);background:#fff;color:#111;font-size:16px;line-height:1;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.16)}'
+    +'.fourge-map .fm-attr{position:absolute;right:0;bottom:0;z-index:4;background:rgba(255,255,255,.82);color:#333;font-size:11px;line-height:1.4;padding:2px 6px;border-radius:6px 0 0 0}'
+    +'.fourge-map .fm-attr a{color:inherit}'
+    +'.fourge-map .fm-hint{position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.42);color:#fff;font-size:15px;font-weight:600;pointer-events:none}'
+    +'.fourge-map .fm-hint[hidden]{display:none}'
+    +'.fourge-map .fm-gate{position:absolute;inset:0;z-index:6;display:none;align-items:flex-end;justify-content:center;padding-bottom:18px;background:rgba(0,0,0,.16);cursor:pointer}'
+    +'.fourge-map .fm-gate span{background:rgba(0,0,0,.66);color:#fff;font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px}'
+    +'.fourge-map .fm-gate[hidden]{display:none}'
+    +'@media (pointer:coarse){.fourge-map .fm-gate{display:flex}.fourge-map .fm-vp.fm-on+.fm-gate,.fourge-map .fm-vp.fm-on .fm-gate{display:none}}'
+    +'.fourge-map .fm-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}'
+    +'.fourge-map .fm-leg{display:inline-flex;align-items:center;gap:7px;font:inherit;font-size:13px;font-weight:600;color:inherit;background:none;border:1px solid rgba(0,0,0,.16);border-radius:999px;padding:5px 12px;cursor:pointer}'
+    +'.fourge-map .fm-leg-off{opacity:.42}'
+    +'.fourge-map .fm-leg-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}'
+    +'.fourge-map .fm-locs{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}'
+    +'.fourge-map .fm-loc{display:flex;flex-direction:column;gap:2px;font-size:14px;line-height:1.5}'
+    +'.fourge-map .fm-loc-name{font-size:15px}'
+    +'.fourge-map .fm-loc-sub,.fourge-map .fm-loc-addr{opacity:.75;white-space:pre-line}'
+    +'.fourge-map .fm-placeholder{display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;background:repeating-linear-gradient(45deg,#eef1f4,#eef1f4 12px,#e6eaef 12px,#e6eaef 24px)}'
+    +'.fourge-map .fm-ph-in{max-width:340px;color:#5a6472;font-size:13px;line-height:1.55}'
+    +'.fourge-map .fm-ph-in strong{display:block;font-size:16px;color:#2b3340;margin-bottom:4px}'
+    +'</style>';
+}
+// One script tag holding the real functions above, serialised. The admin and
+// the published page therefore run identical template and filter code.
+function mapRuntimeJs(){
+  const src=[fourgeMapEsc,fourgeMapTpl,fourgeMapVisible,fourgeMapPlaced,fourgeMapEngine]
+    .map(f=>f.toString()).join('\n');
+  return '<script id="fourge-map-js">\n(function(){\n'+src+'\nfourgeMapEngine();\n}());\n<\/script>';
+}
+function mapRuntimeAssets(){ return mapRuntimeCss()+'\n'+mapRuntimeJs(); }
+
+// The text location list and the Place schema are stamped from the CURRENT
+// pins every time a page is saved. The map itself is always live off the feed;
+// these two exist for readers and crawlers that never run the script, so a
+// stale copy is worse than none — hence the "Refresh location lists" button in
+// the panel for when pins change but no page needs editing.
+function mapStaticList(cats){
+  const pins=fourgeMapVisible((_mapData&&_mapData.pins)||[],cats)
+    .filter(p=>fourgeMapPlaced(p,(_mapData&&_mapData.source)||'osm'));
+  if(!pins.length) return '';
+  return '<ul class="fm-locs">'+pins.map(p=>{
+    let b='<strong class="fm-loc-name">'+esc(p.title||'')+'</strong>';
+    if(p.subtitle) b+='<span class="fm-loc-sub">'+esc(p.subtitle)+'</span>';
+    if(p.address)  b+='<span class="fm-loc-addr">'+esc(p.address)+'</span>';
+    if(p.phone)    b+='<a class="fm-loc-tel" href="tel:'+esc(p.phone)+'">'+esc(p.phone)+'</a>';
+    if(p.url)      b+='<a class="fm-loc-link" href="'+esc(p.url)+'">More information</a>';
+    return '<li class="fm-loc">'+b+'</li>';
+  }).join('')+'</ul>';
+}
+function mapSchemaTag(html){
+  const cats=[]; let m;
+  const re=/<div class="fm-list"([^>]*)>/gi;
+  while((m=re.exec(html))){
+    const c=/data-cats="([^"]*)"/i.exec(m[1]);
+    cats.push(c?c[1]:'');
+  }
+  if(!cats.length) return '';
+  const seen={}, items=[];
+  cats.forEach(c=>{
+    fourgeMapVisible((_mapData&&_mapData.pins)||[],c).forEach(p=>{
+      const k=(p.title||'')+'|'+(p.address||'');
+      if(seen[k]||!p.address) return;
+      seen[k]=1;
+      const node={'@type':'Place',name:p.title||'',address:p.address};
+      if(p.phone) node.telephone=p.phone;
+      if(p.url)   node.url=p.url;
+      if(isFinite(+p.lat)&&isFinite(+p.lng)&&!(+p.lat===0&&+p.lng===0)){
+        node.geo={'@type':'GeoCoordinates',latitude:+p.lat,longitude:+p.lng};
+      }
+      items.push({'@type':'ListItem',position:items.length+1,item:node});
+    });
+  });
+  if(!items.length) return '';
+  const g={'@context':'https://schema.org','@type':'ItemList',itemListElement:items};
+  return '<script type="application/ld+json" id="fourge-map-schema">'
+    +JSON.stringify(g).replace(/</g,'\\u003c')+'<\/script>';
+}
+function ensureMapRuntime(html){
+  html=String(html||'');
+  // Keep whatever schema the page already carries: if the pins are not loaded
+  // in this browser yet, re-stamping the runtime must not silently strip it.
+  const oldSchema=(/<script type="application\/ld\+json" id="fourge-map-schema">[\s\S]*?<\/script>/i.exec(html)||[''])[0];
+  html=html.replace(/<style id="fourge-map-css">[\s\S]*?<\/style>\s*/gi,'');
+  html=html.replace(/<script id="fourge-map-js">[\s\S]*?<\/script>\s*/gi,'');
+  html=html.replace(/<script type="application\/ld\+json" id="fourge-map-schema">[\s\S]*?<\/script>\s*/gi,'');
+  if(!/data-fourge-map\b/.test(html)) return html;
+  // Refresh every block's text list from the live pins. The markup inside
+  // .fm-list is deliberately div-free so this stays a safe, bounded replace.
+  // Only when the pins are actually loaded: a page saved before the Map panel
+  // was ever opened must keep the list it already has rather than lose it.
+  if(_mapData){
+    html=html.replace(/(<div class="fm-list"([^>]*)>)[\s\S]*?(<\/div>)/gi,(m,open,attrs,close)=>{
+      const c=/data-cats="([^"]*)"/i.exec(attrs);
+      return open+mapStaticList(c?c[1]:'')+close;
+    });
+  }
+  const assets=mapRuntimeAssets();
+  const cut=assets.indexOf('</style>')+'</style>'.length;
+  const css=assets.slice(0,cut), js=assets.slice(cut).replace(/^\s+/,'');
+  const schema=_mapData?mapSchemaTag(html):oldSchema;
+  const head=css+(schema?'\n'+schema:'');
+  html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>head+'\n'+m) : (head+'\n'+html);
+  html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
+  return html;
+}
+// What a map block saves as. Inside the editor it is a static placeholder card,
+// exactly like the post-list and reviews blocks: the real map is built on the
+// published page from data/map.json.
+function mapSnippet(cats,height){
+  const c=String(cats||'').trim();
+  const h=+height||((_mapData&&_mapData.view&&+_mapData.view.height)||420);
+  const a=c?' data-cats="'+esc(c)+'"':'';
+  return '<div data-fourge-map'+a+' class="fourge-map" data-height="'+h+'px">'
+    +'<div class="fm-stage fm-placeholder" style="height:'+h+'px">'
+    +'<div class="fm-ph-in"><strong>Map</strong>'
+    +'<span>Pins, categories and the popup design live in the Map panel. The real map is built when the page loads, so pin changes show up without re-saving this page.</span>'
+    +'</div></div>'
+    +'<div class="fm-list"'+a+'>'+mapStaticList(c)+'</div>'
+    +'</div>';
+}
+
+// ── the panel ───────────────────────────────────────────────────────────────
+// data/map.json is the single store. It is published (the runtime fetches it),
+// so nothing secret is allowed in it — see the Google key copy in the panel for
+// why that key is the one exception and how it is made safe.
+let _mapData=null;        // null means "not loaded yet" — never treated as empty
+let _mapOpen=-1;          // which pin row is expanded
+let _mapDirty=false;
+
+function mapCfg(){
+  const d=mapDefaults();
+  const c=_mapData||{};
+  return {
+    source:c.source||d.source,
+    view:Object.assign({},d.view,c.view||{}),
+    tiles:Object.assign({},d.tiles,c.tiles||{}),
+    google:Object.assign({},d.google,c.google||{}),
+    image:Object.assign({},d.image,c.image||{}),
+    categories:Array.isArray(c.categories)?c.categories:[],
+    pins:Array.isArray(c.pins)?c.pins:[],
+    design:Object.assign({},d.design,c.design||{})
+  };
+}
+async function mapLoad(force){
+  if(_mapData && !force) return _mapData;
+  try{
+    const d=await apiCall('read_file',{path:'data/map.json'});
+    const j=JSON.parse(d.content||'{}');
+    _mapData=(j&&typeof j==='object')?j:{};
+  }catch(e){ _mapData={}; }
+  _mapData=mapCfg();   // normalise once so everything downstream sees full shape
+  return _mapData;
+}
+async function mapSave(msg){
+  _mapData=mapCfg();
+  _mapData.updated=new Date().toISOString();
+  await apiCall('write_file',{path:'data/map.json',content:JSON.stringify(_mapData,null,2)});
+  _mapDirty=false;
+  if(msg) toast(msg,'ok');
+}
+function mapSlug(s){
+  return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40);
+}
+function mapCatById(id){ return mapCfg().categories.find(c=>c.id===id)||null; }
+
+async function renderMapPanel(){
+  await mapLoad();
+  const c=mapCfg();
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v==null?'':v; };
+  const chk=(id,v)=>{ const el=document.getElementById(id); if(el) el.checked=!!v; };
+  document.querySelectorAll('input[name="map-src"]').forEach(r=>{ r.checked=(r.value===c.source); });
+  set('map-gkey',c.google.key);
+  set('map-img-url',c.image.url);
+  set('map-lat',c.view.lat); set('map-lng',c.view.lng);
+  set('map-zoom',c.view.zoom); set('map-height',c.view.height);
+  chk('map-fit',c.view.fit!==false);
+  set('map-tile-url',c.tiles.url); set('map-tile-attr',c.tiles.attribution); set('map-tile-max',c.tiles.max);
+  set('map-tpl',c.design.template);
+  set('map-css',c.design.css);
+  set('map-list',c.design.list||'below');
+  mapPaintSource(); mapPaintCats(); mapPaintPins(); mapPaintPreview();
+}
+function mapPaintSource(){
+  const src=(document.querySelector('input[name="map-src"]:checked')||{}).value||mapCfg().source;
+  const show=(id,on)=>{ const el=document.getElementById(id); if(el) el.style.display=on?'':'none'; };
+  show('map-google-box',src==='google');
+  show('map-image-box', src==='image');
+  show('map-tile-box',  src==='osm');
+  show('map-center-box',src!=='image');
+  mapPaintImage();
+}
+function mapSetSource(v){
+  const c=mapCfg(); c.source=v; _mapData=c; _mapDirty=true;
+  mapPaintSource(); mapPaintPins();
+}
+
+// ── the uploaded-image source ───────────────────────────────────────────────
+function mapPickImage(){ veOpenMediaPicker({purpose:'mapImage',kind:'image'}); }
+function mapUseImage(url){
+  const c=mapCfg(); c.image.url=url; _mapData=c; _mapDirty=true;
+  const el=document.getElementById('map-img-url'); if(el) el.value=url;
+  // Read the real dimensions rather than trusting a guess: pin placement is a
+  // percentage of them.
+  const probe=new Image();
+  probe.onload=()=>{
+    const cc=mapCfg(); cc.image.w=probe.naturalWidth; cc.image.h=probe.naturalHeight;
+    _mapData=cc; mapPaintImage();
+    mapSave('Map image set ✓').catch(()=>{});
+  };
+  probe.onerror=()=>{ mapPaintImage(); };
+  probe.src=url;
+  mapPaintImage();
+}
+function mapPaintImage(){
+  const box=document.getElementById('map-img-stage');
+  if(!box) return;
+  const c=mapCfg();
+  if(c.source!=='image'||!c.image.url){ box.innerHTML=''; return; }
+  const pins=c.pins;
+  box.innerHTML='<div id="map-img-hit" style="position:relative;display:inline-block;max-width:100%;cursor:crosshair;border:1px solid var(--border);border-radius:10px;overflow:hidden">'
+    +'<img src="'+esc(c.image.url)+'" alt="" style="display:block;max-width:100%;height:auto;user-select:none">'
+    +pins.map((p,i)=>{
+      if(!isFinite(+p.x)||!isFinite(+p.y)) return '';
+      const cat=mapCatById(p.cat)||{};
+      return '<span title="'+esc(p.title||('Pin '+(i+1)))+'" style="position:absolute;left:'+(+p.x)+'%;top:'+(+p.y)+'%;transform:translate(-50%,-100%);width:16px;height:16px;border-radius:50% 50% 50% 0;rotate:-45deg;background:'+esc(cat.color||'#e23b2e')+';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)'+(i===_mapOpen?';outline:2px solid var(--ember);outline-offset:2px':'')+'"></span>';
+    }).join('')
+    +'</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-top:8px">'
+    +(c.image.w?('Image is '+c.image.w+'×'+c.image.h+'px. '):'')
+    +(_mapOpen>=0?'<strong style="color:var(--text)">Click the image to place “'+esc(pins[_mapOpen]?.title||'this pin')+'”.</strong>':'Open a pin below, then click the image to place it.')
+    +'</div>';
+  const hit=document.getElementById('map-img-hit');
+  if(hit) hit.addEventListener('click',mapImgClick);
+}
+function mapImgClick(e){
+  if(_mapOpen<0){ toast('Open a pin first, then click to place it','err'); return; }
+  const r=e.currentTarget.getBoundingClientRect();
+  const c=mapCfg();
+  const p=c.pins[_mapOpen]; if(!p) return;
+  p.x=Math.round(((e.clientX-r.left)/r.width)*1000)/10;
+  p.y=Math.round(((e.clientY-r.top)/r.height)*1000)/10;
+  _mapData=c; _mapDirty=true;
+  mapPaintImage(); mapPaintPins();
+  mapSave('Pin placed ✓').catch(()=>{});
+}
+
+// ── categories ──────────────────────────────────────────────────────────────
+// Categories are the reuse unit: colour and marker live here, once, instead of
+// being re-specified on every pin.
+function mapPaintCats(){
+  const box=document.getElementById('map-cats'); if(!box) return;
+  const cats=mapCfg().categories;
+  if(!cats.length){
+    box.innerHTML='<div style="font-size:12.5px;color:var(--muted)">No categories yet. Add one if this map mixes different kinds of place — clinics and pharmacies, dealers and service centres — and visitors should be able to filter them.</div>';
+    return;
+  }
+  box.innerHTML=cats.map((c,i)=>
+    '<div style="display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface)">'
+    +'<input type="color" value="'+esc(/^#[0-9a-f]{6}$/i.test(c.color||'')?c.color:'#e23b2e')+'" onchange="mapCatSet('+i+',\'color\',this.value)" style="width:38px;height:30px;padding:0;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer">'
+    +'<input type="text" value="'+esc(c.name||'')+'" onchange="mapCatSet('+i+',\'name\',this.value)" placeholder="Category name" style="flex:1;min-width:110px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2);color:var(--text);font-size:13px">'
+    +'<button class="fd-btn-secondary" style="padding:6px 10px;font-size:12px" onclick="mapCatIcon('+i+')" title="Use a custom marker image instead of the coloured pin">'+(c.image?'Marker ✓':'Marker')+'</button>'
+    +'<button class="fd-btn-secondary" style="padding:6px 10px;font-size:12px;color:#b3261e" onclick="mapCatDel('+i+')">Remove</button>'
+    +'</div>').join('');
+}
+function mapCatAdd(){
+  const c=mapCfg();
+  const n='Category '+(c.categories.length+1);
+  let id=mapSlug(n)||('cat'+(c.categories.length+1));
+  while(c.categories.some(x=>x.id===id)) id+='-1';
+  c.categories.push({id,name:n,color:'#e23b2e',image:''});
+  _mapData=c; mapPaintCats(); mapPaintPins();
+  mapSave().catch(()=>{});
+}
+function mapCatSet(i,k,v){
+  const c=mapCfg(); if(!c.categories[i]) return;
+  c.categories[i][k]=v;
+  _mapData=c; mapPaintCats(); mapPaintPins(); mapPaintImage();
+  mapSave().catch(()=>{});
+}
+function mapCatIcon(i){ _mapCatIconIdx=i; veOpenMediaPicker({purpose:'mapCatIcon',kind:'image'}); }
+let _mapCatIconIdx=-1;
+function mapUseCatIcon(url){
+  const c=mapCfg();
+  if(c.categories[_mapCatIconIdx]) c.categories[_mapCatIconIdx].image=url;
+  _mapData=c; _mapCatIconIdx=-1;
+  mapPaintCats(); mapSave('Marker image set ✓').catch(()=>{});
+}
+function mapCatDel(i){
+  const c=mapCfg(); const cat=c.categories[i]; if(!cat) return;
+  const used=c.pins.filter(p=>p.cat===cat.id).length;
+  if(!confirm('Remove the category "'+(cat.name||cat.id)+'"?'+(used?('\n\n'+used+' pin(s) use it — they stay, but lose their colour and their place in the legend.'):''))) return;
+  c.pins.forEach(p=>{ if(p.cat===cat.id) p.cat=''; });
+  c.categories.splice(i,1);
+  _mapData=c; mapPaintCats(); mapPaintPins();
+  mapSave('Category removed').catch(()=>{});
+}
+
+// ── pins ────────────────────────────────────────────────────────────────────
+function mapPaintPins(){
+  const box=document.getElementById('map-pins'); if(!box) return;
+  const c=mapCfg(), src=c.source;
+  if(!c.pins.length){
+    box.innerHTML='<div class="empty" style="padding:22px"><h3>No pins yet</h3>'
+      +'<p style="font-size:13px;color:var(--muted);margin-top:6px">Press <strong>Add a pin</strong>. Type an address and Fourge looks up the coordinates for you — no key required.</p></div>';
+    return;
+  }
+  box.innerHTML=c.pins.map((p,i)=>{
+    const cat=mapCatById(p.cat)||{};
+    const placed=fourgeMapPlaced(p,src);
+    const where=src==='image'
+      ? (placed?('at '+(+p.x)+'%, '+(+p.y)+'%'):'not placed on the image yet')
+      : (placed?((+p.lat).toFixed(5)+', '+(+p.lng).toFixed(5)):'no coordinates yet');
+    return '<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface)'+(p.hidden?';opacity:.55':'')+'">'
+      +'<div style="display:flex;gap:10px;align-items:center;padding:11px 13px">'
+      +'<label style="flex:0 0 auto;display:flex;align-items:center;cursor:pointer" title="Show this pin on the site">'
+      +'<input type="checkbox"'+(p.hidden?'':' checked')+' onchange="mapPinToggle('+i+',this.checked)" style="width:16px;height:16px;accent-color:var(--ember);cursor:pointer"></label>'
+      +'<span style="flex:0 0 auto;width:11px;height:11px;border-radius:50%;background:'+esc(cat.color||'#e23b2e')+'"></span>'
+      +'<div style="min-width:0;flex:1">'
+      +'<div style="font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.title||'Untitled pin')+'</div>'
+      +'<div style="font-size:11.5px;color:'+(placed?'var(--muted)':'#b3261e')+'">'+esc(where)+(cat.name?(' · '+esc(cat.name)):'')+'</div>'
+      +'</div>'
+      +'<button class="fd-btn-secondary" style="padding:5px 9px;font-size:12px" onclick="mapPinMove('+i+',-1)" title="Move up" '+(i===0?'disabled':'')+'>↑</button>'
+      +'<button class="fd-btn-secondary" style="padding:5px 9px;font-size:12px" onclick="mapPinMove('+i+',1)" title="Move down" '+(i===c.pins.length-1?'disabled':'')+'>↓</button>'
+      +'<button class="fd-btn-secondary" style="padding:5px 10px;font-size:12px" onclick="mapPinOpen('+i+')">'+(_mapOpen===i?'Close':'Edit')+'</button>'
+      +'</div>'
+      +(_mapOpen===i?mapPinForm(p,i,c):'')
+      +'</div>';
+  }).join('');
+}
+function mapPinForm(p,i,c){
+  const fld=(label,id,val,ph,type)=>'<div class="fg" style="margin-bottom:10px"><label>'+label+'</label>'
+    +'<input type="'+(type||'text')+'" id="'+id+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(ph||'')+'"></div>';
+  const coords=c.source==='image'
+    ? '<div class="fr">'+fld('Across (%)','mp-x',p.x,'0–100','number')+fld('Down (%)','mp-y',p.y,'0–100','number')+'</div>'
+      +'<div style="font-size:12px;color:var(--muted);margin:-4px 0 12px">Or open this pin and click the image above to place it.</div>'
+    : '<div class="fr">'+fld('Latitude','mp-lat',p.lat,'44.9778','number')+fld('Longitude','mp-lng',p.lng,'-93.2650','number')+'</div>';
+  const cust=Object.entries(p.custom||{});
+  return '<div style="border-top:1px solid var(--border);padding:14px 13px 16px;background:var(--surface-2)">'
+    +'<div class="fr">'+fld('Name','mp-title',p.title,'Downtown clinic')
+    +'<div class="fg" style="margin-bottom:10px"><label>Category</label><select id="mp-cat">'
+    +'<option value="">— none —</option>'
+    +c.categories.map(x=>'<option value="'+esc(x.id)+'"'+(x.id===p.cat?' selected':'')+'>'+esc(x.name||x.id)+'</option>').join('')
+    +'</select></div></div>'
+    +fld('Subtitle','mp-subtitle',p.subtitle,'Open Saturdays')
+    +'<div class="fg" style="margin-bottom:6px"><label>Address</label>'
+    +'<textarea id="mp-address" rows="2" placeholder="1200 Nicollet Mall, Minneapolis, MN 55403">'+esc(p.address||'')+'</textarea></div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
+    +'<button class="fd-btn-secondary" style="padding:7px 12px;font-size:12.5px" onclick="mapGeocode('+i+')">Find coordinates from this address</button>'
+    +'<span id="mp-geo-status" style="font-size:12px;color:var(--muted)"></span></div>'
+    +coords
+    +'<div class="fr">'+fld('Phone','mp-phone',p.phone,'(612) 555-0142','tel')+fld('Link','mp-url',p.url,'https://…','url')+'</div>'
+    +'<div class="fg" style="margin-bottom:10px"><label>Photo</label>'
+    +'<div style="display:flex;gap:8px"><input type="text" id="mp-image" value="'+esc(p.image||'')+'" placeholder="/images/clinic.jpg" style="flex:1">'
+    +'<button class="fd-btn-secondary" style="padding:7px 12px;font-size:12.5px" onclick="mapPinImage('+i+')">Choose</button></div></div>'
+    +'<div class="fg" style="margin-bottom:10px"><label>Description</label>'
+    +'<textarea id="mp-body" rows="3" placeholder="A sentence or two. Basic HTML is allowed.">'+esc(p.body||'')+'</textarea></div>'
+    +'<div class="fg" style="margin-bottom:6px"><label>Extra fields</label>'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Anything this map needs that the fields above do not cover — opening hours, a rep’s name, a bay number. Use it in the popup design as <code>{{custom.hours}}</code>.</div>'
+    +'<div id="mp-custom">'+cust.map(([k,v],j)=>mapCustomRow(k,v,j)).join('')+'</div>'
+    +'<button class="fd-btn-secondary" style="padding:6px 11px;font-size:12px;margin-top:6px" onclick="mapCustomAdd()">+ Add a field</button></div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
+    +'<button class="fd-btn-primary" onclick="mapPinSave('+i+')">Save pin</button>'
+    +'<button class="fd-btn-secondary" onclick="mapPinPreview('+i+')">Preview the popup</button>'
+    +'<button class="fd-btn-secondary" style="color:#b3261e;margin-left:auto" onclick="mapPinDel('+i+')">Delete pin</button>'
+    +'</div>'
+    +'<div id="mp-preview" style="margin-top:12px"></div>'
+    +'</div>';
+}
+function mapCustomRow(k,v,j){
+  return '<div class="mp-cust-row" style="display:flex;gap:8px;margin-bottom:6px">'
+    +'<input type="text" class="mp-ck" value="'+esc(k||'')+'" placeholder="hours" style="flex:0 0 34%;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font-size:13px">'
+    +'<input type="text" class="mp-cv" value="'+esc(v==null?'':v)+'" placeholder="Mon–Fri 8–5" style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font-size:13px">'
+    +'<button class="fd-btn-secondary" style="padding:6px 10px;font-size:12px" onclick="this.parentNode.remove()">×</button></div>';
+}
+function mapCustomAdd(){
+  const box=document.getElementById('mp-custom');
+  if(box) box.insertAdjacentHTML('beforeend',mapCustomRow('','',box.children.length));
+}
+function mapPinOpen(i){ _mapOpen=(_mapOpen===i?-1:i); mapPaintPins(); mapPaintImage(); }
+function mapPinToggle(i,on){
+  const c=mapCfg(); if(!c.pins[i]) return;
+  c.pins[i].hidden=!on; _mapData=c;
+  mapPaintPins();
+  mapSave(on?'Pin showing on the site ✓':'Pin hidden ✓').catch(e=>toast('Could not save: '+(e.message||e),'err'));
+}
+function mapPinMove(i,d){
+  const c=mapCfg(); const j=i+d;
+  if(!c.pins[i]||!c.pins[j]) return;
+  const t=c.pins[i]; c.pins[i]=c.pins[j]; c.pins[j]=t;
+  if(_mapOpen===i) _mapOpen=j; else if(_mapOpen===j) _mapOpen=i;
+  _mapData=c; mapPaintPins(); mapSave().catch(()=>{});
+}
+function mapPinAdd(){
+  const c=mapCfg();
+  c.pins.push({title:'',subtitle:'',address:'',phone:'',url:'',image:'',body:'',cat:'',lat:'',lng:'',x:50,y:50,hidden:false,custom:{}});
+  _mapData=c; _mapOpen=c.pins.length-1;
+  mapPaintPins(); mapPaintImage();
+  document.getElementById('mp-title')?.focus();
+}
+function mapPinRead(i){
+  const c=mapCfg(), p=c.pins[i]; if(!p) return null;
+  const g=id=>(document.getElementById(id)?.value||'').trim();
+  p.title=g('mp-title'); p.subtitle=g('mp-subtitle'); p.address=g('mp-address');
+  p.phone=g('mp-phone'); p.url=g('mp-url'); p.image=g('mp-image'); p.body=g('mp-body');
+  p.cat=g('mp-cat');
+  if(c.source==='image'){ p.x=+g('mp-x')||0; p.y=+g('mp-y')||0; }
+  else { const la=g('mp-lat'), ln=g('mp-lng'); p.lat=la===''?'':+la; p.lng=ln===''?'':+ln; }
+  const cust={};
+  document.querySelectorAll('#mp-custom .mp-cust-row').forEach(row=>{
+    const k=(row.querySelector('.mp-ck')?.value||'').trim();
+    const v=(row.querySelector('.mp-cv')?.value||'').trim();
+    if(k) cust[k]=v;
+  });
+  p.custom=cust;
+  _mapData=c;
+  return p;
+}
+async function mapPinSave(i){
+  if(!mapPinRead(i)) return;
+  try{ await mapSave('Pin saved ✓'); }
+  catch(e){ toast('Could not save: '+(e.message||e),'err'); return; }
+  mapPaintPins(); mapPaintImage(); mapPaintPreview();
+}
+function mapPinDel(i){
+  const c=mapCfg(), p=c.pins[i]; if(!p) return;
+  if(!confirm('Delete the pin "'+(p.title||'Untitled')+'"? Every map on the site loses it.')) return;
+  c.pins.splice(i,1); _mapOpen=-1; _mapData=c;
+  mapPaintPins(); mapPaintImage();
+  mapSave('Pin deleted').catch(()=>{});
+}
+function mapPinImage(i){ _mapPinImgIdx=i; veOpenMediaPicker({purpose:'mapPinImage',kind:'image'}); }
+let _mapPinImgIdx=-1;
+function mapUsePinImage(url){
+  const el=document.getElementById('mp-image');
+  if(el) el.value=url;
+  _mapPinImgIdx=-1;
+  toast('Photo chosen — press Save pin to keep it','ok');
+}
+function mapPinPreview(i){
+  const p=mapPinRead(i); if(!p) return;
+  const box=document.getElementById('mp-preview'); if(!box) return;
+  const tpl=(document.getElementById('map-tpl')?.value)||mapCfg().design.template;
+  box.innerHTML='<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">The popup, exactly as the page will render it:</div>'
+    +'<div class="fourge-map"><div class="fm-pop-in" style="max-width:300px;background:#fff;color:#111;border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.5">'
+    +fourgeMapTpl(tpl,p)+'</div></div>';
+}
+
+// ── address → coordinates ───────────────────────────────────────────────────
+// Server-side on purpose. If this site has a Google Places key it is used (the
+// same encrypted key the reviews plugin uses, under the same restriction);
+// otherwise OpenStreetMap's geocoder answers, so this works with no key at all.
+async function mapGeocode(i){
+  const p=mapPinRead(i); if(!p) return;
+  const st=document.getElementById('mp-geo-status');
+  const addr=(document.getElementById('mp-address')?.value||'').trim();
+  if(!addr){ if(st){ st.textContent='Type an address first.'; st.style.color='#b3261e'; } return; }
+  if(st){ st.textContent='Looking it up…'; st.style.color='var(--muted)'; }
+  try{
+    const r=await apiCall('map_geocode',{address:addr});
+    if(!r||!isFinite(+r.lat)||!isFinite(+r.lng)) throw new Error(r&&r.error?r.error:'No match for that address');
+    const la=document.getElementById('mp-lat'), ln=document.getElementById('mp-lng');
+    if(la) la.value=r.lat; if(ln) ln.value=r.lng;
+    if(st){ st.textContent='Found'+(r.label?(': '+r.label):'')+' — press Save pin.'+(r.via?(' ('+r.via+')'):''); st.style.color='var(--ok,#16a34a)'; }
+  }catch(e){
+    if(st){ st.textContent=e.message||String(e); st.style.color='#b3261e'; }
+  }
+}
+
+// ── view, tiles and design ──────────────────────────────────────────────────
+async function mapSaveSettings(){
+  const c=mapCfg();
+  const g=id=>(document.getElementById(id)?.value||'').trim();
+  c.source=(document.querySelector('input[name="map-src"]:checked')||{}).value||c.source;
+  c.google.key=g('map-gkey');
+  c.image.url=g('map-img-url');
+  c.view.lat=g('map-lat')===''?'':+g('map-lat');
+  c.view.lng=g('map-lng')===''?'':+g('map-lng');
+  c.view.zoom=+g('map-zoom')||12;
+  c.view.height=+g('map-height')||420;
+  c.view.fit=!!document.getElementById('map-fit')?.checked;
+  c.tiles.url=g('map-tile-url')||MAP_TILE_URL;
+  c.tiles.attribution=g('map-tile-attr')||MAP_TILE_ATTR;
+  c.tiles.max=+g('map-tile-max')||19;
+  c.design.template=document.getElementById('map-tpl')?.value||MAP_TPL_DEFAULT;
+  c.design.css=document.getElementById('map-css')?.value||'';
+  c.design.list=g('map-list')||'below';
+  _mapData=c;
+  try{ await mapSave('Map settings saved ✓'); }
+  catch(e){ toast('Could not save: '+(e.message||e),'err'); return; }
+  mapPaintSource(); mapPaintPins(); mapPaintPreview();
+}
+function mapResetTemplate(){
+  if(!confirm('Put the popup design back to the built-in one? Your own version is lost.')) return;
+  const el=document.getElementById('map-tpl'); if(el) el.value=MAP_TPL_DEFAULT;
+  mapPaintPreview();
+}
+function mapPaintPreview(){
+  const box=document.getElementById('map-tpl-preview'); if(!box) return;
+  const c=mapCfg();
+  const sample=c.pins.find(p=>!p.hidden)||{
+    title:'Downtown clinic',subtitle:'Open Saturdays',address:'1200 Nicollet Mall\nMinneapolis, MN 55403',
+    phone:'(612) 555-0142',url:'https://example.com',body:'<p>Walk-ins welcome until 4pm.</p>',custom:{hours:'Mon–Fri 8–5'}
+  };
+  const tpl=(document.getElementById('map-tpl')?.value)||c.design.template;
+  box.innerHTML='<div class="fourge-map"><div class="fm-pop-in" style="max-width:300px;background:#fff;color:#111;border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.5">'
+    +fourgeMapTpl(tpl,sample)+'</div></div>';
+}
+
+// ── blocks ──────────────────────────────────────────────────────────────────
+// The map itself is always live. The text list under it and the Place schema
+// are written into pages when they are saved, so this button re-stamps them
+// after a round of pin edits without anyone opening the editor.
+async function mapRefreshLists(){
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  await mapLoad(true);
+  const pages=getPageList();
+  const st=document.getElementById('map-refresh-status');
+  const say=t=>{ if(st) st.textContent=t; };
+  let done=0, skipped=0, failed=0;
+  for(const pg of pages){
+    const path=pg.path||pg.file||(pg.id==='home'?'index.html':pg.id+'.html');
+    try{
+      const d=await apiCall('read_file',{path});
+      const html=d.content||'';
+      if(!/data-fourge-map\b/.test(html)){ skipped++; continue; }
+      say('Updating '+path+'…');
+      const out=ensureMapRuntime(html);
+      if(out!==html) await apiCall('write_file',{path,content:out});
+      done++;
+    }catch(e){ failed++; }
+  }
+  say(done+' page(s) updated, '+skipped+' without a map'+(failed?(', '+failed+' could not be read'):'')+'.');
+  toast(done?('Location lists refreshed on '+done+' page(s) ✓'):'No pages carry a map block yet','ok');
+}
+function veInsertMap(){
+  const fid=_veCurSel?.fid;
+  if(!fid){ toast('Click where the map should go first — a section or column works best','err'); return; }
+  mapLoad().then(()=>{
+    const c=mapCfg();
+    const box=document.getElementById('map-ins-cats');
+    if(box){
+      box.innerHTML=c.categories.length
+        ? '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Leave everything unticked to show all pins.</div>'
+          +c.categories.map(x=>'<label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0;cursor:pointer">'
+            +'<input type="checkbox" class="map-ins-cat" value="'+esc(x.id)+'" style="width:auto;margin:0;cursor:pointer">'
+            +'<span style="width:10px;height:10px;border-radius:50%;background:'+esc(x.color||'#e23b2e')+'"></span>'+esc(x.name||x.id)+'</label>').join('')
+        : '<div style="font-size:12.5px;color:var(--muted)">This map has no categories, so the block will show every pin.</div>';
+    }
+    const h=document.getElementById('map-ins-height'); if(h) h.value=c.view.height||420;
+    openM('m-mapins');
+  });
+}
+function mapInsertConfirm(){
+  const cats=Array.from(document.querySelectorAll('.map-ins-cat:checked')).map(el=>el.value).join(',');
+  const h=+((document.getElementById('map-ins-height')||{}).value)||420;
+  const fid=_veCurSel?.fid;
+  closeM('m-mapins');
+  if(!fid) return;
+  const ifrm=document.getElementById('visual-iframe');
+  if(!ifrm||!ifrm.contentWindow) return;
+  ifrm.contentWindow.postMessage({type:'ve-action',action:'insertHtml',fid,
+    html:mapSnippet(cats,h),css:mapRuntimeCss()},'*');
+  document.getElementById('ve-unsaved')?.classList.add('on');
+  toast('Map block added — Save the page, then manage pins in the Map panel','ok');
+}
+
 function videoRuntimeCss(){
   return '<style id="fourge-video-css">'
     +'.fourge-video{margin:0 0 26px;max-width:100%}'
@@ -11470,7 +12738,8 @@ function veShowProps(info){
   const formBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="openFormPicker()"><i class="fa-solid fa-rectangle-list"></i> Insert a form</button>';
   const postsBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertPostList()" title="A live list of your published posts, newest first — updates automatically whenever you publish"><i class="fa-solid fa-newspaper"></i> Insert post list</button>'
     +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertVideo()" title="Add a video from your media library — played by the browser itself, no third-party embed"><i class="fa-solid fa-film"></i> Insert video</button>'
-    +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertReviews()" title="Your Google reviews, curated in the Reviews panel — updates without re-saving the page"><i class="fa-solid fa-star"></i> Insert reviews</button>';
+    +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertReviews()" title="Your Google reviews, curated in the Reviews panel — updates without re-saving the page"><i class="fa-solid fa-star"></i> Insert reviews</button>'
+    +'<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veInsertMap()" title="Your locations on a map, managed in the Map panel — updates without re-saving the page"><i class="fa-solid fa-location-dot"></i> Insert map</button>';
   const postsRepBtn = '<button class="ve-apply-btn" style="margin:0 0 4px;background:var(--surface-3);color:var(--text);border:1px solid var(--border)" onclick="veReplaceWithPostList()" title="Swap the selected element (e.g. an old hand-made posts section) for the live post archive"><i class="fa-solid fa-right-left"></i> Replace with post archive</button>';
   body.innerHTML = devBanner + templateBanner + actionsBar + iconBtn + formBtn + postsBtn + postsRepBtn + veAiPanel() + fields;
   // If a Markup conversation is active for this element, re-render it (inspector was rebuilt)
@@ -13096,6 +14365,9 @@ function vePickerApply(){
     _imgPickerSel=null; _imgPickerFid=null; _vipPurpose='src'; _vipKind='image'; _vipPoster=''; };
 
   // The video paths own their own messaging and markup.
+  if(purpose==='mapImage'){    close(); mapUseImage(src); return; }
+  if(purpose==='mapCatIcon'){  close(); mapUseCatIcon(src); return; }
+  if(purpose==='mapPinImage'){ close(); mapUsePinImage(src); return; }
   if(purpose==='insertVideo'){ close(); veInsertVideoAt(fid,src); return; }
   if(purpose==='imgToVideo'){  close(); veImgToVideoAt(fid,src,poster); return; }
   if(purpose==='poster'){
