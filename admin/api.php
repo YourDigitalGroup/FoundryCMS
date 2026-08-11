@@ -247,6 +247,7 @@ try {
         case 'ai_autofix':         ob_end_clean(); fourgeApiAiAutofix($authUser, $body); break;
         case 'reviews_fetch':      ob_end_clean(); fourgeApiReviewsFetch($authUser, $body); break;
         case 'reviews_find_place': ob_end_clean(); fourgeApiReviewsFindPlace($authUser, $body); break;
+        case 'map_geocode':        ob_end_clean(); fourgeApiMapGeocode($authUser, $body); break;
         case 'seo_package':     ob_end_clean(); fourgeApiSeoPackage($authUser, $body); break;
         case 'seo_pkg_tick':    ob_end_clean(); fourgeApiSeoPkgTick($authUser, $body); break;
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
@@ -2151,7 +2152,7 @@ function fourgeWritePostsCorsHtaccess() {
     $end   = '# END Fourge Posts CORS';
     $rules = <<<'HT'
 <IfModule mod_headers.c>
-  <FilesMatch "^(posts|reviews)\.json$">
+  <FilesMatch "^(posts|reviews|map)\.json$">
     Header set Access-Control-Allow-Origin "*"
     Header set Access-Control-Allow-Methods "GET"
   </FilesMatch>
@@ -2463,6 +2464,77 @@ function fourgeApiReviewsFindPlace($me, $body) {
     $msg = (string)($d['error']['message'] ?? ($d2['error_message'] ?? ($err ?: 'Google returned HTTP ' . $code)));
     http_response_code(502);
     echo json_encode(['error' => 'Place search failed: ' . $msg . ' Make sure "Places API (New)" is enabled for this key.']);
+}
+// ── MAP: ADDRESS → COORDINATES ──────────────────────────────────────────────
+// Server-side so no key ever reaches the browser, and so this works on a site
+// that has no key at all. Google first when a key exists (the same encrypted
+// Places key the reviews plugin uses, under the same API restriction), then
+// OpenStreetMap's Nominatim, which needs nothing. Either way the browser gets
+// back two numbers.
+function fourgeMapGeocodeGoogle($key, $addr) {
+    $ch = curl_init('https://places.googleapis.com/v1/places:searchText');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_TIMEOUT => 15, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_POSTFIELDS => json_encode(['textQuery' => $addr, 'maxResultCount' => 1]),
+        CURLOPT_HTTPHEADER => [
+            'X-Goog-Api-Key: ' . $key,
+            'X-Goog-FieldMask: places.location,places.formattedAddress,places.displayName',
+            'Content-Type: application/json',
+        ],
+    ]);
+    $raw  = (string)curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200) return null;
+    $d  = json_decode($raw, true);
+    $pl = $d['places'][0] ?? null;
+    if (!$pl || !isset($pl['location']['latitude'])) return null;
+    return [
+        'lat'   => round((float)$pl['location']['latitude'], 6),
+        'lng'   => round((float)$pl['location']['longitude'], 6),
+        'label' => (string)($pl['formattedAddress'] ?? ($pl['displayName']['text'] ?? '')),
+        'via'   => 'Google',
+    ];
+}
+function fourgeMapGeocodeOsm($addr) {
+    // Nominatim's usage policy requires an identifying User-Agent and does not
+    // want to be hammered — a pin is geocoded once, by hand, so that is fine.
+    $u = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' . rawurlencode($addr);
+    $ch = curl_init($u);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        CURLOPT_USERAGENT => 'FourgeCMS/1.x (+' . (defined('PUBLIC_HTML') ? 'self-hosted' : 'cms') . ')',
+    ]);
+    $raw  = (string)curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200) return null;
+    $d = json_decode($raw, true);
+    $r = (is_array($d) && isset($d[0])) ? $d[0] : null;
+    if (!$r || !isset($r['lat'])) return null;
+    return [
+        'lat'   => round((float)$r['lat'], 6),
+        'lng'   => round((float)$r['lon'], 6),
+        'label' => (string)($r['display_name'] ?? ''),
+        'via'   => 'OpenStreetMap',
+    ];
+}
+function fourgeApiMapGeocode($me, $body) {
+    if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
+    $addr = trim((string)($body['address'] ?? ''));
+    if ($addr === '') { http_response_code(400); echo json_encode(['error' => 'Type an address first.']); return; }
+    $key = '';
+    try { $key = trim((string)fourgeGetSecret(fourgeDb(), 'google_places_key')); } catch (Throwable $e) {}
+    $hit = null;
+    if ($key !== '') { try { $hit = fourgeMapGeocodeGoogle($key, $addr); } catch (Throwable $e) { $hit = null; } }
+    if (!$hit)       { try { $hit = fourgeMapGeocodeOsm($addr); }          catch (Throwable $e) { $hit = null; } }
+    if (!$hit) {
+        http_response_code(404);
+        echo json_encode(['error' => 'No match for that address. Check the spelling, or paste the coordinates from Google Maps directly.']);
+        return;
+    }
+    echo json_encode(['ok' => true] + $hit);
 }
 // ── INDEXING SCAFFOLD ───────────────────────────────────────────────────────
 // Three server-level indexing controls, in one marker-spliced block placed
