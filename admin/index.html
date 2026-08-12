@@ -1631,6 +1631,15 @@ textarea.fb-input{resize:vertical}
               <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
             </div>
           </div>
+          <div class="si-sec"><h2>Fonts</h2><div class="desc">The fonts for this whole site — body copy, headings, buttons, menus, tables and form fields. Set them once here and every page uses them, including pages you add later. Most designs set fonts on individual pieces, so Fourge overrides those pieces too; icons are left alone, since icon sets draw their symbols from a font of their own.</div>
+            <div id="si-typography" style="margin-top:12px"></div>
+            <div id="ty-preview" style="margin:16px 0 4px"></div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+              <button type="button" class="fd-btn-primary" onclick="typographyApplyAll()"><i class="fa-solid fa-check-double"></i> Apply fonts to all pages</button>
+              <span id="si-typo-status" style="font-size:12px;color:var(--muted)"></span>
+            </div>
+            <div class="desc" style="margin-top:8px">Save &amp; Publish stores the choice, and any page you edit from then on picks it up on save. Use this button to sweep the pages nobody has opened since.</div>
+          </div>
           <div class="si-sec"><h2>Heading Styles</h2><div class="desc">Choose the font, size, weight, alignment, and color for your headings across the whole site. Headings are the titles on your pages — H1 is the main page title, H2 the section titles, and so on down to H6. Leave any box empty to keep what your design already uses. (A single page can still set its own heading look in that page's settings.)</div>
             <div id="si-headings" style="display:flex;flex-direction:column;gap:9px;margin-top:10px"></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
@@ -2559,7 +2568,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.93';
+const CMS_VERSION='1.14.94';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4089,6 +4098,14 @@ function veFinalizePageHtml(html, pg){
   try{ html=ensureReviewsRuntime(html); }catch(e){}
   // …and the map block's runtime, location list and Place schema.
   try{ html=ensureMapRuntime(html); }catch(e){}
+  // Every saved page carries the CURRENT site fonts and heading styles, so a
+  // page created after the design was set is not left behind. Guarded on the
+  // site config actually being loaded — otherwise a save could strip the block
+  // rather than refresh it.
+  try{
+    if(_site && Object.keys(_site).length)
+      html=designInjectIntoHtml(html,_site.typography||null,_site.headingStyles||null);
+  }catch(e){}
   // Every saved page carries the CURRENT favicon tags — pages created after the
   // favicon was set used to miss out until someone re-ran "apply to all".
   try{ html=faviconInjectIntoHtml(html); }catch(e){}
@@ -8698,6 +8715,7 @@ async function loadSiteInfo(){
   const fields=[['si-name','name'],['si-tagline','tagline'],['si-website','website'],['si-notify','notifyEmail'],['si-phone','phone'],['si-email','email'],['si-street','address.street'],['si-city','address.city'],['si-state','address.state'],['si-zip','address.zip'],['si-facebook','social.facebook'],['si-instagram','social.instagram'],['si-linkedin','social.linkedin'],['si-youtube','social.youtube']];
   fields.forEach(([id,path])=>{const el=document.getElementById(id);if(!el)return;const keys=path.split('.');let val=_site;keys.forEach(k=>val=val?.[k]);el.value=val||'';});
   faviconRender();
+  siRenderTypography(_site.typography||{});    // site-wide fonts
   siRenderHeadings(_site.headingStyles||{});   // site-wide heading controls
   designAutofill();   // fill brand colors + any empty contact/social from the site's HTML
 }
@@ -9595,6 +9613,8 @@ async function saveSiteInfo(){
   if(!_site.brand)_site.brand={};_site.brand.primary=fcVal('si-brand-primary');_site.brand.secondary=fcVal('si-brand-secondary');
   // Site-wide heading styles — only touch them if the controls are actually on screen.
   if(document.getElementById('sh-h1-size')){ const hs=siReadHeadings(); if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles; }
+  // Site-wide fonts — same guard: only when the Design tab has been rendered.
+  if(document.getElementById('ty-body-font')){ const ty=siReadTypography(); if(ty) _site.typography=ty; else delete _site.typography; }
 
   const json=JSON.stringify(_site,null,2);
   let savedLocal=false, savedGH=false;
@@ -11385,7 +11405,7 @@ function adminLoadFonts(fonts){
 // ── FULL GOOGLE FONTS PICKER (searchable, previews each font) ──────────────
 let _allFonts=null, _fontPickerTag=null, _fontPickerScope='ps';
 async function openFontPicker(tag, scope){
-  _fontPickerTag=tag; _fontPickerScope=scope||'ps';   // 'ps' = per-page, 'sh' = site-wide
+  _fontPickerTag=tag; _fontPickerScope=scope||'ps';   // 'ps' per-page, 'sh' site headings, 'ty' site fonts, 've' the editor's text bar
   openM('m-fontpicker');
   const s=document.getElementById('fp-search'); if(s){ s.value=''; setTimeout(()=>s.focus(),50); }
   if(!_allFonts) await loadAllFonts();
@@ -11419,11 +11439,23 @@ function fontPickerRender(){
 }
 function fontPickerPick(family){
   const tag=_fontPickerTag;
+  // The inline text bar lives inside the editor iframe, so its pick is handed
+  // back across the bridge rather than written into a <select> here.
+  if(_fontPickerScope==='ve'){
+    const ifrm=document.getElementById('visual-iframe');
+    if(ifrm&&ifrm.contentWindow) ifrm.contentWindow.postMessage({type:'ve-font-pick',family},'*');
+    adminLoadFonts([family]);
+    closeM('m-fontpicker');
+    return;
+  }
   if(tag){
     const sel=document.getElementById((_fontPickerScope||'ps')+'-'+tag+'-font');
     if(sel){
       if(!Array.from(sel.options).some(o=>o.value===family)){ const o=document.createElement('option'); o.value=family; o.textContent=family; o.style.fontFamily="'"+family+"',sans-serif"; const more=sel.querySelector('option[value="__more__"]'); sel.insertBefore(o,more); }
       sel.value=family; sel.dataset.prev=family; sel.style.fontFamily="'"+family+"',inherit";
+      // Let the normal change handler run, so previews refresh the same way
+      // they do when the font is picked straight from the dropdown.
+      try{ sel.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){}
     }
     adminLoadFonts([family]);
   }
@@ -11442,6 +11474,279 @@ function psReadHeadings(){
     if(Object.keys(o).length) out[tag]=o;
   });
   return out;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SITE TYPOGRAPHY (Design tab) — one font choice, every element
+// ══════════════════════════════════════════════════════════════════════════
+// The problem this solves: a theme hard-codes font-family in dozens of rules
+// (.hero h2, .card p, .btn-primary…), so a polite `body{font-family:X}` reaches
+// almost nothing. To genuinely change the font of a site you have to out-rank
+// every one of those rules, which means a sweep with !important.
+//
+// The naive sweep — `* { font-family: X !important }` — breaks every icon on
+// the site, because Font Awesome, Material Symbols and friends render glyphs
+// FROM their font-family. That is the classic way this feature ships broken.
+//
+// So: a sweep with an exclusion list, and — the important part — headings and
+// buttons do NOT fight the sweep on specificity. They redefine what the font
+// variable MEANS for their own subtree:
+//
+//     body *:not(<icons>) { font-family: var(--fourge-font) !important }
+//     h1,h2,…             { --fourge-font: var(--fourge-font-heading) }
+//     button,.btn,…       { --fourge-font: var(--fourge-font-button) }
+//
+// Custom properties inherit, and nothing else on the page sets this one, so
+// there is no specificity war to lose. It also means a per-heading font, or a
+// per-page override, wins simply by setting the same variable more specifically
+// (see siHeadingCss / pageHeadingCss) — no !important arms race.
+//
+// Excluding an element from the sweep only means it inherits, which is what we
+// wanted anyway. That is why the list below can be generous at no cost.
+const TYPO_SKIP=['i','code','pre','kbd','samp','tt','svg',
+  '.fa','.fas','.far','.fab','.fal','.fad','.fak',
+  '[class*="fa-"]','[class*="icon"]','[class*="Icon"]',
+  '.material-icons','[class*="material-symbols"]',
+  '[class*="glyphicon"]','[class*="dashicons"]','[class*="bi-"]','[class*="ti-"]','[class*="eicon"]'];
+const TYPO_HEADING_SEL='h1,h2,h3,h4,h5,h6,.h1,.h2,.h3,.h4,.h5,.h6';
+const TYPO_BUTTON_SEL='button,.btn,.button,[class*="btn-"],[class*="-btn"],input[type="submit"],input[type="button"],input[type="reset"],[role="button"]';
+const TYPO_WEIGHTS=['','300','400','500','600','700','800','900'];
+
+// A family name reaches CSS and a Google Fonts URL, so it is stripped of
+// anything that could close a declaration or a tag.
+function typoClean(f){ return String(f||'').replace(/["'\\;{}<>()/*:]|\s+/g,m=>/\s/.test(m)?' ':'').trim().slice(0,60); }
+function typoStack(f){
+  f=typoClean(f);
+  return f?("'"+f+"',system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"):'';
+}
+function typoNorm(v){ v=String(v||'').trim(); return /^[0-9.]+$/.test(v)?v+'px':v; }
+function typoDefaults(){
+  return {body:{font:'',size:'',weight:'',lineHeight:''},heading:{font:'',weight:''},button:{font:'',weight:''},force:true};
+}
+function typoCfg(t){
+  const d=typoDefaults(), c=t||{};
+  return {
+    body:Object.assign({},d.body,c.body||{}),
+    heading:Object.assign({},d.heading,c.heading||{}),
+    button:Object.assign({},d.button,c.button||{}),
+    force:c.force!==false
+  };
+}
+// Is anything actually set? An empty typography block must emit no CSS at all,
+// so clearing the fields really does hand the site back to its own design.
+function typoHasAny(t){
+  const c=typoCfg(t);
+  return !!(c.body.font||c.body.size||c.body.weight||c.body.lineHeight||c.heading.font||c.heading.weight||c.button.font||c.button.weight);
+}
+function siTypographyCss(t){
+  if(!typoHasAny(t)) return '';
+  const c=typoCfg(t);
+  const bodyF=typoStack(c.body.font), headF=typoStack(c.heading.font), btnF=typoStack(c.button.font);
+  const imp=c.force?' !important':'';
+  const skip=TYPO_SKIP.map(s=>':not('+s+')').join('');
+  const L=[];
+
+  const vars=[];
+  if(bodyF) vars.push('--fourge-font-body:'+bodyF);
+  if(headF) vars.push('--fourge-font-heading:'+headF);
+  if(btnF)  vars.push('--fourge-font-button:'+btnF);
+  if(bodyF) vars.push('--fourge-font:var(--fourge-font-body)');
+  if(vars.length) L.push(':root{'+vars.join(';')+'}');
+
+  const bd=[];
+  if(bodyF)             bd.push('font-family:var(--fourge-font-body)'+imp);
+  if(c.body.size)       bd.push('font-size:'+typoNorm(c.body.size)+imp);
+  if(c.body.weight)     bd.push('font-weight:'+c.body.weight+imp);
+  if(c.body.lineHeight) bd.push('line-height:'+c.body.lineHeight+imp);
+  if(bd.length) L.push('body{'+bd.join(';')+'}');
+
+  // The sweep. Two conditions, both load-bearing:
+  //  • a body font is chosen — with none there is nothing to sweep TO, and a
+  //    sweep of `inherit` would quietly strip the fonts the theme already sets;
+  //  • the override is ON — the sweep's :not() chain carries high specificity,
+  //    so leaving it in place with the !important removed would STILL beat the
+  //    design. "Off" has to mean no sweep, or it does not mean anything.
+  if(bodyF && c.force){
+    L.push('body *'+skip+'{font-family:var(--fourge-font,var(--fourge-font-body))'+imp+'}');
+    // Whatever happens to the rest of the page, code stays monospace.
+    L.push('code,pre,kbd,samp,tt{--fourge-font:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}');
+    // Form controls do not inherit the page font by default in any browser.
+    L.push('input,select,textarea,button{font-family:inherit'+imp+'}');
+  }
+
+  // Whether the sweep is running decides how headings and buttons state their
+  // font: through the variable it reads, or directly because nothing reads it.
+  const sweeping=!!bodyF && c.force;
+  const hd=[];
+  if(headF) hd.push('--fourge-font:var(--fourge-font-heading)');
+  if(headF && !sweeping) hd.push('font-family:var(--fourge-font-heading)'+imp);
+  if(c.heading.weight) hd.push('font-weight:'+c.heading.weight+imp);
+  if(hd.length) L.push(TYPO_HEADING_SEL+'{'+hd.join(';')+'}');
+
+  const bn=[];
+  if(btnF) bn.push('--fourge-font:var(--fourge-font-button)');
+  if(btnF && !sweeping) bn.push('font-family:var(--fourge-font-button)'+imp);
+  if(c.button.weight) bn.push('font-weight:'+c.button.weight+imp);
+  if(bn.length) L.push(TYPO_BUTTON_SEL+'{'+bn.join(';')+'}');
+
+  return L.join('\n');
+}
+// Every family the site typography needs, in one Google Fonts request.
+function typoFontList(t){
+  const c=typoCfg(t), out=[];
+  [c.body.font,c.heading.font,c.button.font].forEach(f=>{ f=typoClean(f); if(f && out.indexOf(f)<0) out.push(f); });
+  return out;
+}
+function siTypographyFontLink(t){
+  const fonts=typoFontList(t);
+  if(!fonts.length) return '';
+  return 'https://fonts.googleapis.com/css2?'
+    +fonts.map(f=>'family='+encodeURIComponent(f).replace(/%20/g,'+')+':wght@300;400;500;600;700;800;900').join('&')
+    +'&display=swap';
+}
+
+// ── stamping it into a page ─────────────────────────────────────────────────
+// Marker-spliced with a regex rather than a DOMParser round-trip: this now runs
+// on EVERY page save, and re-serialising a client's hand-written HTML through
+// the DOM parser on every save is a risk this feature does not need to take.
+// Strip-then-reinsert, so re-saving an unchanged page is byte-identical.
+function designStripManaged(html){
+  return String(html||'')
+    .replace(/<link[^>]*data-fourge-(?:type|headings)[^>]*>\s*/gi,'')
+    .replace(/<style id="fourge-typography"[\s\S]*?<\/style>\s*/gi,'')
+    .replace(/<style id="fourge-headings"[\s\S]*?<\/style>\s*/gi,'');
+}
+function designAssets(ty,hs){
+  const parts=[];
+  const tLink=siTypographyFontLink(ty), tCss=siTypographyCss(ty);
+  if(tCss){
+    if(tLink) parts.push('<link rel="stylesheet" data-fourge-type href="'+esc(tLink)+'">');
+    parts.push('<style id="fourge-typography" data-fourge-type>'+tCss+'</style>');
+  }
+  // Headings last, so a per-heading font set in the same panel wins over the
+  // blanket heading font above it.
+  const hLink=siHeadingFontLink(hs), hCss=siHeadingCss(hs);
+  if(hCss){
+    if(hLink) parts.push('<link rel="stylesheet" data-fourge-headings href="'+esc(hLink)+'">');
+    parts.push('<style id="fourge-headings" data-fourge-headings>'+hCss+'</style>');
+  }
+  return parts.join('\n');
+}
+function designInjectIntoHtml(html,ty,hs){
+  html=designStripManaged(html);
+  const block=designAssets(ty,hs);
+  if(!block) return html;
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>block+'\n'+m) : (block+'\n'+html);
+}
+// Kept as the name the Apply button and older code call, now sharing one
+// implementation with the save-time stamp so the two can never disagree.
+function headingInjectIntoHtml(html,hs){
+  return designInjectIntoHtml(html,(_site&&_site.typography)||null,hs);
+}
+
+// ── the Typography controls ─────────────────────────────────────────────────
+function tyFontSelect(id,val,label){
+  const inCur=GOOGLE_FONTS.indexOf(val||'')>=0;
+  const opts='<option value="">— keep the site’s current font —</option>'
+    +GOOGLE_FONTS.map(f=>`<option value="${esc(f)}"${(val||'')===f?' selected':''} style="font-family:'${esc(f)}',sans-serif">${esc(f)}</option>`).join('')
+    +((val&&!inCur)?`<option value="${esc(val)}" selected style="font-family:'${esc(val)}',sans-serif">${esc(val)}</option>`:'')
+    +'<option value="__more__">Search all Google Fonts…</option>';
+  return `<div class="fg"><label>${label}</label>`
+    +`<select id="ty-${id}-font" data-prev="${esc(val||'')}" onchange="tyFontChange('${id}',this)" style="font-family:'${esc(val||'')}',inherit">${opts}</select></div>`;
+}
+function tyFontChange(id,sel){
+  if(sel.value==='__more__'){ sel.value=sel.dataset.prev||''; openFontPicker(id,'ty'); return; }
+  sel.dataset.prev=sel.value;
+  sel.style.fontFamily=sel.value?("'"+sel.value+"',inherit"):'inherit';
+  if(sel.value) adminLoadFonts([sel.value]);
+  tyPreview();
+}
+function siRenderTypography(t){
+  const wrap=document.getElementById('si-typography'); if(!wrap) return;
+  const c=typoCfg(t);
+  const wsel=(id,v)=>`<div class="fg"><label>Weight</label><select id="ty-${id}-weight">`
+    +TYPO_WEIGHTS.map(w=>`<option value="${w}"${String(v||'')===w?' selected':''}>${w||'— unchanged —'}</option>`).join('')
+    +'</select></div>';
+  wrap.innerHTML=
+     '<div class="fr">'+tyFontSelect('body',c.body.font,'Body font <span style="font-weight:400;color:var(--muted)">— paragraphs, lists, tables, forms, menus</span>')+wsel('body',c.body.weight)+'</div>'
+    +'<div class="fr">'
+    +'<div class="fg"><label>Base text size</label><input type="text" id="ty-body-size" value="'+esc(c.body.size||'')+'" placeholder="e.g. 17px"><small>Leave blank to keep the size your design already uses.</small></div>'
+    +'<div class="fg"><label>Line height</label><input type="text" id="ty-body-lh" value="'+esc(c.body.lineHeight||'')+'" placeholder="e.g. 1.65"></div>'
+    +'</div>'
+    +'<div class="fr">'+tyFontSelect('heading',c.heading.font,'Heading font <span style="font-weight:400;color:var(--muted)">— every H1 through H6</span>')+wsel('heading',c.heading.weight)+'</div>'
+    +'<div class="fr">'+tyFontSelect('button',c.button.font,'Button font <span style="font-weight:400;color:var(--muted)">— leave blank to match the body</span>')+wsel('button',c.button.weight)+'</div>'
+    +'<label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:4px 0 2px">'
+    +'<input type="checkbox" id="ty-force"'+(c.force?' checked':'')+' onchange="tyPreview()" style="width:auto;margin:2px 0 0;cursor:pointer">'
+    +'<span>Override fonts baked into the design<br><small style="color:var(--muted)">On by default, and what makes the choice stick everywhere — most themes set fonts on individual pieces, and without this those pieces ignore you. Turn it off if you want your choice to be a starting point the design can still overrule.</small></span></label>';
+  const fonts=typoFontList(t); if(fonts.length) adminLoadFonts(fonts);
+  adminLoadFonts(GOOGLE_FONTS);
+  ['ty-body-size','ty-body-lh'].forEach(id=>document.getElementById(id)?.addEventListener('input',tyPreview));
+  ['ty-body-weight','ty-heading-weight','ty-button-weight'].forEach(id=>document.getElementById(id)?.addEventListener('change',tyPreview));
+  tyPreview();
+}
+function siReadTypography(){
+  const g=id=>(document.getElementById(id)?.value||'').trim();
+  const t={
+    body:{font:g('ty-body-font'),size:g('ty-body-size'),weight:g('ty-body-weight'),lineHeight:g('ty-body-lh')},
+    heading:{font:g('ty-heading-font'),weight:g('ty-heading-weight')},
+    button:{font:g('ty-button-font'),weight:g('ty-button-weight')},
+    force:!!document.getElementById('ty-force')?.checked
+  };
+  return typoHasAny(t)?t:null;
+}
+// The preview renders the REAL generated CSS against sample markup in a shadow
+// root, so what is on screen is what the page will do — including the sweep and
+// the icon exclusions, which are the two things most likely to surprise someone.
+function tyPreview(){
+  const host=document.getElementById('ty-preview'); if(!host) return;
+  const t=siReadTypography();
+  const css=siTypographyCss(t);
+  const fonts=typoFontList(t); if(fonts.length) adminLoadFonts(fonts);
+  if(!host.shadowRoot) host.attachShadow({mode:'open'});
+  const link=siTypographyFontLink(t);
+  host.shadowRoot.innerHTML=
+     (link?'<link rel="stylesheet" href="'+esc(link)+'">':'')
+    +'<style>:host{display:block}body{margin:0;font-size:15px;line-height:1.6;color:#1a1814;background:#fff;border-radius:10px;padding:18px 20px;border:1px solid #e3ded2}'
+    +'h2{font-size:22px;margin:0 0 8px}p{margin:0 0 12px}'
+    +'.btn{display:inline-block;padding:9px 18px;border-radius:8px;background:#DB3516;color:#fff;font-size:14px;font-weight:600;text-decoration:none}'
+    +'.fa-solid{font-family:"Font Awesome 6 Free"}'
+    +'small{display:block;margin-top:10px;color:#8a8172;font-size:12px}</style>'
+    +'<style>'+css+'</style>'
+    +'<body><h2>A heading on your site</h2>'
+    +'<p>Body copy runs at this size and weight. <strong>Bold</strong> and <em>italic</em> follow along, and so does a <a href="#">link inside a sentence</a>.</p>'
+    +'<a class="btn" href="#">A button</a>'
+    +'<small>Live preview — this is the exact CSS your pages will carry.</small></body>';
+}
+// Retroactive pass. New and re-saved pages pick the fonts up on their own
+// (veFinalizePageHtml stamps them), so this exists for the pages nobody has
+// touched since the fonts changed.
+async function typographyApplyAll(){
+  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
+  const ty=siReadTypography();
+  if(ty) _site.typography=ty; else delete _site.typography;
+  const hs=document.getElementById('sh-h1-size')?siReadHeadings():(_site.headingStyles||{});
+  if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+  catch(e){ toast('Could not save the site settings: '+e.message,'err'); return; }
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList();
+  if(!pages.length){ toast('No pages found','err'); return; }
+  const st=document.getElementById('si-typo-status');
+  let done=0,skipped=0,failed=0;
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    if(st) st.textContent='Applying to '+fp+'…';
+    try{
+      const d=await apiCall('read_file',{path:fp});
+      const html=d.content||''; if(!html){ failed++; continue; }
+      const out=designInjectIntoHtml(html,ty,hs);
+      if(out===html){ skipped++; continue; }
+      await apiCall('write_file',{path:fp,content:out});
+      done++;
+    }catch(e){ failed++; }
+  }
+  if(st) st.textContent=done+' page(s) updated'+(skipped?(', '+skipped+' already current'):'')+(failed?(', '+failed+' failed'):'')+'.';
+  toast(done?('Fonts applied to '+done+' page(s) ✓'):'Every page was already up to date','ok');
 }
 
 // ── SITE-WIDE HEADING STYLES (Design tab) ─────────────────────────
@@ -11511,7 +11816,10 @@ function siHeadingCss(hs){
     if(s.align)  d.push('text-align:'+s.align+' !important');
     const sc=fcCssColor(s.color);
     if(sc)       d.push('color:'+sc+' !important');
-    if(s.font)   d.push("font-family:'"+String(s.font).replace(/'/g,'')+"',sans-serif !important");
+    if(s.font){ const f="'"+String(s.font).replace(/'/g,'')+"',sans-serif";
+      d.push('font-family:'+f+' !important');
+      d.push('--fourge-font:'+f);   // so the site-wide font sweep resolves to this
+    }
     if(d.length) out.push(tag+'{'+d.join(';')+'}');
   });
   return out.join('\n');
@@ -11521,19 +11829,6 @@ function siHeadingFontLink(hs){
   const fonts=[]; HEADING_TAGS.forEach(t=>{ const f=hs[t]&&hs[t].font; if(f && fonts.indexOf(f)<0) fonts.push(f); });
   if(!fonts.length) return '';
   return 'https://fonts.googleapis.com/css2?'+fonts.map(f=>'family='+encodeURIComponent(f).replace(/%20/g,'+')+':wght@300;400;500;600;700;800;900').join('&')+'&display=swap';
-}
-// Inject the site-wide heading styles as a managed, idempotent block into a page.
-function headingInjectIntoHtml(html, hs){
-  const doc=new DOMParser().parseFromString(html,'text/html');
-  const head=doc.head||doc.documentElement;
-  doc.querySelectorAll('[data-fourge-headings]').forEach(el=>el.remove());
-  const css=siHeadingCss(hs);
-  if(css){
-    const link=siHeadingFontLink(hs);
-    if(link){ const l=doc.createElement('link'); l.rel='stylesheet'; l.href=link; l.setAttribute('data-fourge-headings',''); head.appendChild(l); }
-    const st=doc.createElement('style'); st.id='fourge-headings'; st.setAttribute('data-fourge-headings',''); st.textContent=css; head.appendChild(st);
-  }
-  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
 }
 async function headingsApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
@@ -11618,7 +11913,10 @@ function pageHeadingCss(pg){
     if(s.align)  d.push('text-align:'+s.align+' !important');
     const sc=fcCssColor(s.color);
     if(sc)       d.push('color:'+sc+' !important');
-    if(s.font)   d.push("font-family:'"+String(s.font).replace(/'/g,'')+"',sans-serif !important");
+    if(s.font){ const f="'"+String(s.font).replace(/'/g,'')+"',sans-serif";
+      d.push('font-family:'+f+' !important');
+      d.push('--fourge-font:'+f);   // beats the site rule on specificity, as intended
+    }
     if(d.length) out.push('body '+tag+'{'+d.join(';')+'}');
   });
   return out.join('\n');
@@ -12111,6 +12409,7 @@ return '(function(){\n'
 +'    var m=e.data; if(!m) return;\n'
 +'    if(m.type==="ve-device"){ curDevice=m.device||"desktop"; return; }\n'
 +'    if(m.type==="ve-reselect"){ if(sel) selectEl(sel); return; }\n'
++'    if(m.type==="ve-font-pick"){ if(window.__feApplyFont) window.__feApplyFont(m.family); return; }\n'
 +'    if(m.type==="ve-undo"){ doUndo(); return; }\n'
 +'    if(m.type==="ve-redo"){ doRedo(); return; }\n'
 +'    if(m.type==="ve-action"){\n'
@@ -12283,7 +12582,11 @@ return '(function(){\n'
 // ── INLINE TEXT FORMATTING (WYSIWYG) — double-click text to edit; a floating
 // bar appears on selection for bold/italic/underline, font, size, color.
 +'  var Q=String.fromCharCode(39), fmtSaved=null;\n'
+// The site's own fonts are listed first — the ones a designer reaches for most
+// — then the usual shortlist, then every Google font through the picker.
++'  var FMT_SITE_FONTS='+JSON.stringify(typoFontList((typeof _site!=='undefined'&&_site&&_site.typography)||null))+';\n'
 +'  var FMT_FONTS=["","Inter","Poppins","Montserrat","Roboto","Open Sans","Lato","Playfair Display","Merriweather","Oswald","Raleway","Nunito","Source Sans 3","Georgia","Arial","Times New Roman","Courier New"];\n'
++'  FMT_SITE_FONTS.slice().reverse().forEach(function(f){ var i=FMT_FONTS.indexOf(f); if(i>0) FMT_FONTS.splice(i,1); if(f) FMT_FONTS.splice(1,0,f); });\n'
 +'  var FMT_WEBSAFE={Georgia:1,Arial:1,"Times New Roman":1,"Courier New":1};\n'
 +'  var FMT_SIZES=["","12px","14px","16px","18px","20px","24px","28px","32px","40px","48px","64px"];\n'
 +'  var fmtBar=document.createElement("div"); fmtBar.id="__fe_fmt__"; fmtBar.setAttribute("data-fourge-ui","");\n'
@@ -12301,9 +12604,15 @@ return '(function(){\n'
 +'  fmtBar.appendChild(fmtMkBtn("U","Underline",function(){fmtCmd("underline");},"text-decoration:underline"));\n'
 +'  (function(){var sp=document.createElement("span");sp.style.cssText="width:1px;height:18px;background:#433c30;margin:0 3px";fmtBar.appendChild(sp);}());\n'
 +'  var fontSel=document.createElement("select"); fontSel.title="Font"; fontSel.style.cssText="height:28px;max-width:112px;background:#1e1b15;color:#f4f0e6;border:1px solid #433c30;border-radius:5px;font-size:12px;cursor:pointer";\n'
-+'  FMT_FONTS.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f||"Font"; fontSel.appendChild(o); });\n'
++'  FMT_FONTS.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f||"Font"; if(FMT_SITE_FONTS.indexOf(f)>=0) o.textContent=f+" \\u00b7 site"; fontSel.appendChild(o); });\n'
++'  (function(){ var o=document.createElement("option"); o.value="__more__"; o.textContent="Search all Google Fonts\\u2026"; fontSel.appendChild(o); }());\n'
 +'  fontSel.addEventListener("mousedown",function(){ fmtSaveRange(); });\n'
-+'  fontSel.addEventListener("change",function(){ var f=fontSel.value; if(f){ fmtLoadFont(f); fmtWrap("fontFamily",(FMT_WEBSAFE[f]?"":Q+f+Q+",")+"sans-serif"); } fontSel.selectedIndex=0; });\n'
+// Applying a family is shared, because the picker in the parent comes back here.
++'  function fmtApplyFont(f){ if(!f) return; fmtLoadFont(f); fmtWrap("fontFamily",(FMT_WEBSAFE[f]?"":Q+f+Q+",")+"sans-serif"); }\n'
++'  window.__feApplyFont=fmtApplyFont;\n'
++'  fontSel.addEventListener("change",function(){ var f=fontSel.value; fontSel.selectedIndex=0;\n'
++'    if(f==="__more__"){ fmtSaveRange(); window.parent.postMessage({type:"ve-font-picker"},"*"); return; }\n'
++'    fmtApplyFont(f); });\n'
 +'  fmtBar.appendChild(fontSel);\n'
 +'  var sizeSel=document.createElement("select"); sizeSel.title="Text size"; sizeSel.style.cssText="height:28px;background:#1e1b15;color:#f4f0e6;border:1px solid #433c30;border-radius:5px;font-size:12px;cursor:pointer;margin-left:2px";\n'
 +'  FMT_SIZES.forEach(function(sz){ var o=document.createElement("option"); o.value=sz; o.textContent=sz||"Size"; sizeSel.appendChild(o); });\n'
@@ -12426,6 +12735,7 @@ window.addEventListener('message',function(e){
   if(e.data.type==='ve-select'&&e.data.data) veShowProps(e.data.data);
   if(e.data.type==='ve-deselect') veDeselect();
   if(e.data.type==='ve-inline-dirty') document.getElementById('ve-unsaved')?.classList.add('on');
+  if(e.data.type==='ve-font-picker') openFontPicker(null,'ve');
   if(e.data.type==='ve-toast'&&e.data.msg) toast(String(e.data.msg),e.data.kind||'');
   if(e.data.type==='ve-history'){
     const u=document.getElementById('ve-undo-btn'), r=document.getElementById('ve-redo-btn');
