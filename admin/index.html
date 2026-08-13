@@ -1631,7 +1631,7 @@ textarea.fb-input{resize:vertical}
               <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
             </div>
           </div>
-          <div class="si-sec"><h2>Fonts</h2><div class="desc">The fonts for this whole site — body copy, headings, buttons, menus, tables and form fields. Set them once here and every page uses them, including pages you add later. Most designs set fonts on individual pieces, so Fourge overrides those pieces too; icons are left alone, since icon sets draw their symbols from a font of their own.</div>
+          <div class="si-sec"><h2>Fonts</h2><div class="desc">The fonts for this whole site, in four groups: everything, paragraphs, headings and buttons. Set them once here and every page uses them, including pages you add later. Most designs set fonts on individual pieces, so Fourge overrides those pieces too; icons are left alone, since icon sets draw their symbols from a font of their own.</div>
             <div id="si-typography" style="margin-top:12px"></div>
             <div id="ty-preview" style="margin:16px 0 4px"></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
@@ -2568,7 +2568,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.94';
+const CMS_VERSION='1.14.95';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -11510,7 +11510,13 @@ const TYPO_SKIP=['i','code','pre','kbd','samp','tt','svg',
   '[class*="glyphicon"]','[class*="dashicons"]','[class*="bi-"]','[class*="ti-"]','[class*="eicon"]'];
 const TYPO_HEADING_SEL='h1,h2,h3,h4,h5,h6,.h1,.h2,.h3,.h4,.h5,.h6';
 const TYPO_BUTTON_SEL='button,.btn,.button,[class*="btn-"],[class*="-btn"],input[type="submit"],input[type="button"],input[type="reset"],[role="button"]';
+// Reading copy, as distinct from the site's base font. Body sets what EVERY
+// element falls back to — menus, captions, table chrome, form labels. This is
+// the prose a visitor actually reads, and a designer often wants it set apart
+// from the interface around it.
+const TYPO_PARA_SEL='p,li,dd,blockquote,figcaption,td';
 const TYPO_WEIGHTS=['','300','400','500','600','700','800','900'];
+const TYPO_TRANSFORMS=['','none','uppercase','lowercase','capitalize'];
 
 // A family name reaches CSS and a Google Fonts URL, so it is stripped of
 // anything that could close a declaration or a tag.
@@ -11521,33 +11527,38 @@ function typoStack(f){
 }
 function typoNorm(v){ v=String(v||'').trim(); return /^[0-9.]+$/.test(v)?v+'px':v; }
 function typoDefaults(){
-  return {body:{font:'',size:'',weight:'',lineHeight:''},heading:{font:'',weight:''},button:{font:'',weight:''},force:true};
-}
-function typoCfg(t){
-  const d=typoDefaults(), c=t||{};
   return {
-    body:Object.assign({},d.body,c.body||{}),
-    heading:Object.assign({},d.heading,c.heading||{}),
-    button:Object.assign({},d.button,c.button||{}),
-    force:c.force!==false
+    body:     {font:'',size:'',weight:'',lineHeight:''},
+    paragraph:{font:'',size:'',weight:'',lineHeight:'',spacing:'',color:''},
+    heading:  {font:'',weight:''},
+    button:   {font:'',size:'',weight:'',spacing:'',transform:''},
+    force:true
   };
+}
+const TYPO_TARGETS=['body','paragraph','heading','button'];
+function typoCfg(t){
+  const d=typoDefaults(), c=t||{}, out={force:(c.force!==false)};
+  TYPO_TARGETS.forEach(k=>{ out[k]=Object.assign({},d[k],c[k]||{}); });
+  return out;
 }
 // Is anything actually set? An empty typography block must emit no CSS at all,
 // so clearing the fields really does hand the site back to its own design.
 function typoHasAny(t){
   const c=typoCfg(t);
-  return !!(c.body.font||c.body.size||c.body.weight||c.body.lineHeight||c.heading.font||c.heading.weight||c.button.font||c.button.weight);
+  return TYPO_TARGETS.some(k=>Object.keys(c[k]).some(f=>String(c[k][f]||'').trim()!==''));
 }
 function siTypographyCss(t){
   if(!typoHasAny(t)) return '';
   const c=typoCfg(t);
-  const bodyF=typoStack(c.body.font), headF=typoStack(c.heading.font), btnF=typoStack(c.button.font);
+  const bodyF=typoStack(c.body.font), paraF=typoStack(c.paragraph.font),
+        headF=typoStack(c.heading.font), btnF=typoStack(c.button.font);
   const imp=c.force?' !important':'';
   const skip=TYPO_SKIP.map(s=>':not('+s+')').join('');
   const L=[];
 
   const vars=[];
   if(bodyF) vars.push('--fourge-font-body:'+bodyF);
+  if(paraF) vars.push('--fourge-font-paragraph:'+paraF);
   if(headF) vars.push('--fourge-font-heading:'+headF);
   if(btnF)  vars.push('--fourge-font-button:'+btnF);
   if(bodyF) vars.push('--fourge-font:var(--fourge-font-body)');
@@ -11574,9 +11585,27 @@ function siTypographyCss(t){
     L.push('input,select,textarea,button{font-family:inherit'+imp+'}');
   }
 
-  // Whether the sweep is running decides how headings and buttons state their
-  // font: through the variable it reads, or directly because nothing reads it.
+  // Whether the sweep is running decides how each target states its font:
+  // through the variable the sweep reads, or directly because nothing reads it.
   const sweeping=!!bodyF && c.force;
+
+  // Reading copy.
+  const pg=[];
+  if(paraF) pg.push('--fourge-font:var(--fourge-font-paragraph)');
+  if(paraF && !sweeping) pg.push('font-family:var(--fourge-font-paragraph)'+imp);
+  if(c.paragraph.size)       pg.push('font-size:'+typoNorm(c.paragraph.size)+imp);
+  if(c.paragraph.weight)     pg.push('font-weight:'+c.paragraph.weight+imp);
+  if(c.paragraph.lineHeight) pg.push('line-height:'+c.paragraph.lineHeight+imp);
+  if(c.paragraph.spacing)    pg.push('letter-spacing:'+typoNorm(c.paragraph.spacing)+imp);
+  const pcol=fcCssColor(c.paragraph.color);
+  if(pcol)                   pg.push('color:'+pcol+imp);
+  if(pg.length){
+    L.push(TYPO_PARA_SEL+'{'+pg.join(';')+'}');
+    // A menu built out of <li> is interface, not prose. Put those back on the
+    // base font so setting a reading font does not quietly restyle the nav.
+    if(paraF) L.push('nav li,nav p,nav dd,[class*="menu"] li,[class*="nav"] li{--fourge-font:var(--fourge-font-body,var(--fourge-font-paragraph))}');
+  }
+
   const hd=[];
   if(headF) hd.push('--fourge-font:var(--fourge-font-heading)');
   if(headF && !sweeping) hd.push('font-family:var(--fourge-font-heading)'+imp);
@@ -11586,7 +11615,10 @@ function siTypographyCss(t){
   const bn=[];
   if(btnF) bn.push('--fourge-font:var(--fourge-font-button)');
   if(btnF && !sweeping) bn.push('font-family:var(--fourge-font-button)'+imp);
-  if(c.button.weight) bn.push('font-weight:'+c.button.weight+imp);
+  if(c.button.size)      bn.push('font-size:'+typoNorm(c.button.size)+imp);
+  if(c.button.weight)    bn.push('font-weight:'+c.button.weight+imp);
+  if(c.button.spacing)   bn.push('letter-spacing:'+typoNorm(c.button.spacing)+imp);
+  if(c.button.transform) bn.push('text-transform:'+c.button.transform+imp);
   if(bn.length) L.push(TYPO_BUTTON_SEL+'{'+bn.join(';')+'}');
 
   return L.join('\n');
@@ -11594,7 +11626,7 @@ function siTypographyCss(t){
 // Every family the site typography needs, in one Google Fonts request.
 function typoFontList(t){
   const c=typoCfg(t), out=[];
-  [c.body.font,c.heading.font,c.button.font].forEach(f=>{ f=typoClean(f); if(f && out.indexOf(f)<0) out.push(f); });
+  TYPO_TARGETS.forEach(k=>{ const f=typoClean(c[k].font); if(f && out.indexOf(f)<0) out.push(f); });
   return out;
 }
 function siTypographyFontLink(t){
@@ -11667,29 +11699,52 @@ function siRenderTypography(t){
   const wsel=(id,v)=>`<div class="fg"><label>Weight</label><select id="ty-${id}-weight">`
     +TYPO_WEIGHTS.map(w=>`<option value="${w}"${String(v||'')===w?' selected':''}>${w||'— unchanged —'}</option>`).join('')
     +'</select></div>';
+  const txt=(id,v,ph,label)=>`<div class="fg"><label>${label}</label>`
+    +`<input type="text" id="ty-${id}" value="${esc(v||'')}" placeholder="${esc(ph)}"></div>`;
+  const tsel=(id,v)=>`<div class="fg"><label>Capitalisation</label><select id="ty-${id}-transform">`
+    +TYPO_TRANSFORMS.map(x=>`<option value="${x}"${(v||'')===x?' selected':''}>${x||'— unchanged —'}</option>`).join('')
+    +'</select></div>';
+  const grp=(title,note,body)=>`<div style="border:1px solid var(--border);border-radius:10px;padding:14px 15px;margin-bottom:12px;background:var(--surface)">`
+    +`<div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:3px">${title}</div>`
+    +`<div style="font-size:12.5px;color:var(--muted);margin-bottom:11px">${note}</div>${body}</div>`;
+  const pc=!!c.paragraph.color;
   wrap.innerHTML=
-     '<div class="fr">'+tyFontSelect('body',c.body.font,'Body font <span style="font-weight:400;color:var(--muted)">— paragraphs, lists, tables, forms, menus</span>')+wsel('body',c.body.weight)+'</div>'
-    +'<div class="fr">'
-    +'<div class="fg"><label>Base text size</label><input type="text" id="ty-body-size" value="'+esc(c.body.size||'')+'" placeholder="e.g. 17px"><small>Leave blank to keep the size your design already uses.</small></div>'
-    +'<div class="fg"><label>Line height</label><input type="text" id="ty-body-lh" value="'+esc(c.body.lineHeight||'')+'" placeholder="e.g. 1.65"></div>'
-    +'</div>'
-    +'<div class="fr">'+tyFontSelect('heading',c.heading.font,'Heading font <span style="font-weight:400;color:var(--muted)">— every H1 through H6</span>')+wsel('heading',c.heading.weight)+'</div>'
-    +'<div class="fr">'+tyFontSelect('button',c.button.font,'Button font <span style="font-weight:400;color:var(--muted)">— leave blank to match the body</span>')+wsel('button',c.button.weight)+'</div>'
+     grp('Everything','The font the whole site falls back to — menus, captions, labels, table chrome. Set this one and you have set the site.',
+        '<div class="fr">'+tyFontSelect('body',c.body.font,'Base font')+wsel('body',c.body.weight)+'</div>'
+       +'<div class="fr">'+txt('body-size',c.body.size,'e.g. 17px','Base text size')+txt('body-lh',c.body.lineHeight,'e.g. 1.65','Line height')+'</div>')
+    +grp('Paragraphs','The prose a visitor actually reads — paragraphs, list items, quotes, table text. Leave the font blank to follow the base font; set it to hold reading copy apart from the interface around it. Menus built from lists are left on the base font.',
+        '<div class="fr">'+tyFontSelect('paragraph',c.paragraph.font,'Paragraph font')+wsel('paragraph',c.paragraph.weight)+'</div>'
+       +'<div class="fr">'+txt('paragraph-size',c.paragraph.size,'e.g. 17px','Size')+txt('paragraph-lh',c.paragraph.lineHeight,'e.g. 1.7','Line height')+'</div>'
+       +'<div class="fr">'+txt('paragraph-spacing',c.paragraph.spacing,'e.g. .01em','Letter spacing')
+       +'<div class="fg"><label>Text colour</label>'
+       +'<input type="color" id="ty-paragraph-color" value="'+(pc?(fcHex(c.paragraph.color)||'#000000'):'#000000')+'" data-alpha="'+(pc?fcAlphaOf(c.paragraph.color):1)+'" data-set="'+(pc?'1':'0')+'" oninput="this.dataset.set=\'1\';tyPreview()" style="width:46px;height:32px;border:1px solid var(--border);border-radius:7px;cursor:pointer;padding:2px">'
+       +'<small>Untouched until you pick one.</small></div></div>')
+    +grp('Headings','Every H1 through H6. Individual heading sizes, colours and alignment stay in Heading Styles below.',
+        '<div class="fr">'+tyFontSelect('heading',c.heading.font,'Heading font')+wsel('heading',c.heading.weight)+'</div>')
+    +grp('Buttons','Every button and call to action, however the design builds them. Leave the font blank to follow the base font.',
+        '<div class="fr">'+tyFontSelect('button',c.button.font,'Button font')+wsel('button',c.button.weight)+'</div>'
+       +'<div class="fr">'+txt('button-size',c.button.size,'e.g. 15px','Size')+txt('button-spacing',c.button.spacing,'e.g. .04em','Letter spacing')+'</div>'
+       +'<div class="fr">'+tsel('button',c.button.transform)+'<div class="fg"></div></div>')
     +'<label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:4px 0 2px">'
     +'<input type="checkbox" id="ty-force"'+(c.force?' checked':'')+' onchange="tyPreview()" style="width:auto;margin:2px 0 0;cursor:pointer">'
     +'<span>Override fonts baked into the design<br><small style="color:var(--muted)">On by default, and what makes the choice stick everywhere — most themes set fonts on individual pieces, and without this those pieces ignore you. Turn it off if you want your choice to be a starting point the design can still overrule.</small></span></label>';
   const fonts=typoFontList(t); if(fonts.length) adminLoadFonts(fonts);
   adminLoadFonts(GOOGLE_FONTS);
-  ['ty-body-size','ty-body-lh'].forEach(id=>document.getElementById(id)?.addEventListener('input',tyPreview));
-  ['ty-body-weight','ty-heading-weight','ty-button-weight'].forEach(id=>document.getElementById(id)?.addEventListener('change',tyPreview));
+  wrap.querySelectorAll('input[type=text]').forEach(el=>el.addEventListener('input',tyPreview));
+  wrap.querySelectorAll('select').forEach(el=>el.addEventListener('change',tyPreview));
+  try{ fcUpgradeAll(wrap); }catch(e){}
   tyPreview();
 }
 function siReadTypography(){
   const g=id=>(document.getElementById(id)?.value||'').trim();
+  const col=id=>{ const el=document.getElementById(id); return (el&&el.dataset.set==='1')?fcVal(el):''; };
   const t={
     body:{font:g('ty-body-font'),size:g('ty-body-size'),weight:g('ty-body-weight'),lineHeight:g('ty-body-lh')},
+    paragraph:{font:g('ty-paragraph-font'),size:g('ty-paragraph-size'),weight:g('ty-paragraph-weight'),
+               lineHeight:g('ty-paragraph-lh'),spacing:g('ty-paragraph-spacing'),color:col('ty-paragraph-color')},
     heading:{font:g('ty-heading-font'),weight:g('ty-heading-weight')},
-    button:{font:g('ty-button-font'),weight:g('ty-button-weight')},
+    button:{font:g('ty-button-font'),size:g('ty-button-size'),weight:g('ty-button-weight'),
+            spacing:g('ty-button-spacing'),transform:g('ty-button-transform')},
     force:!!document.getElementById('ty-force')?.checked
   };
   return typoHasAny(t)?t:null;
@@ -11707,13 +11762,16 @@ function tyPreview(){
   host.shadowRoot.innerHTML=
      (link?'<link rel="stylesheet" href="'+esc(link)+'">':'')
     +'<style>:host{display:block}body{margin:0;font-size:15px;line-height:1.6;color:#1a1814;background:#fff;border-radius:10px;padding:18px 20px;border:1px solid #e3ded2}'
-    +'h2{font-size:22px;margin:0 0 8px}p{margin:0 0 12px}'
+    +'h2{font-size:22px;margin:0 0 8px}p{margin:0 0 12px}ul{margin:0 0 12px;padding-left:20px}'
+    +'nav{font-size:13px;margin:0 0 14px;color:#6b6355}nav a{color:inherit;text-decoration:none}'
     +'.btn{display:inline-block;padding:9px 18px;border-radius:8px;background:#DB3516;color:#fff;font-size:14px;font-weight:600;text-decoration:none}'
     +'.fa-solid{font-family:"Font Awesome 6 Free"}'
     +'small{display:block;margin-top:10px;color:#8a8172;font-size:12px}</style>'
     +'<style>'+css+'</style>'
-    +'<body><h2>A heading on your site</h2>'
-    +'<p>Body copy runs at this size and weight. <strong>Bold</strong> and <em>italic</em> follow along, and so does a <a href="#">link inside a sentence</a>.</p>'
+    +'<body><nav><a href="#">Home</a> · <a href="#">Services</a> · <a href="#">Contact</a></nav>'
+    +'<h2>A heading on your site</h2>'
+    +'<p>Paragraph copy runs at this size, weight and colour. <strong>Bold</strong> and <em>italic</em> follow along, and so does a <a href="#">link inside a sentence</a>.</p>'
+    +'<ul><li>A list item, which reads as prose</li></ul>'
     +'<a class="btn" href="#">A button</a>'
     +'<small>Live preview — this is the exact CSS your pages will carry.</small></body>';
 }
