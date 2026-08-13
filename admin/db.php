@@ -322,6 +322,14 @@ function fourgeSecretPolicy() {
         // billable, and data/site.json is publicly readable so it cannot live
         // there. Only the server ever calls Google with it.
         'google_places_key' => 3,
+        // 44i Targeted Landing Page feed — Super Admin and above. The endpoint
+        // URL is not a secret and IS handed back to the browser so it can be
+        // seen and edited; the access key is the whole lock on that feed, so it
+        // is status-only and never leaves the server. Anyone holding the key can
+        // read the client TLP roster, which is why it cannot live in
+        // data/site.json (publicly readable) or in the admin's page source.
+        'tlp_url' => 3,
+        'tlp_key' => 3,
     ];
 }
 
