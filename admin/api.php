@@ -248,6 +248,7 @@ try {
         case 'reviews_fetch':      ob_end_clean(); fourgeApiReviewsFetch($authUser, $body); break;
         case 'reviews_find_place': ob_end_clean(); fourgeApiReviewsFindPlace($authUser, $body); break;
         case 'map_geocode':        ob_end_clean(); fourgeApiMapGeocode($authUser, $body); break;
+        case 'tlp_feed':           ob_end_clean(); fourgeApiTlpFeed($authUser, $body); break;
         case 'seo_package':     ob_end_clean(); fourgeApiSeoPackage($authUser, $body); break;
         case 'seo_pkg_tick':    ob_end_clean(); fourgeApiSeoPkgTick($authUser, $body); break;
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
@@ -1953,7 +1954,7 @@ function fourgeApiChangePassword($me, $body) {
 // Secrets whose cleartext the browser legitimately needs (the Architect's
 // browser publishes to GitHub directly; the Mailgun routing fields are shown so
 // they can be edited). The Mailgun API KEY stays status-only — never sent back.
-function fourgeClientFullSecrets() { return ['github_pat', 'repo_override', 'mg_domain', 'mg_from', 'mg_notify_to']; }
+function fourgeClientFullSecrets() { return ['github_pat', 'repo_override', 'mg_domain', 'mg_from', 'mg_notify_to', 'tlp_url']; }
 
 function fourgeApiGetSecrets($me) {
     $pdo = fourgeDb();
@@ -2464,6 +2465,94 @@ function fourgeApiReviewsFindPlace($me, $body) {
     $msg = (string)($d['error']['message'] ?? ($d2['error_message'] ?? ($err ?: 'Google returned HTTP ' . $code)));
     http_response_code(502);
     echo json_encode(['error' => 'Place search failed: ' . $msg . ' Make sure "Places API (New)" is enabled for this key.']);
+}
+// ── 44i TARGETED LANDING PAGE FEED ──────────────────────────────────────────
+// A read-only pull from the 44i platform: which clients have landing-page data,
+// and for one client the exact service + geo pairs an account manager entered.
+//
+// This is a PROXY rather than a browser fetch, for one reason: the feed's only
+// protection is a shared key in the query string. Fetching it from the browser
+// would put that key in the admin's page source and in every network log; the
+// key lives in the encrypted store and is appended here, server-side, so it
+// never reaches a client at all.
+function fourgeTlpUrlOk($url) {
+    $p = @parse_url($url);
+    if (!$p || ($p['scheme'] ?? '') !== 'https' || empty($p['host'])) return false;
+    $host = strtolower($p['host']);
+    // The URL is operator-supplied, so it is semi-trusted at best — a typo or a
+    // pasted internal address must not turn this endpoint into a way to make the
+    // server fetch things on its own network.
+    if ($host === 'localhost' || substr($host, -6) === '.local') return false;
+    $ips = [];
+    if (filter_var($host, FILTER_VALIDATE_IP)) $ips = [$host];
+    else { $r = @gethostbynamel($host); if (is_array($r)) $ips = $r; }
+    foreach ($ips as $ip) {
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return false;
+    }
+    // A host that resolves to nothing is left to curl to fail on, rather than
+    // being rejected here — DNS can be slow or split-horizon on shared hosts.
+    return true;
+}
+function fourgeApiTlpFeed($me, $body) {
+    if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
+    $pdo = fourgeDb();
+    if (fourgeLevel($me) < fourgeSecretLevel('tlp_key')) {
+        http_response_code(403); echo json_encode(['error' => 'You do not have access to the landing page feed']); return;
+    }
+    $base = ''; $key = '';
+    try { $base = trim((string)fourgeGetSecret($pdo, 'tlp_url')); } catch (Throwable $e) {}
+    try { $key  = trim((string)fourgeGetSecret($pdo, 'tlp_key')); } catch (Throwable $e) {}
+    if ($base === '' || $key === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'Add the feed address and access key first.', 'configured' => false]);
+        return;
+    }
+    if (!fourgeTlpUrlOk($base)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'The feed address must be an https:// URL on a public host.']);
+        return;
+    }
+    $qs = ['key' => $key];
+    $client = trim((string)($body['client'] ?? ''));
+    $intake = trim((string)($body['intake'] ?? ''));
+    if ($intake !== '')      $qs['intake'] = $intake;
+    else if ($client !== '') $qs['client'] = $client;
+    $url = $base . (strpos($base, '?') === false ? '?' : '&') . http_build_query($qs);
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_FOLLOWLOCATION => false,   // a redirect could aim the key somewhere else
+        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        CURLOPT_USERAGENT => 'FourgeCMS TLP',
+    ]);
+    $raw  = (string)curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
+    curl_close($ch);
+
+    if ($code === 0) {
+        http_response_code(502);
+        echo json_encode(['error' => 'Could not reach the feed: ' . ($err ?: 'no response')]);
+        return;
+    }
+    if ($code === 401) {
+        http_response_code(401);
+        echo json_encode(['error' => 'The feed rejected the access key. Check it, or ask 44i to rotate it.']);
+        return;
+    }
+    if ($code === 404) {
+        http_response_code(404);
+        echo json_encode(['error' => 'That client has no landing page data in the feed yet.']);
+        return;
+    }
+    $d = json_decode($raw, true);
+    if ($code !== 200 || !is_array($d)) {
+        http_response_code(502);
+        echo json_encode(['error' => 'The feed returned HTTP ' . $code . '.']);
+        return;
+    }
+    echo json_encode(['ok' => true, 'feed' => $d]);
 }
 // ── MAP: ADDRESS → COORDINATES ──────────────────────────────────────────────
 // Server-side so no key ever reaches the browser, and so this works on a site

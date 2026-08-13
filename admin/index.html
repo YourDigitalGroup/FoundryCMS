@@ -1432,7 +1432,25 @@ textarea.fb-input{resize:vertical}
         <div style="max-width:760px">
           <div style="margin-bottom:8px;font-size:13px;color:var(--muted)">Duplicate existing pages and auto-localize them for a specific city — full local SEO, schema, and a city intro. Published pages are indexed and added to your sitemap, but not added to your nav menu.</div>
           <div class="pe-side-card" style="margin-top:16px">
-            <div class="pe-side-title">1. Target Cities</div>
+            <div class="pe-side-title">Pull from the 44i platform</div>
+            <div style="font-size:11.5px;color:var(--muted);margin:-4px 0 12px">The account manager already entered which service goes with which town. Pull that list and Fourge builds exactly those pages — one per pair — instead of you re-typing them here.</div>
+            <label class="pe-field-label">Feed address</label>
+            <input type="text" id="tlp-feed-url" placeholder="https://…supabase.co/functions/v1/tlp" style="width:100%;font-family:var(--font-mono);font-size:12px">
+            <label class="pe-field-label" style="margin-top:9px">Access key</label>
+            <input type="password" id="tlp-feed-key" placeholder="Paste the key" autocomplete="off" style="width:100%;font-family:var(--font-mono);font-size:12px">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Stored encrypted on the server and never sent back to a browser — the key is the only lock on that feed, so Fourge calls it server-side rather than putting the key in this page.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <button class="fd-btn-secondary" onclick="tlpFeedSave()">Save</button>
+              <button class="fd-btn-secondary" onclick="tlpFeedClear()">Remove key</button>
+              <button class="fd-btn-primary" id="tlp-feed-load" onclick="tlpFeedLoadClients()" disabled>Load clients</button>
+            </div>
+            <div id="tlp-feed-state" style="font-size:11.5px;color:var(--muted);margin-top:8px"></div>
+            <div id="tlp-feed-status" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div>
+            <div id="tlp-feed-clients" style="margin-top:12px"></div>
+            <div id="tlp-feed-pairs"></div>
+          </div>
+          <div class="pe-side-card" style="margin-top:16px">
+            <div class="pe-side-title">1. Target Cities <span style="font-weight:600;color:var(--muted);font-size:11px">— or build a set by hand</span></div>
             <label class="pe-field-label">One city per line — format: <code style="font-family:var(--font-mono);font-size:11px">City, ST</code></label>
             <textarea id="tlp-cities" rows="5" placeholder="Evansville, IN&#10;Newburgh, IN&#10;Henderson, KY&#10;Owensboro, KY" style="width:100%;font-family:var(--font-mono);font-size:13px"></textarea>
             <div style="font-size:11px;color:var(--muted);margin-top:4px">Each city generates its own set of pages from the selected sources.</div>
@@ -2568,7 +2586,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.95';
+const CMS_VERSION='1.14.96';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4744,6 +4762,7 @@ function buildPageHtml(title,body,hero){
 let _tlpPreviews=[];   // generated previews awaiting approval
 
 function initTLP(){
+  try{ tlpFeedInit(); }catch(e){}
   renderTLPSourceList();
   renderTLPGenerated();
   const out=document.getElementById('tlp-preview-area');
@@ -4812,6 +4831,242 @@ function parseCities(){
   }).filter(c=>c.city);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// 44i TARGETED LANDING PAGE FEED
+// ══════════════════════════════════════════════════════════════════════════
+// The 44i platform holds what the account manager actually agreed with the
+// client: for each landing page, a SERVICE and a GEO LOCATION. That is a list
+// of specific pages — not a grid.
+//
+// Which is the whole reason this does not simply fill in the Target Cities box.
+// The generator below it builds a cross product: every city × every selected
+// page. Five pairs run through that would produce twenty-five pages, and the
+// four wrong ones for each service would read as thin duplicates of the right
+// one — the exact thing a targeted landing page is supposed to avoid. So the
+// feed drives generation pair by pair: one page per row the AM typed, using the
+// slug the platform already suggested.
+//
+// The access key never reaches this file. It lives in the encrypted secret
+// store and is appended by the server (see fourgeApiTlpFeed) — a browser fetch
+// would put it in the page source and in every network log.
+let _tlpFeed=null;        // the loaded client index
+let _tlpClient=null;      // the currently pulled client export
+let _tlpRows=[];          // per-pair UI state: {pair, pageId, on}
+
+function tlpFeedConfigured(){ return !!(_secretStatus&&_secretStatus.tlp_key); }
+
+async function tlpFeedInit(){
+  const urlEl=document.getElementById('tlp-feed-url');
+  if(urlEl && !urlEl.value) urlEl.value=(_secrets&&_secrets.tlp_url)||'';
+  tlpFeedPaintState();
+}
+function tlpFeedPaintState(){
+  const el=document.getElementById('tlp-feed-state'); if(!el) return;
+  const has=tlpFeedConfigured();
+  el.textContent=has?'Access key saved on the server ✓':'No access key saved yet.';
+  el.style.color=has?'var(--muted)':'#b3261e';
+  const btn=document.getElementById('tlp-feed-load'); if(btn) btn.disabled=!has;
+}
+async function tlpFeedSave(){
+  if(!canCallApi()){ toast('Sign in again to save the feed settings','err'); return; }
+  const url=(document.getElementById('tlp-feed-url')?.value||'').trim();
+  const key=(document.getElementById('tlp-feed-key')?.value||'').trim();
+  if(!url){ toast('Paste the feed address first','err'); return; }
+  if(!/^https:\/\//i.test(url)){ toast('The feed address must start with https://','err'); return; }
+  try{
+    await apiCall('set_secret',{name:'tlp_url',value:url});
+    if(key) await apiCall('set_secret',{name:'tlp_key',value:key});
+    await loadSecrets();
+    const k=document.getElementById('tlp-feed-key'); if(k) k.value='';
+    tlpFeedPaintState();
+    toast(key?'Feed address and key saved ✓':'Feed address saved ✓','ok');
+  }catch(e){ toast('Could not save: '+(e.message||e),'err'); }
+}
+async function tlpFeedClear(){
+  if(!canCallApi()){ toast('Sign in again','err'); return; }
+  if(!confirm('Remove the saved access key? The feed cannot be read until a new one is entered.')) return;
+  try{
+    await apiCall('set_secret',{name:'tlp_key',value:''});
+    await loadSecrets();
+    _tlpFeed=null; _tlpClient=null; _tlpRows=[];
+    tlpFeedPaintState(); tlpFeedPaintClients(); tlpFeedPaintPairs();
+    toast('Access key removed','ok');
+  }catch(e){ toast('Could not remove: '+(e.message||e),'err'); }
+}
+function tlpFeedSay(msg,bad){
+  const el=document.getElementById('tlp-feed-status'); if(!el) return;
+  el.textContent=msg||'';
+  el.style.color=bad?'#b3261e':'var(--muted)';
+}
+// ── the index: which clients have landing page data ────────────────────────
+async function tlpFeedLoadClients(){
+  if(!canCallApi()){ toast('Sign in again','err'); return; }
+  tlpFeedSay('Reading the feed…');
+  try{
+    const r=await apiCall('tlp_feed',{});
+    const f=(r&&r.feed)||{};
+    _tlpFeed=Array.isArray(f.clients)?f.clients:[];
+    tlpFeedPaintClients();
+    tlpFeedSay(_tlpFeed.length
+      ? _tlpFeed.length+' client'+(_tlpFeed.length===1?'':'s')+' with landing page data.'
+      : 'The feed is reachable, but no client has landing page rows yet. They appear here as soon as an account manager fills them in.');
+  }catch(e){
+    _tlpFeed=null; tlpFeedPaintClients();
+    tlpFeedSay(e.message||String(e),true);
+  }
+}
+function tlpFeedPaintClients(){
+  const box=document.getElementById('tlp-feed-clients'); if(!box) return;
+  if(!_tlpFeed||!_tlpFeed.length){ box.innerHTML=''; return; }
+  box.innerHTML='<label class="pe-field-label">Client</label>'
+    +'<select id="tlp-feed-client" onchange="tlpFeedPullClient()" style="width:100%">'
+    +'<option value="">— choose a client —</option>'
+    +_tlpFeed.map(c=>'<option value="'+esc(c.slug||c.client||'')+'">'+esc(c.client||c.slug||'')
+      +' — '+(+c.landing_pages||0)+' page'+((+c.landing_pages||0)===1?'':'s')
+      +(c.partner?(' · '+esc(c.partner)):'')+'</option>').join('')
+    +'</select>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:4px">Straight from the 44i intake — this list updates itself as new builds are filled in.</div>';
+}
+// ── one client: the pairs the account manager typed ────────────────────────
+async function tlpFeedPullClient(){
+  const slug=document.getElementById('tlp-feed-client')?.value||'';
+  if(!slug){ _tlpClient=null; _tlpRows=[]; tlpFeedPaintPairs(); return; }
+  tlpFeedSay('Pulling landing pages…');
+  try{
+    const r=await apiCall('tlp_feed',{client:slug});
+    _tlpClient=(r&&r.feed)||null;
+    const pairs=(_tlpClient&&Array.isArray(_tlpClient.landing_pages))?_tlpClient.landing_pages:[];
+    // Auto-match each service to a page that already exists on this site. It is
+    // a suggestion, not a decision — every row can be repointed before running.
+    _tlpRows=pairs.map(p=>({pair:p,pageId:tlpMatchSource(p.service),on:true}));
+    tlpFeedPaintPairs();
+    const unmatched=_tlpRows.filter(r2=>!r2.pageId).length;
+    tlpFeedSay(pairs.length+' landing page'+(pairs.length===1?'':'s')+' from the platform.'
+      +(unmatched?(' '+unmatched+' could not be matched to a page on this site — pick a source for those.'):''),!!unmatched);
+  }catch(e){
+    _tlpClient=null; _tlpRows=[]; tlpFeedPaintPairs();
+    tlpFeedSay(e.message||String(e),true);
+  }
+}
+// Match "Boundary Surveying" to the page most likely to be about it. Scored on
+// shared significant words rather than exact equality, because the platform's
+// service names and a site's page titles are written by different people.
+const TLP_STOP={the:1,and:1,for:1,of:1,in:1,a:1,an:1,to:1,our:1,your:1,services:1,service:1,page:1,home:1};
+function tlpWords(s){
+  return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/)
+    .filter(w=>w.length>2&&!TLP_STOP[w]);
+}
+function tlpMatchSource(service){
+  const want=tlpWords(service);
+  if(!want.length) return '';
+  let best='', score=0;
+  getVisiblePages().forEach(pg=>{
+    // getPageList() hands back `label` (the decoded title, falling back to the
+    // id) — NOT `title`. Scoring against the id instead would quietly reduce
+    // this to slug matching, which fails on any site whose pages are ids like
+    // "page-3".
+    const have=tlpWords(pg.label||pg.id||'');
+    if(!have.length) return;
+    let hits=0;
+    want.forEach(w=>{ if(have.some(h=>h===w||h.indexOf(w)===0||w.indexOf(h)===0)) hits++; });
+    const s=hits/want.length;
+    if(s>score){ score=s; best=pg.id; }
+  });
+  return score>=0.5?best:'';
+}
+function tlpFeedPaintPairs(){
+  const box=document.getElementById('tlp-feed-pairs'); if(!box) return;
+  if(!_tlpClient||!_tlpRows.length){ box.innerHTML=''; return; }
+  const c=_tlpClient.client||{};
+  const kw=Array.isArray(_tlpClient.keywords)?_tlpClient.keywords:[];
+  const pages=getVisiblePages();
+  const opts=(sel)=>'<option value="">— pick a source page —</option>'
+    +pages.map(pg=>'<option value="'+esc(pg.id)+'"'+(pg.id===sel?' selected':'')+'>'+esc(pg.label||pg.id)+'</option>').join('');
+  box.innerHTML=
+     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin:14px 0 4px">'
+    +'<strong style="font-size:14px">'+esc(c.business_name||'')+'</strong>'
+    +'<span style="font-size:12px;color:var(--muted)">'+esc(c.package||'')+(c.partner?(' · '+esc(c.partner)):'')+'</span></div>'
+    +(kw.length?('<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">'
+      +kw.map(k=>'<span style="font-size:11px;background:var(--surface-3);border:1px solid var(--border);border-radius:999px;padding:3px 9px">'+esc(k)+'</span>').join('')
+      +'</div><div style="font-size:11px;color:var(--muted);margin-bottom:12px">These priority keywords are given to the writer for every page below.</div>'):'')
+    +'<div style="display:flex;flex-direction:column;gap:8px">'
+    +_tlpRows.map((r,i)=>{
+      const p=r.pair||{};
+      return '<div style="border:1px solid var(--border);border-radius:9px;padding:10px 12px;background:var(--surface)'+(r.pageId?'':';border-color:#e0a3a3')+'">'
+        +'<div style="display:flex;gap:9px;align-items:center">'
+        +'<input type="checkbox" class="tlp-feed-chk" data-i="'+i+'"'+(r.on?' checked':'')+' onchange="tlpFeedToggle('+i+',this.checked)" style="width:16px;height:16px;accent-color:var(--ember);cursor:pointer">'
+        +'<div style="min-width:0;flex:1">'
+        +'<div style="font-size:13.5px;font-weight:700">'+esc(p.service||'')+' <span style="font-weight:400;color:var(--muted)">in</span> '+esc(p.geo_location||'')+'</div>'
+        +'<div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">'+esc(p.suggested_slug||'')+'.html</div>'
+        +'</div></div>'
+        +'<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
+        +'<span style="font-size:11px;color:var(--muted);white-space:nowrap">Build from</span>'
+        +'<select onchange="tlpFeedSetSource('+i+',this.value)" style="flex:1;font-size:12px">'+opts(r.pageId)+'</select>'
+        +'</div></div>';
+    }).join('')
+    +'</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px">'
+    +'<button class="fd-btn-primary" onclick="generateTLPsFromFeed()">Generate these landing pages</button>'
+    +'<button class="fd-btn-secondary" onclick="tlpFeedPullClient()">Re-pull from the platform</button>'
+    +'</div>';
+}
+function tlpFeedToggle(i,on){ if(_tlpRows[i]) _tlpRows[i].on=!!on; }
+function tlpFeedSetSource(i,id){ if(_tlpRows[i]){ _tlpRows[i].pageId=id; tlpFeedPaintPairs(); } }
+
+// A geo string from the platform is free text — "Evansville, IN", "Evansville
+// Indiana", or just "Evansville". Split it the way the rest of the tab expects.
+function tlpSplitGeo(geo){
+  const s=String(geo||'').trim();
+  let m=/^(.*?),\s*([A-Za-z]{2})\.?$/.exec(s);
+  if(m) return {city:m[1].trim(),state:m[2].toUpperCase()};
+  m=/^(.*?),\s*(.+)$/.exec(s);
+  if(m) return {city:m[1].trim(),state:m[2].trim()};
+  return {city:s,state:''};
+}
+// ── generation, one page per pair ──────────────────────────────────────────
+async function generateTLPsFromFeed(){
+  const rows=_tlpRows.filter(r=>r.on&&r.pageId);
+  if(!rows.length){ toast('Tick at least one landing page and give it a source page','err'); return; }
+  const missing=_tlpRows.filter(r=>r.on&&!r.pageId).length;
+  if(missing && !confirm(missing+' selected page(s) have no source page and will be skipped. Carry on?')) return;
+  try{ if(!getEffectivePerms(getSessionUser()).aiEdit){ toast('Markup editing is not enabled for your account','err'); return; } }catch(e){}
+
+  const keywords=(_tlpClient&&Array.isArray(_tlpClient.keywords))?_tlpClient.keywords:[];
+  const out=document.getElementById('tlp-preview-area');
+  _tlpPreviews=[];
+  // Each source page is read once however many pairs use it.
+  const srcCache={};
+  for(const r of rows){
+    if(srcCache[r.pageId]!==undefined) continue;
+    const page=_pages[r.pageId];
+    let srcHtml='';
+    try{
+      const{url,token}=getApiCfg();
+      if(url&&token && page){ const d=await apiCall('read_file',{path:page.file||page.path}); srcHtml=d.content||''; }
+      if(!srcHtml && page){ const res=await fetch('../'+(page.file||page.path)+'?t='+Date.now()); if(res.ok) srcHtml=await res.text(); }
+    }catch(e){}
+    srcCache[r.pageId]=srcHtml||'';
+  }
+  let done=0;
+  for(const r of rows){
+    const page=Object.assign({id:r.pageId}, _pages[r.pageId]);
+    const srcHtml=srcCache[r.pageId];
+    done++;
+    if(!srcHtml){ continue; }
+    const {city,state}=tlpSplitGeo(r.pair.geo_location);
+    if(out) out.innerHTML='<div class="tlp-loading">['+done+'/'+rows.length+'] Writing "'+esc(r.pair.service||'')+'" for '+esc(r.pair.geo_location||'')+'…</div>';
+    const result=await tlpRewrite(srcHtml,page,city,state,'',{
+      service:r.pair.service||'',
+      title:r.pair.suggested_title||'',
+      slug:r.pair.suggested_slug||'',
+      keywords
+    });
+    if(result) _tlpPreviews.push(result);
+  }
+  if(!_tlpPreviews.length){ toast('Nothing generated — the source pages could not be read','err'); return; }
+  renderTLPPreviews();
+}
+
 async function generateTLPs(){
   const cities=parseCities();
   if(!cities.length){ toast('Enter at least one city (one per line)','err'); return; }
@@ -4854,14 +5109,23 @@ async function generateTLPs(){
   renderTLPPreviews();
 }
 
-async function tlpRewrite(srcHtml, page, city, state, apiKey){
+async function tlpRewrite(srcHtml, page, city, state, apiKey, opt){
+  opt=opt||{};
   const cityState=state?city+', '+state:city;
   // Extract body text content to send (keep payload reasonable)
   const bodyMatch=srcHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   const bodyInner=bodyMatch?bodyMatch[1]:srcHtml;
   const visibleText=bodyInner.replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<style[\s\S]*?<\/style>/gi,'').slice(0,6000);
 
+  // When the pair came from the platform, the service is the point of the page —
+  // saying so changes the copy far more than the city alone does.
+  const svc=String(opt.service||'').trim();
+  const kws=(Array.isArray(opt.keywords)?opt.keywords:[]).slice(0,12);
+  const brief=(svc?('This page targets the service "'+svc+'" for customers in '+cityState+'. Lead with that service. '):'')
+    +(opt.title?('The agreed page title is "'+opt.title+'" — use it, or something very close if it reads badly. '):'')
+    +(kws.length?('Work these priority keywords in naturally where they fit, never forced: '+kws.join(', ')+'. '):'');
   const prompt='You are a local SEO expert. I have a webpage and need to create a city-targeted version for "'+cityState+'". '
+    +brief
     +'Return ONLY valid JSON (no markdown) with these keys: '
     +'"title" (SEO title 50-60 chars including the city), '
     +'"metaDescription" (120-160 chars including the city, compelling), '
@@ -4877,10 +5141,14 @@ async function tlpRewrite(srcHtml, page, city, state, apiKey){
     const ai=JSON.parse(raw);
     // Build the new HTML
     const citySlug=slugify(city);
-    const newId=page.id+'-'+citySlug;
-    const newFile=(page.file||page.path||'page.html').replace(/\.html?$/i,'')+'-'+citySlug+'.html';
+    // The platform's slug wins when there is one: it is what the client signed
+    // off, and it already encodes the service as well as the town.
+    const slug=slugify(opt.slug||'')||(page.id+'-'+citySlug);
+    const newId=slug;
+    const newFile=slug+'.html';
     const newHtml=tlpBuildHtml(srcHtml, ai, city, state, page);
-    return {sourceId:page.id, sourceTitle:page.title||page.id, newId, newFile, city, state, ai, html:newHtml};
+    return {sourceId:page.id, sourceTitle:page.title||page.id, newId, newFile, city, state, ai, html:newHtml,
+            service:svc, fromFeed:!!opt.slug};
   }catch(e){
     return {sourceId:page.id, sourceTitle:page.title||page.id, error:e.message};
   }
@@ -4944,7 +5212,8 @@ function renderTLPPreviews(){
       const p=_tlpPreviews[i];
       if(p.error) return '<div class="tlp-card tlp-err"><strong>'+esc(p.sourceTitle)+'</strong><div style="color:#dc2626;font-size:13px">Failed: '+esc(p.error)+'</div></div>';
       return '<div class="tlp-card">'
-        +'<div class="tlp-card-head"><strong>'+esc(decodeHtml(p.sourceTitle))+'</strong> → <code>'+esc(p.newFile)+'</code></div>'
+        +'<div class="tlp-card-head"><strong>'+esc(decodeHtml(p.service||p.sourceTitle))+'</strong> → <code>'+esc(p.newFile)+'</code>'
+        +(p.fromFeed?'<span style="margin-left:8px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember)">from 44i</span>':'')+'</div>'
         +'<div class="tlp-field"><span class="tlp-k">Title</span><span class="tlp-v">'+esc(p.ai.title||'')+'</span></div>'
         +'<div class="tlp-field"><span class="tlp-k">Meta</span><span class="tlp-v">'+esc(p.ai.metaDescription||'')+'</span></div>'
         +'<div class="tlp-field"><span class="tlp-k">H1</span><span class="tlp-v">'+esc(p.ai.h1||'')+'</span></div>'
