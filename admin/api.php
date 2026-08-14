@@ -252,6 +252,7 @@ try {
         case 'seo_package':     ob_end_clean(); fourgeApiSeoPackage($authUser, $body); break;
         case 'seo_pkg_tick':    ob_end_clean(); fourgeApiSeoPkgTick($authUser, $body); break;
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
+        case 'seo_pkg_publish_all': ob_end_clean(); fourgeApiSeoPkgPublishAll($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
@@ -4016,6 +4017,11 @@ function cmsPkgApply($pkg, $dry) {
             }
             $rec['draft'] = !$publishNow;
             if ($publishAt !== '') $rec['publishAt'] = $publishAt; else unset($rec['publishAt']);
+            // Remember WHY this was held. The reason otherwise lives only in the
+            // import report, and "publish everything now" would then be a blind
+            // override of the one gate that exists to stop unreviewed copy going
+            // live. Recorded here so that button can name the open questions.
+            if ($qaHold && !$publishNow) $rec['pkgQa'] = $qa; else unset($rec['pkgQa']);
             if (!isset($seo[$pid]) || !is_array($seo[$pid])) $seo[$pid] = [];
             if (trim((string)($seo[$pid]['title'] ?? '')) === '') $seo[$pid]['title'] = $title;
             $fk = trim((string)($c['focus_keyword'] ?? ''));
@@ -4066,6 +4072,7 @@ function cmsPkgApply($pkg, $dry) {
                         : (trim((string)($rec['date'] ?? '')) !== '' ? $rec['date'] : gmdate('Y-m-d'));
             $rec['published'] = $publishNow;
             if ($publishAt !== '') $rec['publishAt'] = $publishAt; else unset($rec['publishAt']);
+            if ($qaHold && !$publishNow) $rec['pkgQa'] = $qa; else unset($rec['pkgQa']);
             if ($ext !== '') $rec['extId'] = $ext;
             $fk = trim((string)($c['focus_keyword'] ?? ''));
             if ($fk !== '') $rec['focusKeyword'] = $fk;
@@ -4156,6 +4163,99 @@ function fourgeApiSeoPackage($me, $body) {
         cmsPkgWriteJson('seo-package-report.json', $report);
     }
     echo json_encode($report);
+}
+
+// "Publish everything the package brought in, now." The tick above only
+// releases content whose scheduled time has arrived; this releases the lot —
+// drafts awaiting review and future schedules alike.
+//
+// Scope is deliberately package content ONLY (records carrying an extId). A
+// blanket publish of every draft on the site would sweep up half-written pages
+// a client left alone, which is not what anyone means by this button.
+//
+// The subtle part is the HTML. A draft page is stamped noindex by
+// cmsPkgStampSeo, so flipping draft=false in pages.json without re-stamping the
+// file would "publish" a page that still tells search engines to ignore it.
+// Each page is therefore re-stamped (and backed up first) as it goes live.
+function cmsPkgPublishAll($dry = false) {
+    $site    = cmsPkgReadJson('site.json', []);
+    $baseUrl = trim((string)($site['website'] ?? ''));
+    if ($baseUrl !== '' && !preg_match('~^https?://~i', $baseUrl)) $baseUrl = 'https://' . $baseUrl;
+    $seo     = cmsPkgReadJson('seo.json', []);
+    $items   = [];
+
+    $pages = cmsPkgReadJson('pages.json', []);
+    $pagesDirty = false;
+    if (is_array($pages)) {
+        foreach ($pages as $pid => $rec) {
+            if (!is_array($rec) || trim((string)($rec['extId'] ?? '')) === '') continue;
+            $sched = trim((string)($rec['publishAt'] ?? ''));
+            if (empty($rec['draft']) && $sched === '') continue;   // already live
+            $qa = array_values(array_filter(array_map('strval', (array)($rec['pkgQa'] ?? []))));
+            $items[] = [
+                'type'  => 'page',
+                'id'    => (string)$pid,
+                'title' => (string)($rec['title'] ?? $pid),
+                'was'   => $sched !== '' ? ('scheduled for ' . $sched) : 'draft',
+                'qa'    => $qa,
+            ];
+            if ($dry) continue;
+            $rec['draft'] = false;
+            unset($rec['publishAt'], $rec['pkgQa']);
+            $pages[$pid] = $rec; $pagesDirty = true;
+            $file = (string)($rec['file'] ?? ($pid . '.html'));
+            $full = PUBLIC_HTML . '/' . $file;
+            if (is_file($full)) {
+                $html = (string)@file_get_contents($full);
+                if (trim($html) !== '') {
+                    cmsPkgBackup($file);
+                    $canon = cmsPkgPageUrl($baseUrl, $file);
+                    $srec  = is_array($seo[$pid] ?? null) ? $seo[$pid] : [];
+                    @file_put_contents($full, cmsPkgStampSeo($html, $srec, $canon, false));
+                }
+            }
+        }
+    }
+
+    $posts = cmsPkgReadJson('posts.json', []);
+    $postsDirty = false;
+    if (is_array($posts)) {
+        foreach ($posts as $i => $p) {
+            if (!is_array($p) || trim((string)($p['extId'] ?? '')) === '') continue;
+            $sched = trim((string)($p['publishAt'] ?? ''));
+            if (!empty($p['published']) && $sched === '') continue;
+            $qa = array_values(array_filter(array_map('strval', (array)($p['pkgQa'] ?? []))));
+            $items[] = [
+                'type'  => 'post',
+                'id'    => (string)($p['id'] ?? $i),
+                'title' => (string)($p['title'] ?? ''),
+                'was'   => $sched !== '' ? ('scheduled for ' . $sched) : 'draft',
+                'qa'    => $qa,
+            ];
+            if ($dry) continue;
+            $posts[$i]['published'] = true;
+            unset($posts[$i]['publishAt'], $posts[$i]['pkgQa']);
+            // A post released early should not still advertise a future date.
+            $d = trim((string)($posts[$i]['date'] ?? ''));
+            if ($d === '' || strtotime($d) > time()) $posts[$i]['date'] = gmdate('Y-m-d');
+            $postsDirty = true;
+        }
+    }
+
+    if (!$dry) {
+        if ($pagesDirty) cmsPkgWriteJson('pages.json', $pages);
+        if ($postsDirty) cmsPkgWriteJson('posts.json', $posts);
+    }
+    $held = array_values(array_filter($items, function ($x) { return !empty($x['qa']); }));
+    return ['items' => $items, 'count' => count($items), 'questioned' => $held];
+}
+function fourgeApiSeoPkgPublishAll($me, $body) {
+    if (!$me || fourgeLevel($me) < 2) {
+        http_response_code(403); echo json_encode(['error' => 'Admin access required']); return;
+    }
+    $dry = !empty($body['dry']);
+    $r = cmsPkgPublishAll($dry);
+    echo json_encode(['ok' => true, 'dry' => $dry] + $r);
 }
 
 function fourgeApiSeoPkgTick($me, $body) {
