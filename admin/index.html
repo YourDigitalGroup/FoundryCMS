@@ -1717,7 +1717,9 @@ textarea.fb-input{resize:vertical}
               <button type="button" class="fd-btn-secondary superadmin-only" style="display:none" onclick="pkgToken('regenerate')"><i class="fa-solid fa-key"></i> Generate / rotate key</button>
               <button type="button" class="fd-btn-secondary superadmin-only" style="display:none" onclick="pkgToken('revoke')">Revoke key</button>
               <button type="button" class="fd-btn-secondary" onclick="pkgTickNow()" title="Publish any scheduled package content whose time has come">Publish due content now</button>
+              <button type="button" class="fd-btn-primary" onclick="pkgPublishAll()" title="Take every page and post this package created live right now — drafts and future schedules alike"><i class="fa-solid fa-bullhorn"></i> Publish all content now</button>
             </div>
+            <div id="pkg-publish-out" style="margin-top:10px"></div>
             <div id="pkg-token-out" style="margin-top:10px"></div>
           </div>
           <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
@@ -2586,7 +2588,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.96';
+const CMS_VERSION='1.14.97';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -9670,6 +9672,63 @@ async function aiFixLoadState(){
         +(t.metas||0)+' metadata, '+(t.alts||0)+' alt text, '+(t.links||0)+' links.';
     }
   }catch(e){}
+}
+// Take everything the package brought in live, now — drafts awaiting review and
+// future schedules alike. Always a dry run first: this is the one action that
+// can put copy in front of the public before anyone has read it, so what is
+// about to happen is shown and confirmed rather than assumed.
+async function pkgPublishAll(){
+  const box=document.getElementById('pkg-publish-out');
+  const say=h=>{ if(box) box.innerHTML=h; };
+  if(!canCallApi()){ toast('Sign in again to publish','err'); return; }
+  say('<div style="font-size:12px;color:var(--muted)">Checking what is waiting…</div>');
+  let plan;
+  try{ plan=await apiCall('seo_pkg_publish_all',{dry:true}); }
+  catch(e){ say('<div style="font-size:12px;color:#b3261e">'+esc(e.message||String(e))+'</div>'); return; }
+  const items=(plan&&plan.items)||[], qa=(plan&&plan.questioned)||[];
+  if(!items.length){
+    say('<div style="font-size:12px;color:var(--muted)">Nothing is waiting — every page and post from the package is already live.</div>');
+    toast('Everything from the package is already live','ok'); return;
+  }
+  const pages=items.filter(i=>i.type==='page').length, posts=items.length-pages;
+  const list=items.slice(0,40).map(i=>
+     '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px">'
+    +'<span style="flex:0 0 44px;color:var(--muted);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.06em;padding-top:2px">'+esc(i.type)+'</span>'
+    +'<div style="min-width:0;flex:1"><div style="font-weight:600">'+esc(i.title||i.id)+'</div>'
+    +'<div style="color:var(--muted);font-size:11px">'+esc(i.was||'')+'</div>'
+    +((i.qa&&i.qa.length)?('<div style="color:#b3261e;font-size:11px;margin-top:2px">Unresolved: '+esc(i.qa.join('; '))+'</div>'):'')
+    +'</div></div>').join('');
+  say('<div style="border:1px solid var(--border);border-radius:9px;padding:12px 14px;background:var(--surface)">'
+    +'<div style="font-size:13px;font-weight:700;margin-bottom:2px">'+items.length+' item'+(items.length===1?'':'s')+' would go live now</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">'+pages+' page'+(pages===1?'':'s')+' · '+posts+' post'+(posts===1?'':'s')
+    +(qa.length?(' · <strong style="color:#b3261e">'+qa.length+' still carrying unresolved questions</strong>'):'')+'</div>'
+    +list+(items.length>40?('<div style="font-size:11px;color:var(--muted);padding-top:6px">…and '+(items.length-40)+' more</div>'):'')
+    +'<div style="margin-top:12px"><button type="button" class="fd-btn-primary" onclick="pkgPublishAllConfirm()">Yes — publish these '+items.length+' now</button></div>'
+    +'</div>');
+  _pkgPublishPlan={count:items.length,qa:qa.length};
+}
+let _pkgPublishPlan=null;
+async function pkgPublishAllConfirm(){
+  const plan=_pkgPublishPlan; if(!plan) return;
+  // The question gate exists to keep unreviewed copy off the site. Overriding it
+  // is allowed — but it is named, not slipped past.
+  if(plan.qa && !confirm(plan.qa+' of these still have unresolved questions from the platform.\n\nPublishing now puts that copy in front of the public before those answers come back. Carry on?')) return;
+  const box=document.getElementById('pkg-publish-out');
+  if(box) box.innerHTML='<div style="font-size:12px;color:var(--muted)">Publishing…</div>';
+  try{
+    const r=await apiCall('seo_pkg_publish_all',{});
+    const n=r.count||0;
+    if(box) box.innerHTML='<div style="font-size:12.5px">Published '+n+' item'+(n===1?'':'s')+' ✓'
+      +'<div style="font-size:11.5px;color:var(--muted);margin-top:3px">Pages have had their search-engine tags re-stamped, so they are indexable rather than still marked noindex.</div></div>';
+    toast(n?('Published '+n+' item(s) ✓'):'Nothing left to publish','ok');
+    try{ await loadPages(); }catch(e){}
+    // Refresh the in-memory posts too, so the Posts list is not still showing
+    // everything as a draft right after publishing it.
+    try{ const d=await apiCall('read_file',{path:'data/posts.json'}); const j=JSON.parse(d.content||'[]'); if(Array.isArray(j)) _posts=j; }catch(e){}
+  }catch(e){
+    if(box) box.innerHTML='<div style="font-size:12px;color:#b3261e">'+esc(e.message||String(e))+'</div>';
+  }
+  _pkgPublishPlan=null;
 }
 async function pkgTickNow(){
   try{
