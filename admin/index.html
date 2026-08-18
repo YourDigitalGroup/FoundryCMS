@@ -1724,16 +1724,16 @@ textarea.fb-input{resize:vertical}
           </div>
           <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
             <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">AI auto-fix</div>
-            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">Fills the gaps an audit grades, using this site's Anthropic key: page titles and meta descriptions that are <strong>missing or the wrong length</strong>, images with no alt text, and internal links to the pages a campaign is targeting. <strong>It only ever fills gaps</strong> — a title or description that reads well and measures well is never touched. Preview first; it reports exactly what it would write.</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">Fills the gaps an audit grades, using this site's Anthropic key: page titles and meta descriptions that are <strong>missing or the wrong length</strong>, images with no alt text, internal links to the pages a campaign is targeting, and FAQ content for pages that have none at all. <strong>It only ever fills gaps</strong> — a title, description or FAQ that's already there is never touched. <strong>Runs on its own, once a day, by default</strong> — that's the point: a fix that only happens when someone remembers to click something keeps getting missed. Turn it off below if you'd rather trigger it by hand.</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
               <button type="button" class="fd-btn-secondary" onclick="aiFixRun(true)"><i class="fa-solid fa-magnifying-glass"></i> Preview auto-fix</button>
-              <button type="button" class="fd-btn-primary" onclick="aiFixRun(false)">Run auto-fix</button>
+              <button type="button" class="fd-btn-primary" onclick="aiFixRun(false)">Run auto-fix now</button>
               <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);cursor:pointer;margin-left:4px">
-                <input type="checkbox" id="ai-weekly" onchange="aiFixWeekly(this.checked)" style="width:auto;margin:0;cursor:pointer">
-                Run weekly, so new pages get covered
+                <input type="checkbox" id="ai-auto" onchange="aiFixAuto(this.checked)" style="width:auto;margin:0;cursor:pointer">
+                Generate new content automatically, once a day
               </label>
             </div>
-            <div style="font-size:11.5px;color:var(--muted);margin-top:7px">Each run covers up to 10 pages of metadata, 8 pages of image alts, and 10 internal links, so it stays quick and cheap. Anything left over is picked up next time.</div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:7px">Each run covers up to 10 pages of metadata, 8 pages of image alts, 10 internal links, and 4 pages of FAQ content, so it stays quick and cheap. Anything left over is picked up next time.</div>
             <div id="ai-status" style="font-size:12px;color:var(--muted);margin-top:9px"></div>
             <div id="ai-report" style="margin-top:10px"></div>
           </div>
@@ -2588,7 +2588,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.97';
+const CMS_VERSION='1.14.98';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -8371,7 +8371,8 @@ async function initSEO(){
   const ta=document.getElementById('seo-ta');
   if(ta) ta.innerHTML='<button class="fd-btn-primary" onclick="saveSEO()" title="Saves your SEO and publishes it to every page, plus sitemap and robots — no separate apply step">Save &amp; Publish</button>'
     +'<button class="fd-btn-secondary" onclick="seoApplyAll()" title="Re-stamp the saved SEO onto every page and rebuild the sitemap (Save already does this — use if a page looks out of date)">Re-apply to all pages</button>'
-    +'<button class="fd-btn-secondary" onclick="genAllSEO()"><i class="fa-solid fa-wand-magic"></i> Generate All</button>';
+    +'<button class="fd-btn-secondary" onclick="genNewSEO()" title="Fills in titles, descriptions and FAQ content only on pages that are missing them — never touches a page that already reads well"><i class="fa-solid fa-wand-magic"></i> Generate New Content</button>'
+    +'<span id="seo-gen-status" style="font-size:12px;color:var(--muted);margin-left:8px"></span>';
   if(!pages.length){ document.getElementById('seo-body').innerHTML='<div class="empty"><h3>No pages yet</h3><p>Upload your .html pages and they appear here.</p></div>'; }
   else{
     if(!_curSEOPage||!_pages[_curSEOPage]) _curSEOPage=pages[0].id;
@@ -8386,6 +8387,13 @@ function updateSEO(pid,key,val){ if(!_seo[pid])_seo[pid]={}; _seo[pid][key]=val;
   const tc=document.getElementById('seo-title-count'); if(tc&&key==='title') tc.textContent=(val||'').length+'/60';
   const dc=document.getElementById('seo-desc-count'); if(dc&&key==='description') dc.textContent=(val||'').length+'/160';
 }
+
+// Mirrors PHP's fourgeAiWeak()/FOURGE_TITLE_*/FOURGE_DESC_* exactly — this is
+// the SAME "missing or the wrong length" gate the daily server-side job uses,
+// so "Generate New Content" and the unattended run agree on what counts as
+// already-good and never touch the same page differently.
+const SEO_TITLE_MIN=20, SEO_TITLE_MAX=65, SEO_DESC_MIN=70, SEO_DESC_MAX=165;
+function seoIsWeak(v,min,max){ v=String(v||'').trim(); if(!v) return true; const n=v.length; return n<min||n>max; }
 
 // Rank Math-style on-page checklist, computed from the fields + slug.
 // Normalize text for keyword matching: lowercase, punctuation → spaces. This is
@@ -8486,14 +8494,63 @@ function renderSEO(pid){
     +'<div class="fg"><label>Social description</label><textarea rows="2" oninput="updateSEO(\''+pid+'\',\'ogDescription\',this.value)">'+esc(s.ogDescription||'')+'</textarea></div>'
     +'<div class="fg"><label>Social image URL</label><input type="text" value="'+esc(s.ogImage||'')+'" oninput="updateSEO(\''+pid+'\',\'ogImage\',this.value)" placeholder="https://…"></div>'
     +'<div class="fg"><label>Twitter card</label><select onchange="updateSEO(\''+pid+'\',\'twitterCard\',this.value)">'+opt(['summary_large_image','summary'],s.twitterCard||'summary_large_image')+'</select></div></div>'
+    +'<div class="si-sec"><h2 style="font-size:13px">Answer Engine Optimization (AEO)</h2>'
+    +'<div class="desc" style="margin-bottom:10px">Helps AI tools — ChatGPT, Google’s AI Overviews, Perplexity — cite this page directly. Generated with AI like everything above, and just as editable: change any of it, or clear a field and Fourge will fill it back in next time.</div>'
+    +'<div class="fg"><label>Direct answer <span style="font-weight:400;color:var(--muted)">(what this page is about, in 1-2 sentences an AI could quote verbatim)</span></label>'
+    +'<textarea rows="2" oninput="updateSEO(\''+pid+'\',\'aeoAnswer\',this.value)">'+esc(s.aeoAnswer||'')+'</textarea></div>'
+    +'<div class="fg"><label>Topics <span style="font-weight:400;color:var(--muted)">(comma-separated)</span></label>'
+    +'<input type="text" value="'+esc(Array.isArray(s.aeoTopics)?s.aeoTopics.join(', '):(s.aeoTopics||''))+'" oninput="updateSEO(\''+pid+'\',\'aeoTopics\',this.value)" placeholder="roof repair, storm damage, free estimates"></div>'
+    +'<label class="pe-field-label" style="display:block;margin:14px 0 6px">FAQ questions <span style="font-weight:400;color:var(--muted)">— shown as FAQ rich results; leave empty and Fourge uses any Q&amp;A headings already on the page</span></label>'
+    +'<div id="seo-aeo-faqs"></div>'
+    +'<div style="display:flex;gap:8px;margin-top:4px">'
+    +'<button type="button" class="fd-btn-secondary" style="font-size:12px" onclick="aeoFaqAdd(\''+pid+'\')"><i class="fa-solid fa-plus"></i> Add a question</button>'
+    +'<button type="button" class="fd-btn-secondary" style="font-size:12px" onclick="aeoFillGaps(\''+pid+'\')" title="Fills only what is missing — a direct answer, and/or FAQ questions if there are none"><i class="fa-solid fa-wand-magic"></i> Fill missing content with AI</button>'
+    +'</div></div>'
     +'<button class="fd-btn-primary" onclick="saveSEO()" style="margin-top:6px">Save SEO</button>'
     +'</div><div style="width:280px;flex-shrink:0">'
     +'<div class="si-sec"><h2 style="font-size:13px">Analysis</h2><div id="seo-analysis"></div></div>'
     +'<div class="si-sec"><h2 style="font-size:13px">Google preview</h2><div id="seo-preview"></div></div>'
     +'</div></div>';
-  seoRenderAnalysis(pid); seoRenderPreview(pid);
+  seoRenderAnalysis(pid); seoRenderPreview(pid); aeoRenderFaqs(pid);
   // Pull live page structure (H1, image alt, word count) for the technical checks.
   if(!_seoFacts[pid]||!_seoFacts[pid].loaded) seoLoadFacts(pid);
+}
+// ── AEO: hand-editable FAQ list, same _seo[pid].aeoFAQs the schema builder and
+// the daily server-side job both read — whichever one wrote it last wins, and
+// a human clearing a field here is exactly how to ask for it to be regenerated.
+function aeoRenderFaqs(pid){
+  const box=document.getElementById('seo-aeo-faqs'); if(!box) return;
+  const faqs=Array.isArray((_seo[pid]||{}).aeoFAQs)?_seo[pid].aeoFAQs:[];
+  if(!faqs.length){ box.innerHTML='<div style="font-size:12px;color:var(--muted)">No FAQ questions entered — the page’s own Q&amp;A headings are used instead, if it has any.</div>'; return; }
+  box.innerHTML=faqs.map((f,i)=>
+     '<div style="border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:8px">'
+    +'<div style="display:flex;gap:8px;align-items:flex-start">'
+    +'<input type="text" value="'+esc(f.question||f.q||'')+'" placeholder="Question" oninput="aeoFaqUpdate(\''+pid+'\','+i+',\'question\',this.value)" style="flex:1;font-size:12.5px;font-weight:600">'
+    +'<button type="button" class="fd-btn-secondary" style="font-size:11px;padding:5px 9px;white-space:nowrap" onclick="aeoFaqRemove(\''+pid+'\','+i+')">Remove</button>'
+    +'</div>'
+    +'<textarea rows="2" placeholder="Answer" oninput="aeoFaqUpdate(\''+pid+'\','+i+',\'answer\',this.value)" style="width:100%;margin-top:6px;font-size:12.5px">'+esc(f.answer||f.a||'')+'</textarea>'
+    +'</div>').join('');
+}
+function aeoFaqAdd(pid){
+  if(!_seo[pid]) _seo[pid]={};
+  if(!Array.isArray(_seo[pid].aeoFAQs)) _seo[pid].aeoFAQs=[];
+  _seo[pid].aeoFAQs.push({question:'',answer:''});
+  aeoRenderFaqs(pid);
+}
+function aeoFaqRemove(pid,i){
+  if(!_seo[pid]||!Array.isArray(_seo[pid].aeoFAQs)) return;
+  _seo[pid].aeoFAQs.splice(i,1);
+  aeoRenderFaqs(pid);
+}
+function aeoFaqUpdate(pid,i,field,val){
+  if(!_seo[pid]||!Array.isArray(_seo[pid].aeoFAQs)||!_seo[pid].aeoFAQs[i]) return;
+  _seo[pid].aeoFAQs[i][field]=val;
+}
+async function aeoFillGaps(pid){
+  const pg=_pages[pid]; if(!pg) return;
+  toast('Reading the page…');
+  const pre=await seoReadPageText(pg);
+  await genSEO(pid,{fillOnly:true,pre});
 }
 function renderSEOGlobal(){
   const el=document.getElementById('seo-global'); if(!el) return;
@@ -8609,41 +8666,107 @@ async function seoReadPageText(pg){
   let html='';
   try{ const d=await apiCall('read_file',{path:pg.path||pg.file}); html=d.content||''; }catch{}
   if(!html){ try{ const base=normSiteBase(); const r=await fetch((base?base+'/':'../')+String(pg.path||pg.file).replace(/^\/+/,'')); if(r.ok) html=await r.text(); }catch{} }
-  if(!html) return {title:'',headings:'',text:''};
+  if(!html) return {title:'',headings:'',text:'',hasQaHeadings:false};
   const doc=new DOMParser().parseFromString(html,'text/html');
+  // Computed on the UNTOUCHED doc, before nav/header/footer are stripped below —
+  // seoFaqFromDoc is the same function seoInjectIntoHtml runs at save time
+  // against the full page, so this has to see exactly what that sees.
+  const hasQaHeadings=seoFaqFromDoc(doc).length>0;
   doc.querySelectorAll('script,style,noscript,svg,nav,header,footer').forEach(el=>el.remove());
   const title=(doc.querySelector('title')?.textContent||'').trim();
   const headings=[...doc.querySelectorAll('h1,h2,h3')].map(h=>h.textContent.trim()).filter(Boolean).slice(0,14).join(' | ');
   const text=(doc.body?.textContent||'').replace(/\s+/g,' ').trim().slice(0,3500);
-  return {title,headings,text};
+  return {title,headings,text,hasQaHeadings};
 }
-async function genSEO(pid){
+// A page's OWN aeoFAQs count as real content the moment they have a question
+// and an answer — same shape the schema builder itself requires (q/question,
+// a/answer), checked here so a half-entered row does not read as "already has
+// AEO content" and quietly block AI from ever filling it in.
+function seoHasRealFaqs(list){
+  return Array.isArray(list) && list.some(f=>f && String(f.question||f.q||'').trim() && String(f.answer||f.a||'').trim());
+}
+// opts.pre lets a caller that already fetched the page's text (genNewSEO,
+// looping every page) hand it over instead of every page being read twice.
+// opts.fillOnly makes title/description/focusKeyword/OG gap-only, matching the
+// server's "only ever fills gaps" rule — the per-page button (no opts) keeps
+// its original one-click full-regenerate behaviour, since a human is looking
+// straight at this one page and asked for it by name.
+// AEO fields (aeoAnswer/aeoFAQs) are ALWAYS gap-only, from either caller: they
+// are structured content someone may have carefully hand-written, not a
+// snippet to casually regenerate.
+async function genSEO(pid,opts){
+  opts=opts||{};
   const pg=_pages[pid]; if(!pg){ toast('Page not found','err'); return; }
-  toast('Reading the page…');
-  const {title,headings,text}=await seoReadPageText(pg);
+  let pre=opts.pre;
+  if(!pre){ toast('Reading the page…'); pre=await seoReadPageText(pg); }
+  const {title,headings,text,hasQaHeadings}=pre;
   if(!text && !headings){ toast('Could not read this page’s content to generate SEO','err'); return; }
   const site=_site||{}, addr=site.address||{};
   const loc=[addr.city,addr.state].filter(Boolean).join(', ');
   const ctx='Business: '+(site.name||'')+'. '+(site.tagline||'')+(loc?(' Location: '+loc+'.'):'');
-  const prompt='You are an expert SEO copywriter. Write search-optimized metadata for THIS specific page of a real business website. '
+  const cur=_seo[pid]||{};
+  const needAnswer=!String(cur.aeoAnswer||'').trim();
+  const needFaqs=!seoHasRealFaqs(cur.aeoFAQs)&&!hasQaHeadings;
+  const prompt='You are an expert SEO and AEO (answer engine optimization) copywriter. Write metadata for THIS specific page of a real business website. '
     +ctx+'\nExisting <title>: "'+title+'". Page headings: '+headings+'\nPage text: '+text
     +'\n\nReturn ONLY valid JSON with these keys: '
     +'"title" (a compelling 50-60 char title tag with the primary keyword and, where natural, the brand or location), '
     +'"description" (a benefit-driven 120-160 char meta description ending with a soft call to action), '
     +'"focusKeyword" (the primary keyword phrase for this page in lowercase with no punctuation — usually a core service plus the location, 2–5 words, e.g. "garage door repair sioux falls"), '
-    +'"ogTitle" (a shareable social title), "ogDescription" (a social description). '
-    +'The words in focusKeyword MUST appear naturally in both the title and the meta description. '
+    +'"ogTitle" (a shareable social title), "ogDescription" (a social description)'
+    +(needAnswer?', "aeoAnswer" (a direct 1-2 sentence answer to "what is this page about", written so an AI answer engine could quote it verbatim)':'')
+    +(needFaqs?', "faqs" (an array of 3 objects with "question" and "answer" — real questions a customer would ask about THIS page, 2-3 sentence answers, grounded only in the page content, never invented)':'')
+    +'. The words in focusKeyword MUST appear naturally in both the title and the meta description. '
     +'Base everything on the actual page content above — do NOT invent services. NEVER output "Page Not Found" or placeholder text.';
   toast('Generating SEO…');
   try{
-    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:600,messages:[{role:'user',content:prompt}]},'');
+    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:900,messages:[{role:'user',content:prompt}]},'');
     const raw=Array.isArray(d.content)?(d.content.find(b=>b.type==='text')?.text||'{}'):'{}';
-    const seo=JSON.parse(raw.replace(/```json?|```/g,'').trim());
-    if(!_seo[pid])_seo[pid]={}; Object.assign(_seo[pid],seo);
+    const j=JSON.parse(raw.replace(/```json?|```/g,'').trim());
+    if(!_seo[pid])_seo[pid]={};
+    const rec=_seo[pid];
+    // shouldSet is pre-computed per field: true means "write it" — either
+    // because this is a full regenerate (fillOnly false) or because THIS
+    // field specifically is still a gap.
+    const setField=(k,shouldSet)=>{ if(j[k]!=null && shouldSet) rec[k]=j[k]; };
+    setField('title', !opts.fillOnly || seoIsWeak(rec.title,SEO_TITLE_MIN,SEO_TITLE_MAX));
+    setField('description', !opts.fillOnly || seoIsWeak(rec.description,SEO_DESC_MIN,SEO_DESC_MAX));
+    setField('focusKeyword', !opts.fillOnly || !rec.focusKeyword);
+    setField('ogTitle', !opts.fillOnly || !rec.ogTitle);
+    setField('ogDescription', !opts.fillOnly || !rec.ogDescription);
+    if(needAnswer && j.aeoAnswer) rec.aeoAnswer=String(j.aeoAnswer).trim();
+    if(needFaqs && Array.isArray(j.faqs)){
+      const faqs=j.faqs.map(f=>({question:String((f&&f.question)||'').trim(),answer:String((f&&f.answer)||'').trim()}))
+        .filter(f=>f.question&&f.answer).slice(0,5);
+      if(faqs.length) rec.aeoFAQs=faqs;
+    }
     renderSEO(pid); toast('SEO generated ✓','ok');
   }catch(e){ toast('Generate failed: '+e.message,'err'); }
 }
-async function genAllSEO(){ const pages=getPageList(); for(const p of pages){ await genSEO(p.id); await new Promise(r=>setTimeout(r,400)); } await saveSEO(); }
+// The renamed "Generate All" → checks every page first and only calls the AI
+// for ones that are actually missing something (weak/missing title or
+// description, or no AEO content at all) — so a second run costs almost
+// nothing, and a page someone already wrote well is never touched.
+async function genNewSEO(){
+  const pages=getPageList();
+  const st=document.getElementById('seo-gen-status');
+  let done=0, skipped=0;
+  for(const p of pages){
+    if(st) st.textContent='Checking '+(done+skipped+1)+'/'+pages.length+'…';
+    const pre=await seoReadPageText(_pages[p.id]);
+    if(!pre.text && !pre.headings){ skipped++; continue; }
+    const s=_seo[p.id]||{};
+    const needsMeta=seoIsWeak(s.title,SEO_TITLE_MIN,SEO_TITLE_MAX)||seoIsWeak(s.description,SEO_DESC_MIN,SEO_DESC_MAX);
+    const needsAeo=!String(s.aeoAnswer||'').trim() || (!seoHasRealFaqs(s.aeoFAQs)&&!pre.hasQaHeadings);
+    if(!needsMeta && !needsAeo){ skipped++; continue; }
+    await genSEO(p.id,{fillOnly:true,pre});
+    done++;
+    await new Promise(r=>setTimeout(r,400));
+  }
+  if(st) st.textContent='';
+  await saveSEO();
+  toast('Generated content for '+done+' page(s)'+(skipped?(', '+skipped+' already complete'):'')+' ✓','ok');
+}
 
 // ── Apply SEO to the actual page files (managed meta + JSON-LD) ─────────────
 // Harvest a page's OWN question-and-answer content: an <h2>/<h3> that ends in a
@@ -8809,7 +8932,11 @@ function seoInjectIntoHtml(html,pg,base){
   const doc=new DOMParser().parseFromString(html,'text/html');
   const head=doc.head||doc.documentElement;
   // Take over the standard SEO tags + remove any of our prior managed nodes.
-  doc.querySelectorAll('meta[name="description"],meta[name="robots"],link[rel="canonical"],meta[property^="og:"],meta[name^="twitter:"],[data-fourge-seo]').forEach(el=>el.remove());
+  // [data-fourge-aeo-faq] is the daily server-side job's interim FAQPage stamp
+  // (fourgeAeoStampFaq) — this full rebuild below includes the SAME FAQPage
+  // node, built fresh from the same aeoFAQs, so the interim one must go or the
+  // page ends up with the FAQ declared twice.
+  doc.querySelectorAll('meta[name="description"],meta[name="robots"],link[rel="canonical"],meta[property^="og:"],meta[name^="twitter:"],[data-fourge-seo],[data-fourge-aeo-faq]').forEach(el=>el.remove());
   const add=(tag,attrs)=>{ const el=doc.createElement(tag); for(const k in attrs) el.setAttribute(k,attrs[k]); el.setAttribute('data-fourge-seo',''); head.appendChild(el); return el; };
   if(s.title){ let t=doc.querySelector('title'); if(!t){ t=doc.createElement('title'); head.appendChild(t); } t.textContent=s.title; }
   if(s.description) add('meta',{name:'description',content:s.description});
@@ -9624,7 +9751,7 @@ async function pkgToken(op){
 // versus skipped: a tool that edits pages on its own has to be auditable.
 async function aiFixRun(dry){
   if(!canCallApi()){ toast('Sign in again first','err'); return; }
-  if(!dry && !confirm('Run the AI auto-fix on this site?\n\nIt fills missing or wrongly-sized titles and descriptions, adds alt text to images that have none, and adds internal links. It never changes a value that is already good, and every page it edits is backed up to data/bak/ first.')) return;
+  if(!dry && !confirm('Run the AI auto-fix on this site?\n\nIt fills missing or wrongly-sized titles and descriptions, adds alt text to images that have none, adds internal links, and writes FAQ content for pages that have none at all. It never changes a value that is already good, and every page it edits is backed up to data/bak/ first.')) return;
   const st=document.getElementById('ai-status'), box=document.getElementById('ai-report');
   if(st) st.textContent=dry?'Looking at the site…':'Working — this can take a minute…';
   if(box) box.innerHTML='';
@@ -9633,7 +9760,7 @@ async function aiFixRun(dry){
     if(!r||r.ok===false){ if(st) st.textContent=(r&&r.error)||'The auto-fix could not run.'; return; }
     const t=r.totals||{};
     if(st) st.textContent=(dry?'Preview — nothing was written. ':'Done. ')
-      +t.metas+' page(s) of metadata, '+t.alts+' page(s) of image alts, '+t.links+' internal link(s)'
+      +t.metas+' page(s) of metadata, '+t.alts+' page(s) of image alts, '+t.links+' internal link(s), '+(t.aeo||0)+' page(s) of FAQ content'
       +(t.skipped?', '+t.skipped+' skipped':'')+'.';
     const list=(title,rows,fmt)=>rows&&rows.length
       ? '<div style="font-size:12px;font-weight:700;margin:10px 0 5px">'+esc(title)+'</div>'
@@ -9644,32 +9771,41 @@ async function aiFixRun(dry){
        list(dry?'Would write metadata for':'Metadata written', r.metas, x=>esc(x.page)+' <span style="color:var(--muted)">('+esc(x.wrote)+')</span>')
       +list(dry?'Would add alt text on':'Alt text added', r.alts, x=>esc(x.page)+' <span style="color:var(--muted)">('+x.images+' image'+(x.images===1?'':'s')+')</span>')
       +list(dry?'Would link':'Internal links added', r.links, x=>'“'+esc(x.from)+'” → “'+esc(x.to)+'” <span style="color:var(--muted)">('+esc(x.keyword)+')</span>')
+      +list(dry?'Would write FAQ content for':'FAQ content written', r.aeo, x=>esc(x.page)+' <span style="color:var(--muted)">('+x.faqs+' question'+(x.faqs===1?'':'s')+')</span>')
       +list('Skipped', r.skipped, x=>esc(x.item)+' <span style="color:var(--muted)">— '+esc(x.reason)+'</span>');
     if(!dry) toast('Auto-fix complete ✓','ok');
   }catch(e){ if(st) st.textContent=e.message||String(e); }
 }
-async function aiFixWeekly(on){
+// 'auto' replaces the old 'weekly' key — on by default (see fourgeAiAutoOn on
+// the server, which this mirrors) so a site nobody has configured yet still
+// gets covered. An explicit prior choice, under either name, is respected.
+async function aiFixAuto(on){
   try{
     const d=await apiCall('read_file',{path:'data/ai_autofix.json'});
     const st=JSON.parse(d.content||'{}')||{};
-    st.weekly=!!on;
+    st.auto=!!on;
     await apiCall('write_file',{path:'data/ai_autofix.json',content:JSON.stringify(st,null,2)});
-    toast(on?'Weekly auto-fix on — it runs at your next sign-in each week':'Weekly auto-fix off','ok');
+    toast(on?'Automatic content generation on — it runs about once a day':'Automatic content generation off','ok');
   }catch(e){
-    try{ await apiCall('write_file',{path:'data/ai_autofix.json',content:JSON.stringify({weekly:!!on},null,2)}); toast(on?'Weekly auto-fix on':'Weekly auto-fix off','ok'); }
+    try{ await apiCall('write_file',{path:'data/ai_autofix.json',content:JSON.stringify({auto:!!on},null,2)}); toast(on?'Automatic content generation on':'Automatic content generation off','ok'); }
     catch(e2){ toast('Could not save that setting: '+(e2.message||e2),'err'); }
   }
+}
+function aiFixAutoOn(st){
+  if('auto' in st) return !!st.auto;
+  if('weekly' in st) return !!st.weekly;
+  return true;
 }
 async function aiFixLoadState(){
   try{
     const d=await apiCall('read_file',{path:'data/ai_autofix.json'});
     const st=JSON.parse(d.content||'{}')||{};
-    const el=document.getElementById('ai-weekly'); if(el) el.checked=!!st.weekly;
+    const el=document.getElementById('ai-auto'); if(el) el.checked=aiFixAutoOn(st);
     const s=document.getElementById('ai-status');
     if(s&&st.last&&st.last.ran_at){
       const t=st.last.totals||{};
       s.textContent='Last run '+String(st.last.ran_at).replace('T',' ').replace(/\..*$/,'')+' UTC — '
-        +(t.metas||0)+' metadata, '+(t.alts||0)+' alt text, '+(t.links||0)+' links.';
+        +(t.metas||0)+' metadata, '+(t.alts||0)+' alt text, '+(t.links||0)+' links, '+(t.aeo||0)+' FAQ pages.';
     }
   }catch(e){}
 }
