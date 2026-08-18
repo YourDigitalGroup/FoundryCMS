@@ -3006,6 +3006,55 @@ function fourgeAiAltFromFile($file) {
 // Link the FIRST plain-text mention of a keyword, walking the markup so it can
 // never land inside an existing link, a heading, a button, or a tag attribute.
 // Returns the new HTML, or null when there was nowhere safe to put one.
+// Detection only — a PHP-side echo of the client's seoFaqFromDoc() heuristic,
+// used to decide whether a page ALREADY reads as an FAQ before the daily job
+// considers writing one. Deliberately regex-based like the rest of this file
+// rather than DOMDocument, which is not guaranteed present on every host this
+// runs on. One Q&A pair is not an FAQ; real content needs at least two.
+function fourgeHasQaContent($html) {
+    $html = (string)$html;
+    if (strlen($html) > 400000) return false;   // pathological page size — skip detection, not correctness-critical
+    if (!preg_match_all('~<h[23]\b[^>]*>(.*?)</h[23]>~is', $html, $heads, PREG_OFFSET_CAPTURE)) return false;
+    $n = count($heads[0]); $qualifying = 0;
+    for ($i = 0; $i < $n; $i++) {
+        $q = trim(preg_replace('~\s+~', ' ', strip_tags($heads[1][$i][0])));
+        if (!preg_match('~\?\s*$~', $q) || mb_strlen($q) < 8 || mb_strlen($q) > 200) continue;
+        $start = $heads[0][$i][1] + strlen($heads[0][$i][0]);
+        $end = ($i + 1 < $n) ? $heads[0][$i + 1][1] : strlen($html);
+        $chunk = substr($html, $start, $end - $start);
+        // Stop at the NEXT heading of any level — an h4 between two h2s still
+        // ends the answer, same as the JS version walking nextElementSibling.
+        if (preg_match('~<h[1-6]\b~i', $chunk, $hm, PREG_OFFSET_CAPTURE)) $chunk = substr($chunk, 0, $hm[0][1]);
+        $a = trim(preg_replace('~\s+~', ' ', strip_tags($chunk)));
+        if (mb_strlen($a) >= 40) $qualifying++;
+        if ($qualifying >= 2) return true;
+    }
+    return false;
+}
+// A minimal, standalone FAQPage stamp — deliberately NOT folded into
+// cmsPkgStampSeo's extraJsonld, which is reserved for schema a package
+// delivered verbatim. Marked with its own attribute so it can be told apart
+// from (and cleanly superseded by) the full graph the page editor builds from
+// the SAME aeoFAQs data the next time a human actually saves this page.
+function fourgeAeoStampFaq($html, $faqs) {
+    $html = (string)$html;
+    $html = preg_replace('~[ \t]*<script\b[^>]*data-fourge-aeo-faq[^>]*>[\s\S]*?</script>[ \t]*\r?\n?~i', '', $html);
+    $faqs = array_values(array_filter((array)$faqs, function ($f) {
+        return is_array($f) && trim((string)($f['question'] ?? '')) !== '' && trim((string)($f['answer'] ?? '')) !== '';
+    }));
+    if (!$faqs) return $html;
+    $entities = array_map(function ($f) {
+        return ['@type' => 'Question', 'name' => trim((string)$f['question']),
+                'acceptedAnswer' => ['@type' => 'Answer', 'text' => trim((string)$f['answer'])]];
+    }, $faqs);
+    $json = json_encode(['@context' => 'https://schema.org', '@type' => 'FAQPage', 'mainEntity' => $entities],
+                         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $json = str_ireplace('</script', '<\\/script', (string)$json);
+    $block = '<script type="application/ld+json" data-fourge-aeo-faq>' . $json . '</script>';
+    if (preg_match('~</head>~i', $html)) return preg_replace('~</head>~i', $block . "\n</head>", $html, 1);
+    if (preg_match('~<head\b[^>]*>~i', $html)) return preg_replace('~<head\b[^>]*>~i', '$0' . "\n" . $block, $html, 1);
+    return $block . "\n" . $html;
+}
 function fourgeAiLinkKeyword($html, $kw, $url) {
     $html = (string)$html;
     if ($kw === '' || $url === '') return null;
@@ -3048,7 +3097,7 @@ function fourgeAiAutofix($opts = []) {
         return ['ok' => false, 'error' => 'No Anthropic API key is configured. Add one in Settings → Secrets (claude_key) first.'];
     }
     $rep = ['ok' => true, 'ran_at' => gmdate('c'), 'dry_run' => $dry,
-            'metas' => [], 'alts' => [], 'links' => [], 'skipped' => []];
+            'metas' => [], 'alts' => [], 'links' => [], 'aeo' => [], 'skipped' => []];
     $skip = function ($what, $why) use (&$rep) { $rep['skipped'][] = ['item' => $what, 'reason' => $why]; };
 
     $site  = cmsPkgReadJson('site.json', []);  if (!is_array($site))  $site  = [];
@@ -3098,7 +3147,17 @@ function fourgeAiAutofix($opts = []) {
             $wrote[] = 'description';
         }
         if (!$wrote) { $skip((string)($rec['title'] ?? $pid), 'The model returned nothing for the missing field'); continue; }
-        if (!$dry) { $seo[$pid] = $cur; $seoDirty = true; }
+        if (!$dry) {
+            $seo[$pid] = $cur; $seoDirty = true;
+            // Write straight to the live page too. Without this, the fix sits in
+            // seo.json until a human happens to open this exact page in the editor
+            // and save it — which, for an UNATTENDED daily run, could be never.
+            // Reuses the same stamp the deploy-package importer already trusts for
+            // exactly this: title, description, canonical, robots, OG, Twitter.
+            cmsPkgBackup($file);
+            $canon = cmsPkgPageUrl($baseUrl, $file);
+            @file_put_contents($abs, cmsPkgStampSeo($html, $cur, $canon, !empty($rec['draft'])));
+        }
         $rep['metas'][] = ['page' => (string)($rec['title'] ?? $pid), 'wrote' => implode(' + ', $wrote),
                            'was' => ($needT && ($cur['title'] ?? '') !== '' ? 'weak/missing' : 'missing')];
         $done++;
@@ -3197,6 +3256,67 @@ function fourgeAiAutofix($opts = []) {
         $skip('internal links', 'Set Design → Website URL first — a link needs the site\'s real address');
     }
 
+    // ── 4. AEO: FAQ content for pages that have none at all ─────────────────
+    // "None at all" means BOTH halves are empty: no hand-entered/previously-
+    // generated aeoFAQs, AND the page's own headings don't already read as an
+    // FAQ (seoBuildSchema harvests those for free — writing AI ones on top
+    // would just replace better, more specific copy with generic AI copy).
+    $faqCap = max(0, (int)($opts['faqCap'] ?? 4));
+    $aeoDone = 0; $aeoSeoDirty = false;
+    foreach ($pages as $pid => $rec) {
+        if ($aeoDone >= $faqCap) break;
+        if (!is_array($rec) || !empty($rec['draft'])) continue;
+        $file = (string)($rec['path'] ?? ($rec['file'] ?? ''));
+        if ($file === '') continue;
+        $cur = is_array($seo[$pid] ?? null) ? $seo[$pid] : [];
+        $existing = array_values(array_filter((array)($cur['aeoFAQs'] ?? []), function ($f) {
+            return is_array($f) && trim((string)($f['question'] ?? ($f['q'] ?? ''))) !== ''
+                && trim((string)($f['answer'] ?? ($f['a'] ?? ''))) !== '';
+        }));
+        if ($existing) continue;   // real content already there — never touched
+        $abs = PUBLIC_HTML . '/' . ltrim($file, '/');
+        $html = is_file($abs) ? (string)@file_get_contents($abs) : '';
+        if (trim($html) === '') { $skip((string)($rec['title'] ?? $pid) . ' (FAQs)', 'The page file is missing or empty'); continue; }
+        if (fourgeHasQaContent($html)) continue;   // the page's own headings already read as an FAQ
+        $body = $html;
+        if (preg_match('~<main\b[^>]*>([\s\S]*?)</main>~i', $html, $m)) $body = $m[1];
+        $text = trim(preg_replace('~\s+~', ' ', strip_tags(preg_replace('~<(script|style)\b[\s\S]*?</\1>~i', ' ', $body))));
+        if (mb_strlen($text) < 150) { $skip((string)($rec['title'] ?? $pid) . ' (FAQs)', 'Not enough content to write honest FAQs from'); continue; }
+        $out = fourgeAiText(
+            'You write FAQ content for a real business webpage, useful for both search results and AI answer engines. '
+            . 'Reply with ONLY compact JSON, no markdown, no commentary: {"faqs":[{"question":"...","answer":"..."}]}. '
+            . 'Write 3 to 4 questions a real customer would ask about THIS page specifically, each with a 2-3 sentence '
+            . 'answer grounded ONLY in the page content given. Never invent services, locations, prices, credentials, '
+            . 'guarantees, or policies that are not stated. If the page cannot honestly support 3 questions, return fewer.',
+            'Site: ' . ($siteName ?: 'this business') . "\nPage title: " . (string)($rec['title'] ?? '')
+            . "\nPage content:\n" . mb_substr($text, 0, 1600), 700);
+        if (is_array($out)) { $skip((string)($rec['title'] ?? $pid) . ' (FAQs)', $out['error']); continue; }
+        $j = fourgeAiJson($out);
+        $raw = (is_array($j) && is_array($j['faqs'] ?? null)) ? $j['faqs'] : [];
+        $faqs = [];
+        foreach ($raw as $f) {
+            $q = trim((string)(is_array($f) ? ($f['question'] ?? '') : ''));
+            $a = trim((string)(is_array($f) ? ($f['answer'] ?? '') : ''));
+            if ($q === '' || $a === '' || mb_strlen($a) < 30) continue;
+            $faqs[] = ['question' => mb_substr($q, 0, 200), 'answer' => mb_substr($a, 0, 500)];
+            if (count($faqs) >= 5) break;
+        }
+        if (count($faqs) < 2) { $skip((string)($rec['title'] ?? $pid) . ' (FAQs)', 'The model could not produce enough genuine questions for this page'); continue; }
+        if (!$dry) {
+            $cur['aeoFAQs'] = $faqs;
+            $seo[$pid] = $cur; $aeoSeoDirty = true;
+            // Same reasoning as the metadata phase: put it on the live page NOW,
+            // marked separately so a later human save (which rebuilds the whole
+            // schema graph FROM this same aeoFAQs data) cleanly replaces it
+            // instead of ending up with two FAQPage blocks.
+            cmsPkgBackup($file);
+            @file_put_contents($abs, fourgeAeoStampFaq($html, $faqs));
+        }
+        $rep['aeo'][] = ['page' => (string)($rec['title'] ?? $pid), 'faqs' => count($faqs)];
+        $aeoDone++;
+    }
+    if ($aeoSeoDirty && !$dry) cmsPkgWriteJson('seo.json', $seo);
+
     if (!$dry) {
         $state['alts'] = $altDone;
         $state['last'] = $rep;
@@ -3204,7 +3324,7 @@ function fourgeAiAutofix($opts = []) {
         fourgeAiSaveState($state);
     }
     $rep['totals'] = ['metas' => count($rep['metas']), 'alts' => count($rep['alts']),
-                      'links' => count($rep['links']), 'skipped' => count($rep['skipped'])];
+                      'links' => count($rep['links']), 'aeo' => count($rep['aeo']), 'skipped' => count($rep['skipped'])];
     return $rep;
 }
 function fourgeApiAiAutofix($me, $body) {
@@ -3215,18 +3335,33 @@ function fourgeApiAiAutofix($me, $body) {
         'metaCap' => isset($body['metaCap']) ? (int)$body['metaCap'] : 10,
         'altCap'  => isset($body['altCap'])  ? (int)$body['altCap']  : 8,
         'linkCap' => isset($body['linkCap']) ? (int)$body['linkCap'] : 10,
+        'faqCap'  => isset($body['faqCap'])  ? (int)$body['faqCap']  : 4,
     ]));
 }
-// Weekly upkeep, so pages created after the last run get covered too. Fourge has
-// no cron, so this rides the login self-heal — best-effort and time-boxed, and
-// it never blocks the login it runs inside.
-function fourgeAiWeeklyTick() {
+// Whether the daily job should run at all. Distinguishes "an operator
+// explicitly turned this off" (respected) from "nobody has ever touched this
+// setting" (now ON — that silent default was the whole complaint: a fix that
+// only runs when someone remembers to click something keeps getting missed).
+// 'weekly' is the old key, kept readable so a site that had already opted in
+// (or explicitly out) under the old name is not silently reset.
+function fourgeAiAutoOn($state) {
+    if (array_key_exists('auto', $state))   return !empty($state['auto']);
+    if (array_key_exists('weekly', $state)) return !empty($state['weekly']);
+    return true;
+}
+// Daily upkeep, so pages created since the last run get covered without anyone
+// pressing a button. Fourge has no cron, so this rides two things: the login
+// self-heal (best-effort, whenever anyone happens to sign in) AND the SEO
+// platform's own scheduled ping (fourgeApiSeoPkgTick) — which fires on a real
+// clock regardless of whether anyone logs into this particular site. Either
+// way it is time-boxed and never blocks whatever it is riding inside.
+function fourgeAiDailyTick() {
     $state = fourgeAiState();
-    if (empty($state['weekly'])) return false;
+    if (!fourgeAiAutoOn($state)) return false;
     $last = (int)($state['last_run'] ?? 0);
-    if ($last && (time() - $last) < 7 * 86400) return false;
+    if ($last && (time() - $last) < 86400) return false;
     if (fourgeAiKey() === '') return false;
-    try { fourgeAiAutofix(['metaCap' => 5, 'altCap' => 4, 'linkCap' => 5]); return true; }
+    try { fourgeAiAutofix(['metaCap' => 5, 'altCap' => 4, 'linkCap' => 5, 'faqCap' => 3]); return true; }
     catch (Throwable $e) { return false; }
 }
 
@@ -3253,8 +3388,8 @@ function fourgeApiInstallCleanUrls($me) {
     $hdr = false; $llms = false;
     try { $hdr    = fourgeWriteDefaultHeaders();   } catch (Throwable $e) { $hdr = false; }
     try { $llms   = fourgeEnsureLlms();            } catch (Throwable $e) { $llms = false; }
-    // Weekly AI upkeep, if the operator turned it on.
-    try { fourgeAiWeeklyTick(); } catch (Throwable $e) {}
+    // Daily AI upkeep — on by default; see fourgeAiAutoOn().
+    try { fourgeAiDailyTick(); } catch (Throwable $e) {}
     try { $due    = cmsPkgTick(false);              } catch (Throwable $e) { $due = []; }
     echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due)]);
@@ -4262,6 +4397,11 @@ function fourgeApiSeoPkgTick($me, $body) {
     if (!cmsPkgAuthorized($me, $body)) {
         http_response_code(401); echo json_encode(['ok' => false, 'error' => 'Unauthorized']); return;
     }
+    // Riding the platform's own scheduled ping is what makes "daily" actually
+    // mean daily, independent of whether anyone happens to sign into THIS
+    // site's admin — which is exactly the human step this is meant to remove.
+    // Never allowed to affect the response this endpoint exists for.
+    try { fourgeAiDailyTick(); } catch (Throwable $e) {}
     $done = cmsPkgTick(false);
     echo json_encode(['ok' => true, 'published' => $done, 'count' => count($done), 'checked_at' => date('c')]);
 }
