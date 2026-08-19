@@ -2374,13 +2374,23 @@ textarea.fb-input{resize:vertical}
       <div class="fg"><label>Event Title *</label><input type="text" id="ev-title" placeholder="Fall Fundraiser Gala"></div>
       <div class="fg"><label>Description</label><textarea id="ev-desc" rows="4" placeholder="What's happening, who it's for…"></textarea></div>
       <div class="fr">
-        <div class="fg"><label>Start Date *</label><input type="date" id="ev-start"></div>
+        <div class="fg"><label>Start Date *</label><input type="date" id="ev-start" oninput="evUpdateRecurrencePreview()"></div>
         <div class="fg"><label>End Date</label><input type="date" id="ev-end"><small>Leave blank for a one-day event.</small></div>
       </div>
       <div class="fg"><label>External URL <span style="font-weight:400;color:var(--muted)">(tickets, RSVP, more info)</span></label><input type="url" id="ev-url" placeholder="https://…"></div>
       <div class="fg"><label>Featured Image</label><div id="ev-featured-wrap"></div></div>
-      <label class="pe-toggle-row"><span>Recurring</span><div class="fd-toggle" id="ev-recurring" onclick="this.classList.toggle('on')"><div class="fd-toggle-knob"></div></div></label>
-      <div style="font-size:11.5px;color:var(--muted);margin-top:4px">Groups this event under Recurring in the list below. Fourge doesn't auto-repeat it — update the date here each time it comes back around.</div>
+      <label class="pe-toggle-row"><span>Recurring</span><div class="fd-toggle" id="ev-recurring" onclick="this.classList.toggle('on');evToggleRecurrence()"><div class="fd-toggle-knob"></div></div></label>
+      <div class="fg" id="ev-recurrence-wrap" style="display:none">
+        <label>Occurrence</label>
+        <select id="ev-recurrence" onchange="evUpdateRecurrencePreview()">
+          <option value="weekly">Weekly</option>
+          <option value="biweekly">Every 2 weeks</option>
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+        <small id="ev-recurrence-preview"></small>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:4px">Groups this event under Recurring in the list below. Fourge doesn't auto-repeat it onto the calendar — update the date here each time it comes back around; the occurrence is just a label, shown here and on the event page.</div>
     </div>
     <div class="mf" style="flex-wrap:wrap;gap:8px">
       <button class="btn btn-o" id="ev-delete-btn" style="margin-right:auto;color:#dc2626;border-color:#dc2626" onclick="deleteCurrentEvent()">Delete</button>
@@ -2622,7 +2632,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.99';
+const CMS_VERSION='1.14.100';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6364,6 +6374,37 @@ function eventDateRange(ev){
   if(!ev.end || ev.end===ev.start) return ev.start;
   return ev.start+' – '+ev.end;
 }
+// A human label for a recurring event's occurrence pattern, e.g. "Every
+// Thursday" or "Monthly on the 15th" — derived from the pattern PLUS the
+// event's own Start Date (so there's no separate, redundant weekday picker).
+// This is descriptive only: Fourge does not expand it into future calendar
+// entries, matching the "operator resets the date" design Recurring already
+// had before occurrence types existed.
+function eventRecurrenceLabel(rec, start){
+  if(!start) return '';
+  const d=new Date(start+'T00:00:00');
+  if(isNaN(d.getTime())) return '';
+  const weekday=d.toLocaleDateString('en-US',{weekday:'long'});
+  const monthDay=d.toLocaleDateString('en-US',{month:'long',day:'numeric'});
+  const n=d.getDate(), s=['th','st','nd','rd'], v=n%100;
+  const ord=n+(s[(v-20)%10]||s[v]||s[0]);
+  if(rec==='biweekly') return 'Every other '+weekday;
+  if(rec==='monthly') return 'Monthly on the '+ord;
+  if(rec==='yearly') return 'Yearly on '+monthDay;
+  return 'Every '+weekday; // weekly, and the default for older records with no recurrence saved
+}
+function evToggleRecurrence(){
+  const on=document.getElementById('ev-recurring')?.classList.contains('on');
+  const wrap=document.getElementById('ev-recurrence-wrap');
+  if(wrap) wrap.style.display=on?'block':'none';
+  evUpdateRecurrencePreview();
+}
+function evUpdateRecurrencePreview(){
+  const p=document.getElementById('ev-recurrence-preview'); if(!p) return;
+  const rec=document.getElementById('ev-recurrence')?.value||'weekly';
+  const start=document.getElementById('ev-start')?.value||'';
+  p.textContent=start?eventRecurrenceLabel(rec,start):'Pick a start date to preview — e.g. "Every Thursday"';
+}
 function renderEvents(){
   const body=document.getElementById('events-body');
   if(!body) return;
@@ -6381,7 +6422,7 @@ function renderEvents(){
     return '<table class="dt"><thead><tr><th>Title</th><th>Date</th><th></th></tr></thead><tbody>'
       +list.map(ev=>'<tr style="cursor:pointer" onclick="editEvent(\''+esc(ev.id)+'\')">'
         +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(ev.title||'Untitled'))+'</td>'
-        +'<td style="font-size:12px;color:var(--muted)">'+esc(eventDateRange(ev))+'</td>'
+        +'<td style="font-size:12px;color:var(--muted)">'+esc(opts&&opts.recurring?(eventRecurrenceLabel(ev.recurrence||'weekly',ev.start)||eventDateRange(ev)):eventDateRange(ev))+'</td>'
         +'<td style="text-align:right;white-space:nowrap">'
           +(opts&&opts.dup?'<button class="btn btn-o btn-xs" onclick="event.stopPropagation();duplicateEvent(\''+esc(ev.id)+'\')" title="Copy this event to reuse for the next date">Duplicate</button> ':'')
           +'<button class="btn btn-o btn-xs" onclick="event.stopPropagation();editEvent(\''+esc(ev.id)+'\')">Edit</button> '
@@ -6391,7 +6432,7 @@ function renderEvents(){
   };
   body.innerHTML=
      '<div class="si-sec"><h2>Upcoming</h2>'+table(groups.upcoming)+'</div>'
-    +'<div class="si-sec"><h2>Recurring</h2><div class="desc" style="margin-bottom:10px">Events on a repeating schedule — edit the date here each time one comes back around.</div>'+table(groups.recurring)+'</div>'
+    +'<div class="si-sec"><h2>Recurring</h2><div class="desc" style="margin-bottom:10px">Events on a repeating schedule — edit the date here each time one comes back around.</div>'+table(groups.recurring,{recurring:true})+'</div>'
     +'<div class="si-sec"><h2>Past</h2><div class="desc" style="margin-bottom:10px">Already happened. Duplicate one to reuse it for the next date.</div>'+table(groups.past,{dup:true})+'</div>';
 }
 
@@ -6419,6 +6460,8 @@ function openNewEvent(){
   document.getElementById('ev-end').value='';
   document.getElementById('ev-url').value='';
   document.getElementById('ev-recurring').classList.remove('on');
+  document.getElementById('ev-recurrence').value='weekly';
+  evToggleRecurrence();
   const w=document.getElementById('ev-featured-wrap'); w.dataset.url=''; w.innerHTML=eventFeaturedHtml('');
   document.getElementById('ev-delete-btn').style.display='none';
   openM('m-event');
@@ -6433,6 +6476,8 @@ function editEvent(id){
   document.getElementById('ev-end').value=ev.end||'';
   document.getElementById('ev-url').value=ev.url||'';
   document.getElementById('ev-recurring').classList.toggle('on',!!ev.recurring);
+  document.getElementById('ev-recurrence').value=ev.recurrence||'weekly';
+  evToggleRecurrence();
   const w=document.getElementById('ev-featured-wrap'); w.dataset.url=ev.featured||''; w.innerHTML=eventFeaturedHtml(ev.featured||'');
   document.getElementById('ev-delete-btn').style.display='';
   openM('m-event');
@@ -6445,6 +6490,8 @@ function duplicateEvent(id){
   document.getElementById('ev-desc').value=decodeHtml(src.description||'');
   document.getElementById('ev-url').value=src.url||'';
   document.getElementById('ev-recurring').classList.toggle('on',!!src.recurring);
+  document.getElementById('ev-recurrence').value=src.recurrence||'weekly';
+  evToggleRecurrence();
   const w=document.getElementById('ev-featured-wrap'); w.dataset.url=src.featured||''; w.innerHTML=eventFeaturedHtml(src.featured||'');
   toast('Set the new date and save','ok');
 }
@@ -6461,13 +6508,15 @@ async function saveEvent(){
   let slug=slugify(title);
   const dupe=_events.find(e=>e.slug===slug && e.id!==id);
   if(dupe) slug=slug+'-'+id.slice(0,4);
+  const recurringOn=document.getElementById('ev-recurring')?.classList.contains('on')||false;
   const ev={
     id, title, slug,
     description:get('ev-desc'),
     start, end,
     url:get('ev-url'),
     featured:document.getElementById('ev-featured-wrap')?.dataset.url||'',
-    recurring:document.getElementById('ev-recurring')?.classList.contains('on')||false
+    recurring:recurringOn,
+    recurrence:recurringOn?(document.getElementById('ev-recurrence')?.value||'weekly'):''
   };
   if(existing) _events[_events.findIndex(e=>e.id===id)]=ev;
   else _events.unshift(ev);
@@ -6592,6 +6641,18 @@ function eventsRuntimeAssets(){
     +'function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}\n'
     +'function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}\n'
     +'function frange(a,b){if(!a)return"";if(!b||b===a)return fd(a);return fd(a)+" \\u2013 "+fd(b);}\n'
+    +'function recLabel(rec,start){\n'
+    +'  if(!start)return"";\n'
+    +'  var d=new Date(start+"T00:00:00"); if(isNaN(d.getTime()))return"";\n'
+    +'  var wd=d.toLocaleDateString("en-US",{weekday:"long"});\n'
+    +'  var md=d.toLocaleDateString("en-US",{month:"long",day:"numeric"});\n'
+    +'  var n=d.getDate(), s=["th","st","nd","rd"], v=n%100;\n'
+    +'  var ord=n+(s[(v-20)%10]||s[v]||s[0]);\n'
+    +'  if(rec==="biweekly")return"Every other "+wd;\n'
+    +'  if(rec==="monthly")return"Monthly on the "+ord;\n'
+    +'  if(rec==="yearly")return"Yearly on "+md;\n'
+    +'  return"Every "+wd;\n'
+    +'}\n'
     +'function pad(n){return n<10?"0"+n:""+n;}\n'
     +'function dstr(y,m,d){return y+"-"+pad(m+1)+"-"+pad(d);}\n'
     +'function paintSingle(root,events){\n'
@@ -6603,7 +6664,7 @@ function eventsRuntimeAssets(){
     +'  root.innerHTML="<article class=\\"fev-single\\">"\n'
     +'    +"<a class=\\"fev-back\\" href=\\"events.html\\">\\u2190 All events</a>"\n'
     +'    +(ev.featured?"<img class=\\"fev-s-img\\" src=\\""+esc(ev.featured)+"\\" alt=\\""+esc(dec(ev.title))+"\\">":"")\n'
-    +'    +"<div class=\\"fev-s-date\\">"+esc(frange(ev.start,ev.end))+(ev.recurring?"<span class=\\"fev-badge\\">Recurring</span>":"")+"</div>"\n'
+    +'    +"<div class=\\"fev-s-date\\">"+esc(frange(ev.start,ev.end))+(ev.recurring?"<span class=\\"fev-badge\\">"+esc(recLabel(ev.recurrence||"weekly",ev.start))+"</span>":"")+"</div>"\n'
     +'    +"<h1>"+esc(dec(ev.title))+"</h1>"\n'
     +'    +(desc?"<div class=\\"fev-s-desc\\">"+desc+"</div>":"")\n'
     +'    +(ev.url?"<a class=\\"fev-cta\\" href=\\""+esc(ev.url)+"\\" target=\\"_blank\\" rel=\\"noopener\\">More Info</a>":"")\n'
