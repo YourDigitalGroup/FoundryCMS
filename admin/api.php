@@ -2154,7 +2154,7 @@ function fourgeWritePostsCorsHtaccess() {
     $end   = '# END Fourge Posts CORS';
     $rules = <<<'HT'
 <IfModule mod_headers.c>
-  <FilesMatch "^(posts|reviews|map)\.json$">
+  <FilesMatch "^(posts|reviews|map|events)\.json$">
     Header set Access-Control-Allow-Origin "*"
     Header set Access-Control-Allow-Methods "GET"
   </FilesMatch>
