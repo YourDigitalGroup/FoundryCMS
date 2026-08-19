@@ -1173,6 +1173,9 @@ textarea.fb-input{resize:vertical}
         <div class="ni" onclick="navTo('map')" id="ni-map" title="Map pins">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 9.2c0 5.6-8.5 12.3-8.5 12.3S3.5 14.8 3.5 9.2a8.5 8.5 0 0117 0z"/><circle cx="12" cy="9.2" r="3"/></svg> Map
         </div>
+        <div class="ni" onclick="navTo('events')" id="ni-events" title="Events calendar">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Events
+        </div>
         <div class="sb-sec admin-only">SYSTEM</div>
         <div class="ni admin-only" onclick="navTo('users')" id="ni-users"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Users</div>
         <div class="ni" onclick="navTo('revisions')" id="ni-revisions"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg> Revisions</div>
@@ -2320,6 +2323,15 @@ textarea.fb-input{resize:vertical}
         </div>
       </div>
 
+      <div class="panel" id="p-events">
+        <div class="ta" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="fd-btn-primary" onclick="openNewEvent()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Event</button>
+          <button class="btn btn-o btn-sm" id="events-pages-btn" onclick="ensureEventsPages()" title="Creates the public Events archive (a basic calendar) and single-event pages. Safe to click any time — it only creates what's missing and never overwrites a page you've already customized.">Create Events Pages</button>
+          <span style="font-size:12px;color:var(--muted)">Link <code style="font-family:var(--font-mono);background:var(--surface-3);padding:2px 6px;border-radius:4px">/events</code> in your nav once the pages are created. Give each page its own look under Pages → Page Settings → Custom CSS.</span>
+        </div>
+        <div id="events-body"><div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><h3>No events yet</h3><p>Click New Event to add your first one.</p></div></div>
+      </div>
+
     </div><!-- /main -->
   </div><!-- /body-row -->
 </div><!-- /shell -->
@@ -2353,6 +2365,28 @@ textarea.fb-input{resize:vertical}
       <div class="fg"><label>HTML File Name</label><input type="text" id="np-file" placeholder="About.html"></div>
     </div>
     <div class="mf" style="flex-wrap:wrap;gap:8px"><button class="fd-btn-secondary" onclick="closeM('m-newpage')">Cancel</button><button class="fd-btn-secondary" onclick="createNewPage()">Blank HTML</button><button class="fd-btn-primary" onclick="closeM('m-newpage');startPageBuilder()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Build with Blocks</button></div>
+  </div>
+</div>
+<div class="mw" id="m-event">
+  <div class="modal" style="width:520px;max-width:94vw;max-height:88vh;display:flex;flex-direction:column">
+    <div class="mh"><h2 id="ev-modal-title">New Event</h2><button class="ib" onclick="closeM('m-event')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" style="overflow-y:auto">
+      <div class="fg"><label>Event Title *</label><input type="text" id="ev-title" placeholder="Fall Fundraiser Gala"></div>
+      <div class="fg"><label>Description</label><textarea id="ev-desc" rows="4" placeholder="What's happening, who it's for…"></textarea></div>
+      <div class="fr">
+        <div class="fg"><label>Start Date *</label><input type="date" id="ev-start"></div>
+        <div class="fg"><label>End Date</label><input type="date" id="ev-end"><small>Leave blank for a one-day event.</small></div>
+      </div>
+      <div class="fg"><label>External URL <span style="font-weight:400;color:var(--muted)">(tickets, RSVP, more info)</span></label><input type="url" id="ev-url" placeholder="https://…"></div>
+      <div class="fg"><label>Featured Image</label><div id="ev-featured-wrap"></div></div>
+      <label class="pe-toggle-row"><span>Recurring</span><div class="fd-toggle" id="ev-recurring" onclick="this.classList.toggle('on')"><div class="fd-toggle-knob"></div></div></label>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:4px">Groups this event under Recurring in the list below. Fourge doesn't auto-repeat it — update the date here each time it comes back around.</div>
+    </div>
+    <div class="mf" style="flex-wrap:wrap;gap:8px">
+      <button class="btn btn-o" id="ev-delete-btn" style="margin-right:auto;color:#dc2626;border-color:#dc2626" onclick="deleteCurrentEvent()">Delete</button>
+      <button class="fd-btn-secondary" onclick="closeM('m-event')">Cancel</button>
+      <button class="fd-btn-primary" onclick="saveEvent()">Save Event</button>
+    </div>
   </div>
 </div>
 <div class="mw" id="m-media-pick">
@@ -2588,7 +2622,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.98';
+const CMS_VERSION='1.14.99';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2599,7 +2633,7 @@ const CMS_VERSION='1.14.98';
 const UPDATE_FILES_ALLOWED=['admin/index.html','admin/db.php','block-renderer.jsx','blog-post.jsx','interior-shell.jsx','posts.jsx','preview.html','adaptify.js','admin/api.php'];
 const UPDATE_FILES_DEFAULT=UPDATE_FILES_ALLOWED.slice(); // used when version.json omits "files"
 const UPDATE_THROTTLE_MS=20*60*60*1000; // ~daily: don't re-check on every login within a day
-const F_PAGES='data/pages.json',F_POSTS='data/posts.json',F_SEO='data/seo.json';
+const F_PAGES='data/pages.json',F_POSTS='data/posts.json',F_SEO='data/seo.json',F_EVENTS='data/events.json';
 const F_SITE='data/site.json',F_INJECT='data/injections.json',F_USERS='data/users.json';
 const DIR_ASSETS='assets/';
 // ── CONSTANTS ──────────────────────────────────────────────────
@@ -2806,7 +2840,7 @@ function uiConfirm(msg, okLabel, title){
 function uiConfirmResolve(val){ closeM('m-uiconfirm'); const cb=_uiConfirmCb; _uiConfirmCb=null; if(cb) cb(!!val); }
 function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');p.parentElement.querySelectorAll('.tab-panel').forEach(t=>t.classList.remove('on'));const el=document.getElementById(panelId);if(el)el.classList.add('on');}
 function switchPropsTab(){}
-const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','reviews':'p-reviews','map':'p-map','users':'p-users'};
+const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','reviews':'p-reviews','map':'p-map','events':'p-events','users':'p-users'};
 function navTo(name){goPanel(NAV_MAP[name]||('p-'+name));}
 function goPanel(id){
   closeConversation();   // dismiss any open Lead Generation chat when switching modules
@@ -2814,7 +2848,7 @@ function goPanel(id){
   const p=document.getElementById(id);if(p){p.classList.add('on');if(window.fxPanelIn)window.fxPanelIn(p);}
   document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
   document.querySelectorAll('.ni').forEach(n=>{const oc=n.getAttribute('onclick')||'';
-    if(oc.includes("'"+id+"'")||(id==='p-dash'&&oc.includes("'dash'"))||(id==='p-pages'&&oc.includes("'pages'"))||(id==='p-posts'&&oc.includes("'posts'"))||(id==='p-media'&&oc.includes("'media'"))||(id==='p-seo'&&oc.includes("'seo'"))||(id==='p-site'&&(oc.includes("'site'")||oc.includes("'siteinfo'")))||(id==='p-inject'&&(oc.includes("'injections'")||oc.includes("'plugins'")))||(id==='p-analytics'&&oc.includes("'analytics'"))||(id==='p-settings'&&oc.includes("'settings'"))||(id==='p-factory'&&oc.includes("'factory'"))||(id==='p-users'&&oc.includes("'users'"))
+    if(oc.includes("'"+id+"'")||(id==='p-dash'&&oc.includes("'dash'"))||(id==='p-pages'&&oc.includes("'pages'"))||(id==='p-posts'&&oc.includes("'posts'"))||(id==='p-media'&&oc.includes("'media'"))||(id==='p-seo'&&oc.includes("'seo'"))||(id==='p-site'&&(oc.includes("'site'")||oc.includes("'siteinfo'")))||(id==='p-inject'&&(oc.includes("'injections'")||oc.includes("'plugins'")))||(id==='p-analytics'&&oc.includes("'analytics'"))||(id==='p-settings'&&oc.includes("'settings'"))||(id==='p-factory'&&oc.includes("'factory'"))||(id==='p-events'&&oc.includes("'events'"))||(id==='p-users'&&oc.includes("'users'"))
     )n.classList.add('on');});
   const ptWrap=document.getElementById('sb-pages-tree-wrap');if(ptWrap)ptWrap.style.display=id==='p-pages'?'block':'none';
   // Auto-collapse the main sidebar in the page editor for more preview room;
@@ -2825,7 +2859,7 @@ function goPanel(id){
   if(bc){const names={'p-pages':'Pages','p-posts':'Posts','p-media':'Media','p-seo':'SEO','p-site':'Design','p-inject':'Plugins','p-analytics':'Analytics','p-leadgen':'Lead Generation','p-settings':'Settings','p-factory':'Site Foundry','p-users':'Users'};const name=names[id];if(name&&id!=='p-dash'){bc.innerHTML='<i class="fa-solid fa-chevron-right" style="font-size:9px;opacity:.4"></i> '+name;bc.style.display='inline-flex';}else bc.style.display='none';}
   if(id!=='p-analytics'&&typeof gaStopLive==='function') gaStopLive();
   if(id==='p-dash')loadDash();else if(id==='p-pages')initPages();else if(id==='p-tlp')initTLP();else if(id==='p-posts')initPosts();else if(id==='p-forms')initForms();else if(id==='p-media'){_media=[];initMedia();}
-  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}try{aiFixLoadState();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-reviews')renderReviews();else if(id==='p-map')renderMapPanel();else if(id==='p-users')initUsers();
+  else if(id==='p-revisions')loadRevisions();else if(id==='p-seo')initSEO();else if(id==='p-site')loadSiteInfo();else if(id==='p-inject'){initPlugins();try{pkgAdminRefresh();}catch(e){}try{aiFixLoadState();}catch(e){}}else if(id==='p-analytics')initAnalytics();else if(id==='p-leadgen')loadLeadGen();else if(id==='p-settings')loadSettings();else if(id==='p-factory')sfTab('server');else if(id==='p-adaptify')initAdaptify();else if(id==='p-reviews')renderReviews();else if(id==='p-map')renderMapPanel();else if(id==='p-events')initEvents();else if(id==='p-users')initUsers();
 }
 
 // ── COLLAPSIBLE SIDE MENUS ──────────────────────────────────────
@@ -4118,6 +4152,8 @@ function veFinalizePageHtml(html, pg){
   try{ html=ensureReviewsRuntime(html); }catch(e){}
   // …and the map block's runtime, location list and Place schema.
   try{ html=ensureMapRuntime(html); }catch(e){}
+  // …and the events calendar / single-event block's runtime.
+  try{ html=ensureEventsRuntime(html); }catch(e){}
   // Every saved page carries the CURRENT site fonts and heading styles, so a
   // page created after the design was set is not left behind. Guarded on the
   // site config actually being loaded — otherwise a save could strip the block
@@ -6273,6 +6309,381 @@ function ensurePostsRuntime(html){
   html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
   return html;
 }
+
+// ══════════════════════════════════════════════════════════════════
+// EVENTS — a calendar archive page and a single-event page, each a real,
+// visible, individually-customizable Fourge page (NOT a hidden generated
+// shell like posts.html). The content is a marker block that reads
+// data/events.json at view time, so publishing an event never requires
+// regenerating either page and never touches whatever custom CSS/JS an
+// operator has set on them. CRUD below works by stable id rather than
+// array index, because the admin list is split into three independently
+// filtered groups — an index into a filtered subset would go stale the
+// moment another group changes.
+// ══════════════════════════════════════════════════════════════════
+let _events=[], _curEditEvent=null;   // _curEditEvent = id being edited, or null for new
+
+async function saveEventsJson(){
+  const json=JSON.stringify(_events,null,2);
+  const{url,token}=getApiCfg();
+  if(url&&token){ await apiCall('write_file',{path:F_EVENTS,content:json}); return; }
+  const sha=await ghSHA(F_EVENTS);
+  await ghWrite(F_EVENTS,json,sha,'CMS: events update');
+}
+
+async function initEvents(){
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+  eventsPagesButtonState();
+  // Server-first load (same shape as initPosts)
+  try{
+    const{url,token}=getApiCfg();
+    if(url&&token){
+      const d=await apiCall('read_file',{path:F_EVENTS});
+      if(d.content){_events=JSON.parse(d.content);renderEvents();return;}
+    }
+  }catch{}
+  try{
+    const r=await fetch('../data/events.json?t='+Date.now());
+    if(r.ok){_events=await r.json();renderEvents();return;}
+  }catch{}
+  try{const{content}=await ghRead(F_EVENTS);_events=JSON.parse(content);}catch{_events=[];}
+  renderEvents();
+}
+
+// Grouping is computed at render time, never stored: "recurring" is a manual
+// label (Fourge does not auto-expand a recurrence rule), and past/upcoming
+// falls out of today's date vs. the event's own end (or start, if no end).
+function eventTodayKey(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function eventGroup(ev){
+  if(ev.recurring) return 'recurring';
+  const end=ev.end||ev.start||'';
+  return (end && end<eventTodayKey()) ? 'past' : 'upcoming';
+}
+function eventDateRange(ev){
+  if(!ev.start) return '';
+  if(!ev.end || ev.end===ev.start) return ev.start;
+  return ev.start+' – '+ev.end;
+}
+function renderEvents(){
+  const body=document.getElementById('events-body');
+  if(!body) return;
+  if(!_events.length){
+    body.innerHTML='<div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><h3>No events yet</h3><p>Click New Event to add your first one.</p></div>';
+    return;
+  }
+  const groups={upcoming:[],recurring:[],past:[]};
+  _events.forEach(ev=>groups[eventGroup(ev)].push(ev));
+  groups.upcoming.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||'')));
+  groups.recurring.sort((a,b)=>String(a.start||'').localeCompare(String(b.start||'')));
+  groups.past.sort((a,b)=>String(b.start||'').localeCompare(String(a.start||'')));
+  const table=(list,opts)=>{
+    if(!list.length) return '<div class="empty" style="padding:16px 0"><p>None</p></div>';
+    return '<table class="dt"><thead><tr><th>Title</th><th>Date</th><th></th></tr></thead><tbody>'
+      +list.map(ev=>'<tr style="cursor:pointer" onclick="editEvent(\''+esc(ev.id)+'\')">'
+        +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(ev.title||'Untitled'))+'</td>'
+        +'<td style="font-size:12px;color:var(--muted)">'+esc(eventDateRange(ev))+'</td>'
+        +'<td style="text-align:right;white-space:nowrap">'
+          +(opts&&opts.dup?'<button class="btn btn-o btn-xs" onclick="event.stopPropagation();duplicateEvent(\''+esc(ev.id)+'\')" title="Copy this event to reuse for the next date">Duplicate</button> ':'')
+          +'<button class="btn btn-o btn-xs" onclick="event.stopPropagation();editEvent(\''+esc(ev.id)+'\')">Edit</button> '
+          +'<button class="btn btn-o btn-xs" onclick="event.stopPropagation();deleteEvent(\''+esc(ev.id)+'\')">Delete</button>'
+        +'</td></tr>').join('')
+      +'</tbody></table>';
+  };
+  body.innerHTML=
+     '<div class="si-sec"><h2>Upcoming</h2>'+table(groups.upcoming)+'</div>'
+    +'<div class="si-sec"><h2>Recurring</h2><div class="desc" style="margin-bottom:10px">Events on a repeating schedule — edit the date here each time one comes back around.</div>'+table(groups.recurring)+'</div>'
+    +'<div class="si-sec"><h2>Past</h2><div class="desc" style="margin-bottom:10px">Already happened. Duplicate one to reuse it for the next date.</div>'+table(groups.past,{dup:true})+'</div>';
+}
+
+function eventFeaturedHtml(url){
+  return url
+    ? '<div style="display:flex;align-items:center;gap:10px"><img src="'+esc(url)+'" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"><button class="btn btn-o btn-sm" onclick="eventPickFeatured()">Change</button><button class="btn btn-o btn-sm" onclick="eventClearFeatured()">Remove</button></div>'
+    : '<button class="btn btn-o btn-sm" onclick="eventPickFeatured()">Choose image</button>';
+}
+function eventPickFeatured(){ veOpenMediaPicker({purpose:'eventImage'}); }
+function eventUseImage(url){
+  const w=document.getElementById('ev-featured-wrap'); if(!w) return;
+  w.dataset.url=url; w.innerHTML=eventFeaturedHtml(url);
+}
+function eventClearFeatured(){
+  const w=document.getElementById('ev-featured-wrap'); if(!w) return;
+  w.dataset.url=''; w.innerHTML=eventFeaturedHtml('');
+}
+
+function openNewEvent(){
+  _curEditEvent=null;
+  document.getElementById('ev-modal-title').textContent='New Event';
+  document.getElementById('ev-title').value='';
+  document.getElementById('ev-desc').value='';
+  document.getElementById('ev-start').value='';
+  document.getElementById('ev-end').value='';
+  document.getElementById('ev-url').value='';
+  document.getElementById('ev-recurring').classList.remove('on');
+  const w=document.getElementById('ev-featured-wrap'); w.dataset.url=''; w.innerHTML=eventFeaturedHtml('');
+  document.getElementById('ev-delete-btn').style.display='none';
+  openM('m-event');
+}
+function editEvent(id){
+  const ev=_events.find(e=>e.id===id); if(!ev) return;
+  _curEditEvent=id;
+  document.getElementById('ev-modal-title').textContent='Edit Event';
+  document.getElementById('ev-title').value=decodeHtml(ev.title||'');
+  document.getElementById('ev-desc').value=decodeHtml(ev.description||'');
+  document.getElementById('ev-start').value=ev.start||'';
+  document.getElementById('ev-end').value=ev.end||'';
+  document.getElementById('ev-url').value=ev.url||'';
+  document.getElementById('ev-recurring').classList.toggle('on',!!ev.recurring);
+  const w=document.getElementById('ev-featured-wrap'); w.dataset.url=ev.featured||''; w.innerHTML=eventFeaturedHtml(ev.featured||'');
+  document.getElementById('ev-delete-btn').style.display='';
+  openM('m-event');
+}
+function duplicateEvent(id){
+  const src=_events.find(e=>e.id===id); if(!src) return;
+  openNewEvent();
+  document.getElementById('ev-modal-title').textContent='New Event (from “'+esc(decodeHtml(src.title||''))+'”)';
+  document.getElementById('ev-title').value=decodeHtml(src.title||'');
+  document.getElementById('ev-desc').value=decodeHtml(src.description||'');
+  document.getElementById('ev-url').value=src.url||'';
+  document.getElementById('ev-recurring').classList.toggle('on',!!src.recurring);
+  const w=document.getElementById('ev-featured-wrap'); w.dataset.url=src.featured||''; w.innerHTML=eventFeaturedHtml(src.featured||'');
+  toast('Set the new date and save','ok');
+}
+async function saveEvent(){
+  const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
+  const title=get('ev-title');
+  if(!title){ toast('Event needs a title','err'); return; }
+  const start=get('ev-start');
+  if(!start){ toast('Event needs a start date','err'); return; }
+  const end=get('ev-end')||start;
+  if(end<start){ toast('End date is before the start date','err'); return; }
+  const existing=_curEditEvent!=null?_events.find(e=>e.id===_curEditEvent):null;
+  const id=existing?existing.id:uid();
+  let slug=slugify(title);
+  const dupe=_events.find(e=>e.slug===slug && e.id!==id);
+  if(dupe) slug=slug+'-'+id.slice(0,4);
+  const ev={
+    id, title, slug,
+    description:get('ev-desc'),
+    start, end,
+    url:get('ev-url'),
+    featured:document.getElementById('ev-featured-wrap')?.dataset.url||'',
+    recurring:document.getElementById('ev-recurring')?.classList.contains('on')||false
+  };
+  if(existing) _events[_events.findIndex(e=>e.id===id)]=ev;
+  else _events.unshift(ev);
+  try{
+    await saveEventsJson();
+    seoSitemapRefresh();
+    closeM('m-event');
+    renderEvents();
+    toast(existing?'Event updated ✓':'Event added ✓','ok');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+async function deleteEvent(id){
+  const ev=_events.find(e=>e.id===id); if(!ev) return;
+  if(!confirm('Delete “'+decodeHtml(ev.title||'this event')+'”? This cannot be undone.')) return;
+  _events=_events.filter(e=>e.id!==id);
+  try{
+    await saveEventsJson();
+    seoSitemapRefresh();
+    renderEvents();
+    toast('Event deleted','ok');
+  }catch(e){ toast('Delete failed: '+e.message,'err'); }
+}
+function deleteCurrentEvent(){
+  if(_curEditEvent==null) return;
+  closeM('m-event');
+  deleteEvent(_curEditEvent);
+}
+
+// ── Provisioning the two public pages ───────────────────────────────────────
+// Explicit, one-click, and additive-only — mirrors Posts' "Publish Blog Page"
+// button rather than silently writing files on tab open. Unlike that button,
+// this NEVER re-generates a page that already exists: buildPostsHtml()
+// rewrites posts.html whole on every publish, which would silently erase any
+// custom CSS/JS or hand-edits an operator made to these pages afterward.
+// Calling this again only fills in whichever of the two is still missing.
+function eventsPagesButtonState(){
+  const btn=document.getElementById('events-pages-btn'); if(!btn) return;
+  btn.textContent=(_pages['events']&&_pages['event'])?'Events pages ✓ (repair)':'Create Events Pages';
+}
+function eventsCalendarSnippet(){
+  return '<div data-fourge-events><div class="fev-empty">Loading events…</div></div>';
+}
+function eventSingleSnippet(){
+  return '<div data-fourge-event-single><div class="fev-empty">Loading…</div></div>';
+}
+async function ensureEventsPages(){
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+  const bareShell=(title,starter)=>'<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>'+title+'</title>\n</head>\n<body>\n'+starter+'\n</body>\n</html>';
+  const created=[];
+  try{
+    if(!_pages['events']){
+      const starter=eventsCalendarSnippet();
+      let html=(await pageFromSiteShell('Events',starter))||bareShell('Events',starter);
+      html=ensureEventsRuntime(html);
+      _pages['events']={title:'Events',file:'events.html',path:'events.html',css:'',blocks:[]};
+      _veHtml['events']=html; _veOrigHtml['events']='';
+      await apiCall('write_file',{path:'events.html',content:html});
+      created.push('events.html');
+    }
+    if(!_pages['event']){
+      const starter=eventSingleSnippet();
+      let html=(await pageFromSiteShell('Event',starter))||bareShell('Event',starter);
+      html=ensureEventsRuntime(html);
+      _pages['event']={title:'Event',file:'event.html',path:'event.html',css:'',blocks:[]};
+      _veHtml['event']=html; _veOrigHtml['event']='';
+      await apiCall('write_file',{path:'event.html',content:html});
+      created.push('event.html');
+    }
+    if(created.length){
+      await savePagesJson();
+      seoSitemapRefresh();
+      toast('Created '+created.join(' and ')+' — link /events in your nav to make it public','ok');
+    }else{
+      toast('Events pages already exist ✓','ok');
+    }
+    renderVePageList();
+    eventsPagesButtonState();
+  }catch(e){ toast('Could not create events pages: '+e.message,'err'); }
+}
+
+// ── The public runtime: a month calendar for the archive, a detail view for
+// the single page. One shared script (both markers can never land on the
+// same page in practice, and sharing avoids duplicating fetch/date helpers).
+// Kellar's ask was explicit: "just make it a basic calendar, not a list of
+// pictured events" — so the archive is a real month grid, not an image feed.
+function eventsRuntimeCss(){
+  return '<style id="fourge-events-css">'
+    +'.fev-cal{margin:8px 0}'
+    +'.fev-cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px}'
+    +'.fev-cal-head h2{font-size:19px;font-weight:700;margin:0}'
+    +'.fev-nav{background:none;border:1px solid rgba(0,0,0,.15);border-radius:8px;width:34px;height:34px;font-size:16px;cursor:pointer;color:inherit;flex-shrink:0}'
+    +'.fev-nav:hover{background:rgba(0,0,0,.05)}'
+    +'.fev-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}'
+    +'.fev-grid-head{margin-bottom:6px;font-size:11px;font-weight:700;text-transform:uppercase;opacity:.55;text-align:center}'
+    +'.fev-cell{min-height:92px;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:6px;font-size:12px;display:flex;flex-direction:column;gap:3px;box-sizing:border-box}'
+    +'.fev-cell.fev-pad{border-color:transparent}'
+    +'.fev-cell.fev-today{border-color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));border-width:2px}'
+    +'.fev-daynum{font-weight:700;opacity:.6;font-size:11px}'
+    +'.fev-pill{display:block;background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff;border-radius:5px;padding:2px 6px;font-size:11px;line-height:1.4;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+    +'.fev-pill:hover{opacity:.85;text-decoration:none}'
+    +'.fev-more{font-size:10.5px;opacity:.6}'
+    +'.fev-empty{text-align:center;opacity:.65;padding:40px 0}'
+    +'.fev-single{max-width:720px;margin:0 auto}'
+    +'.fev-back{font-size:14px;font-weight:600;display:inline-block;margin-bottom:20px;text-decoration:none}'
+    +'.fev-s-img{width:100%;border-radius:14px;margin-bottom:24px;aspect-ratio:16/9;object-fit:cover;display:block}'
+    +'.fev-s-date{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;opacity:.65;margin-bottom:10px}'
+    +'.fev-badge{background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff;border-radius:99px;padding:2px 9px;font-size:10.5px;text-transform:none;letter-spacing:0;font-weight:700;margin-left:6px}'
+    +'.fev-single h1{font-size:34px;font-weight:800;letter-spacing:-.02em;line-height:1.15;margin:0 0 18px}'
+    +'.fev-s-desc{font-size:16px;line-height:1.7;margin-bottom:26px}'
+    +'.fev-s-desc p{margin:0 0 16px}'
+    +'.fev-cta{display:inline-block;background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff;padding:12px 26px;border-radius:8px;font-weight:600;text-decoration:none}'
+    +'.fev-cta:hover{opacity:.9;text-decoration:none}'
+    +'@media(max-width:640px){.fev-cell{min-height:60px;font-size:10.5px;padding:4px}.fev-pill{font-size:9.5px;padding:1px 4px}.fev-single h1{font-size:27px}}'
+    +'</style>';
+}
+function eventsRuntimeAssets(){
+  const sc='<'+'script', ec='<'+'/script>';
+  const js=sc+' id="fourge-events-js">\n'
+    +'(function(){\n'
+    +'function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}\n'
+    +'function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}\n'
+    +'function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}\n'
+    +'function frange(a,b){if(!a)return"";if(!b||b===a)return fd(a);return fd(a)+" \\u2013 "+fd(b);}\n'
+    +'function pad(n){return n<10?"0"+n:""+n;}\n'
+    +'function dstr(y,m,d){return y+"-"+pad(m+1)+"-"+pad(d);}\n'
+    +'function paintSingle(root,events){\n'
+    +'  var slug=new URLSearchParams(location.search).get("e");\n'
+    +'  var ev=events.find(function(e){return e.slug===slug;});\n'
+    +'  if(!ev){ root.innerHTML="<div class=\\"fev-empty\\">Event not found. <a href=\\"events.html\\">\\u2190 Back to all events</a></div>"; return; }\n'
+    +'  document.title=dec(ev.title);\n'
+    +'  var desc=(ev.description||"").split(/\\n{2,}/).filter(function(pp){return pp.trim();}).map(function(pp){return "<p>"+esc(pp).replace(/\\n/g,"<br>")+"</p>";}).join("");\n'
+    +'  root.innerHTML="<article class=\\"fev-single\\">"\n'
+    +'    +"<a class=\\"fev-back\\" href=\\"events.html\\">\\u2190 All events</a>"\n'
+    +'    +(ev.featured?"<img class=\\"fev-s-img\\" src=\\""+esc(ev.featured)+"\\" alt=\\""+esc(dec(ev.title))+"\\">":"")\n'
+    +'    +"<div class=\\"fev-s-date\\">"+esc(frange(ev.start,ev.end))+(ev.recurring?"<span class=\\"fev-badge\\">Recurring</span>":"")+"</div>"\n'
+    +'    +"<h1>"+esc(dec(ev.title))+"</h1>"\n'
+    +'    +(desc?"<div class=\\"fev-s-desc\\">"+desc+"</div>":"")\n'
+    +'    +(ev.url?"<a class=\\"fev-cta\\" href=\\""+esc(ev.url)+"\\" target=\\"_blank\\" rel=\\"noopener\\">More Info</a>":"")\n'
+    +'    +"</article>";\n'
+    // Event schema — only fields Fourge actually collects. No location, no
+    // eventStatus/eventAttendanceMode: Fourge never asserts a fact it has no
+    // real data for, and this feature has no venue field to draw one from.
+    +'  var ld={"@context":"https://schema.org","@type":"Event",name:dec(ev.title)};\n'
+    +'  if(ev.start)ld.startDate=ev.start;\n'
+    +'  if(ev.end)ld.endDate=ev.end;\n'
+    +'  if(ev.description)ld.description=dec(ev.description);\n'
+    +'  if(ev.featured)ld.image=ev.featured;\n'
+    +'  if(ev.url)ld.url=ev.url;\n'
+    +'  var s=document.createElement("script");s.type="application/ld+json";s.textContent=JSON.stringify(ld);document.head.appendChild(s);\n'
+    +'}\n'
+    +'function paintArchive(root,events){\n'
+    +'  events=events.filter(function(e){return e&&e.start;});\n'
+    +'  if(!events.length){ root.innerHTML="<div class=\\"fev-empty\\">No events scheduled yet \\u2014 check back soon.</div>"; return; }\n'
+    +'  var today=new Date(); today.setHours(0,0,0,0);\n'
+    +'  var viewY=today.getFullYear(), viewM=today.getMonth();\n'
+    +'  var todayKey=dstr(today.getFullYear(),today.getMonth(),today.getDate());\n'
+    +'  function onDay(day){ return events.filter(function(e){ var en=e.end||e.start; return day>=e.start&&day<=en; }); }\n'
+    +'  function render(){\n'
+    +'    var first=new Date(viewY,viewM,1);\n'
+    +'    var startWd=first.getDay();\n'
+    +'    var days=new Date(viewY,viewM+1,0).getDate();\n'
+    +'    var monthName=first.toLocaleDateString("en-US",{month:"long",year:"numeric"});\n'
+    +'    var cells="";\n'
+    +'    for(var i=0;i<startWd;i++) cells+="<div class=\\"fev-cell fev-pad\\"></div>";\n'
+    +'    for(var d=1; d<=days; d++){\n'
+    +'      var ds=dstr(viewY,viewM,d), todays=onDay(ds);\n'
+    +'      cells+="<div class=\\"fev-cell"+(ds===todayKey?" fev-today":"")+"\\">"\n'
+    +'        +"<div class=\\"fev-daynum\\">"+d+"</div>"\n'
+    +'        +todays.slice(0,3).map(function(e){return "<a class=\\"fev-pill\\" href=\\"event.html?e="+encodeURIComponent(e.slug)+"\\" title=\\""+esc(dec(e.title))+"\\">"+esc(dec(e.title))+"</a>";}).join("")\n'
+    +'        +(todays.length>3?"<div class=\\"fev-more\\">+"+(todays.length-3)+" more</div>":"")\n'
+    +'        +"</div>";\n'
+    +'    }\n'
+    +'    root.innerHTML="<div class=\\"fev-cal\\">"\n'
+    +'      +"<div class=\\"fev-cal-head\\"><button type=\\"button\\" class=\\"fev-nav\\" data-dir=\\"-1\\" aria-label=\\"Previous month\\">\\u2190</button><h2>"+monthName+"</h2><button type=\\"button\\" class=\\"fev-nav\\" data-dir=\\"1\\" aria-label=\\"Next month\\">\\u2192</button></div>"\n'
+    +'      +"<div class=\\"fev-grid fev-grid-head\\">"+["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(function(w){return "<div>"+w+"</div>";}).join("")+"</div>"\n'
+    +'      +"<div class=\\"fev-grid\\">"+cells+"</div>"\n'
+    +'      +"</div>";\n'
+    +'    [].slice.call(root.querySelectorAll(".fev-nav")).forEach(function(btn){\n'
+    +'      btn.onclick=function(){ viewM+=parseInt(this.getAttribute("data-dir"),10); if(viewM<0){viewM=11;viewY--;} else if(viewM>11){viewM=0;viewY++;} render(); };\n'
+    +'    });\n'
+    +'  }\n'
+    +'  render();\n'
+    +'}\n'
+    +'async function run(){\n'
+    +'  var archives=[].slice.call(document.querySelectorAll("[data-fourge-events]"));\n'
+    +'  var singles=[].slice.call(document.querySelectorAll("[data-fourge-event-single]"));\n'
+    +'  if(!archives.length&&!singles.length) return;\n'
+    +'  var events=[];\n'
+    +'  try{ var r=await fetch("data/events.json?t="+Date.now()); if(r.ok) events=await r.json(); }catch(e){}\n'
+    +'  events=Array.isArray(events)?events:[];\n'
+    +'  archives.forEach(function(root){ paintArchive(root,events); });\n'
+    +'  singles.forEach(function(root){ paintSingle(root,events); });\n'
+    +'}\n'
+    +'window.fourgeEventsRefresh=run;\n'
+    +'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();\n'
+    +'})();\n'
+    +ec;
+  return eventsRuntimeCss()+'\n'+js;
+}
+// Same self-heal shape as ensurePostsRuntime: strip any prior copy, then
+// re-insert the latest ONLY if the page still carries one of the markers —
+// deleting the last block in the editor cleanly removes the runtime too.
+function ensureEventsRuntime(html){
+  html=String(html||'');
+  html=html.replace(/<style id="fourge-events-css">[\s\S]*?<\/style>\s*/gi,'');
+  html=html.replace(/<script id="fourge-events-js">[\s\S]*?<\/script>\s*/gi,'');
+  if(!/data-fourge-events\b|data-fourge-event-single\b/.test(html)) return html;
+  const assets=eventsRuntimeAssets();
+  const cut=assets.indexOf('</style>')+'</style>'.length;
+  const css=assets.slice(0,cut), js=assets.slice(cut).replace(/^\s+/,'');
+  html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
+  html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
+  return html;
+}
+
 // ── VIDEO ───────────────────────────────────────────────────────────────────
 // Self-hosted video: a file from the media library played by the browser's own
 // <video>, no third-party embed and nothing phoning home. YouTube/Vimeo links
@@ -9046,6 +9457,13 @@ function seoBuildSitemap(){
     const d=/^\d{4}-\d{2}-\d{2}$/.test(String(po.date||''))?String(po.date):'';
     if(po.path) push(fourgePageUrl(po.path), lm[fourgePagePath(po.path)]||d);
     else if(po.slug) push(fourgeCanonicalBase()+'/posts.html?p='+encodeURIComponent(po.slug), d);
+  });
+  // Events: no draft gate (every saved event is live) and no page file of its
+  // own, so its address is the single-event view — same shape as a post with
+  // no path of its own.
+  (_events||[]).forEach(ev=>{
+    if(!ev||!ev.slug) return;
+    push(fourgeCanonicalBase()+'/event.html?e='+encodeURIComponent(ev.slug), ev.start||'');
   });
   return seoWrapSitemap(entries);
 }
@@ -15200,6 +15618,7 @@ function vePickerApply(){
   if(purpose==='mapImage'){    close(); mapUseImage(src); return; }
   if(purpose==='mapCatIcon'){  close(); mapUseCatIcon(src); return; }
   if(purpose==='mapPinImage'){ close(); mapUsePinImage(src); return; }
+  if(purpose==='eventImage'){ close(); eventUseImage(src); return; }
   if(purpose==='insertVideo'){ close(); veInsertVideoAt(fid,src); return; }
   if(purpose==='imgToVideo'){  close(); veImgToVideoAt(fid,src,poster); return; }
   if(purpose==='poster'){
