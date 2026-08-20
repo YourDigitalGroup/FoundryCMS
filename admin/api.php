@@ -2555,6 +2555,90 @@ function fourgeApiTlpFeed($me, $body) {
     }
     echo json_encode(['ok' => true, 'feed' => $d]);
 }
+// ── FLEET DASHBOARD: report this site's status to 44i's cross-site board ───
+// Built entirely from files already on disk (no dependency on an open admin
+// session's JS state), so it rides the login self-heal exactly like the other
+// riders below and still reports on a site nobody has opened in weeks. Silent
+// no-op until an operator saves a dashboard address and key (same shape as
+// tlp_url/tlp_key) — most sites will never configure this.
+function fourgeFleetSnapshot() {
+    $site  = cmsPkgReadJson('site.json', []);
+    $pages = cmsPkgReadJson('pages.json', []);
+    $seo   = cmsPkgReadJson('seo.json', []);
+    if (!is_array($site))  $site  = [];
+    if (!is_array($pages)) $pages = [];
+    if (!is_array($seo))   $seo   = [];
+
+    $engineVersion = '';
+    $idxPath = PUBLIC_HTML . '/admin/index.html';
+    if (is_file($idxPath)) {
+        // Only the first slice — the constant sits near the top and this file
+        // can be well over a megabyte.
+        $head = @file_get_contents($idxPath, false, null, 0, 200000);
+        if ($head !== false && preg_match("/const CMS_VERSION='([^']+)'/", $head, $m)) $engineVersion = $m[1];
+    }
+
+    $tlpCount = 0;
+    foreach ($pages as $pg) { if (is_array($pg) && !empty($pg['tlp'])) $tlpCount++; }
+
+    // "On-page SEO generated" and the SEO grade are both the SAME weak/missing
+    // gate the daily AI-autofix job already uses (fourgeAiWeak / FOURGE_TITLE_*
+    // / FOURGE_DESC_*) — reused rather than a second, independently-invented
+    // definition of "done", so this number and "Generate New Content" always
+    // agree on what still needs work.
+    $total = count($pages);
+    $complete = 0;
+    foreach ($pages as $pid => $pg) {
+        $s = is_array($seo[$pid] ?? null) ? $seo[$pid] : [];
+        $needT = fourgeAiWeak($s['title'] ?? '',       FOURGE_TITLE_MIN, FOURGE_TITLE_MAX);
+        $needD = fourgeAiWeak($s['description'] ?? '', FOURGE_DESC_MIN,  FOURGE_DESC_MAX);
+        if (!$needT && !$needD) $complete++;
+    }
+    $pct   = $total > 0 ? (int)round($complete / $total * 100) : null;
+    $grade = $pct === null ? null : ($pct >= 80 ? 'A' : ($pct >= 55 ? 'B' : 'C'));
+
+    $sitemapPath = PUBLIC_HTML . '/sitemap.xml';
+    $sitemapExists = is_file($sitemapPath);
+    $sitemapUrls = $sitemapExists ? substr_count((string)@file_get_contents($sitemapPath), '<loc>') : 0;
+
+    $plcRaw = cmsPkgReadJson('postlaunch.json', null);
+    $plc = ['everRun' => false, 'lastRun' => null, 'clean' => null, 'counts' => null];
+    if (is_array($plcRaw)) {
+        $plc = ['everRun' => true, 'lastRun' => $plcRaw['lastRun'] ?? null,
+                'clean' => $plcRaw['clean'] ?? null, 'counts' => $plcRaw['counts'] ?? null];
+    }
+
+    return [
+        'name'          => (string)($site['name'] ?? ''),
+        'url'           => trim((string)($site['website'] ?? '')),
+        'engineVersion' => $engineVersion,
+        'seo'           => ['grade' => $grade, 'generatedPages' => $complete, 'totalPages' => $total, 'pct' => $pct],
+        'sitemap'       => ['exists' => $sitemapExists, 'urlCount' => $sitemapUrls],
+        'tlpCount'      => $tlpCount,
+        'postLaunch'    => $plc,
+        'reportedAt'    => gmdate('c'),
+    ];
+}
+function fourgeFleetReport() {
+    $pdo = fourgeDb();
+    $url = ''; $key = '';
+    try { $url = trim((string)fourgeGetSecret($pdo, 'fleet_url')); } catch (Throwable $e) {}
+    try { $key = trim((string)fourgeGetSecret($pdo, 'fleet_key')); } catch (Throwable $e) {}
+    if ($url === '' || $key === '') return false;         // not configured — silent no-op
+    if (!fourgeTlpUrlOk($url)) return false;              // same https/public-host guard the TLP feed uses — this URL is operator-supplied too
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_TIMEOUT => 10, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_FOLLOWLOCATION => false,   // a redirect could aim the key at a different host
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $key, 'Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_POSTFIELDS => json_encode(fourgeFleetSnapshot()),
+    ]);
+    $res = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $code >= 200 && $code < 300 && $res !== false;
+}
 // ── MAP: ADDRESS → COORDINATES ──────────────────────────────────────────────
 // Server-side so no key ever reaches the browser, and so this works on a site
 // that has no key at all. Google first when a key exists (the same encrypted
@@ -3391,8 +3475,11 @@ function fourgeApiInstallCleanUrls($me) {
     // Daily AI upkeep — on by default; see fourgeAiAutoOn().
     try { fourgeAiDailyTick(); } catch (Throwable $e) {}
     try { $due    = cmsPkgTick(false);              } catch (Throwable $e) { $due = []; }
+    // Fleet Dashboard: silent no-op on every site that has not configured one.
+    $fleet = false;
+    try { $fleet  = fourgeFleetReport();            } catch (Throwable $e) { $fleet = false; }
     echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
-        'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due)]);
+        'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');

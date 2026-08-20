@@ -1,0 +1,22 @@
+# Fleet Dashboard — deny direct HTTP access to the secret config and the
+# stored registry. Only api.php reads these; nobody should ever fetch them.
+<IfModule mod_authz_core.c>
+  <FilesMatch "^config\.secret\.php$">
+    Require all denied
+  </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+  <IfModule mod_authz_host.c>
+    <FilesMatch "^config\.secret\.php$">
+      Order allow,deny
+      Deny from all
+    </FilesMatch>
+  </IfModule>
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>

@@ -19,6 +19,14 @@ admin/fourge.db-shm
 admin/ga-service-account.json
 admin/.ga-token.json
 
+# Fleet Dashboard — same pattern as admin/config.secret.php above (the shared
+# report key + the dashboard login password hash), plus the registry it
+# collects from reporting sites, created at runtime.
+fleet-dashboard/config.secret.php
+fleet-dashboard/config.secret.*
+!fleet-dashboard/config.secret.example.php
+fleet-dashboard/data/sites.json
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

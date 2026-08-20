@@ -2632,7 +2632,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.100';
+const CMS_VERSION='1.14.101';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -10069,12 +10069,24 @@ async function postLaunchCheck(){
 
     prog('');
     plcRender(items);
+    try{ await savePostLaunchStatus(items); }catch(e){}
   }catch(e){
     prog('');
     toast('Post-launch check failed: '+e.message,'err');
   }finally{
     if(btn) btn.disabled=false;
   }
+}
+// Post-Launch Check was previously fully ephemeral — computed live and shown
+// once, never saved — so "has it been run, and was it clean" was not a fact
+// anything else (including the Fleet Dashboard report) could read back. This
+// is the one thing it persists: a compact summary, not the full item list.
+async function savePostLaunchStatus(items){
+  const counts={ok:0,warn:0,fail:0,manual:0,na:0};
+  items.forEach(i=>{ if(counts[i.level]!=null) counts[i.level]++; });
+  const status={lastRun:new Date().toISOString(),clean:counts.fail===0&&counts.warn===0&&counts.manual===0,counts};
+  if(!canCallApi()) return;
+  await apiCall('write_file',{path:'data/postlaunch.json',content:JSON.stringify(status,null,2)});
 }
 function plcRender(items){
   const res=document.getElementById('plc-results'); if(!res) return;
@@ -11109,6 +11121,7 @@ function renderPlugins(){
     const isOn=existing?.active!==false&&!!existing;
     return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)}</div></div><label class="tog"><input type="checkbox" ${isOn?'checked':''} onchange="togglePlugin('${esc(preset.name)}',this.checked,${i})"><span class="tog-sl"></span></label></div>`;}).join('');
   body.innerHTML=recaptchaAddonHtml()
+    +fleetAddonHtml()
     +ghlAddonHtml()
     +mailAddonHtml()
     +`<div class="pl-sec-label">Code injections</div>`
@@ -11193,6 +11206,74 @@ function rcRenderStatus(d){
 }
 // Show the v3 score-threshold control only when v3 is selected.
 function rcToggleV3(v){ const row=document.getElementById('s-rc-threshold-row'); if(row) row.style.display=(v==='v3')?'':'none'; }
+
+// ── FLEET DASHBOARD add-on ───────────────────────────────────────────────────
+// Off by default on every site — same shape as the TLP feed connection (an
+// address plus a key, both in the encrypted secret store, the key never
+// returned once saved). Once configured, this site's status (SEO grade,
+// on-page SEO completeness, sitemap, TLP page count, Post-Launch Check)
+// reports itself automatically on the same login self-heal that already
+// installs clean URLs — no separate schedule to wire up.
+function fleetAddonHtml(){
+  const url=(_secrets&&_secrets.fleet_url)||'';
+  const on=!!(_secretStatus&&_secretStatus.fleet_key);
+  const hint='font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5';
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#DB3516"></rect><rect x="6.5" y="12.5" width="3" height="6.5" rx="1" fill="#fff"></rect><rect x="10.5" y="8.5" width="3" height="10.5" rx="1" fill="#fff"></rect><rect x="14.5" y="5" width="3" height="14" rx="1" fill="#fff"></rect></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">Fleet Dashboard <span class="pl-badge${on?' on':''}">${on?'Reporting':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">Reports this site into 44 Interactive's cross-site dashboard automatically, every time someone signs in. Nothing is sent until an address and key are saved here.</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <div class="fg"><label>Dashboard address</label><input type="url" id="s-fleet-url" placeholder="https://fleet.44interactive.com/api.php" value="${esc(url)}">
+        <div style="${hint}">The fleet-dashboard app's own api.php address — not this site's.</div></div>
+      <div class="fg"><label>Report key</label><input type="password" id="s-fleet-key" placeholder="${on?'Key saved on server':'Paste the key'}" autocomplete="off"></div>
+      <div class="pl-addon-actions">
+        <button class="fd-btn-primary" onclick="fleetSave()">Save</button>
+        ${on?'<button class="fd-btn-ghost" onclick="fleetReportNow()">Report now</button>':''}
+        ${on?'<button class="fd-btn-ghost" onclick="fleetClear()">Turn off</button>':''}
+      </div>
+      <div id="s-fleet-status" style="font-size:12px;color:var(--muted);margin-top:10px"></div>
+    </div>
+  </div>`;
+}
+async function fleetSave(){
+  if(!canCallApi()){ toast('Sign in again to save','err'); return; }
+  const url=(document.getElementById('s-fleet-url')?.value||'').trim();
+  const key=(document.getElementById('s-fleet-key')?.value||'').trim();
+  if(url && !/^https:\/\//i.test(url)){ toast('The dashboard address must start with https://','err'); return; }
+  try{
+    await apiCall('set_secret',{name:'fleet_url',value:url});
+    if(key) await apiCall('set_secret',{name:'fleet_key',value:key});
+    await loadSecrets();
+    const k=document.getElementById('s-fleet-key'); if(k) k.value='';
+    renderPlugins();
+    toast(key?'Dashboard address and key saved ✓':'Dashboard address saved ✓','ok');
+  }catch(e){ toast('Could not save: '+(e.message||e),'err'); }
+}
+async function fleetClear(){
+  if(!canCallApi()){ toast('Sign in again','err'); return; }
+  if(!confirm('Stop reporting to the Fleet Dashboard? This site stops appearing as active there.')) return;
+  try{
+    await apiCall('set_secret',{name:'fleet_key',value:''});
+    await loadSecrets();
+    renderPlugins();
+    toast('Fleet reporting turned off','ok');
+  }catch(e){ toast('Could not turn off: '+(e.message||e),'err'); }
+}
+// Rides the SAME self-heal the login flow already calls, rather than a
+// dedicated action just for a manual trigger — install_clean_urls already
+// bundles every best-effort rider and is safe to call as often as you like.
+async function fleetReportNow(){
+  const st=document.getElementById('s-fleet-status'); if(st) st.textContent='Reporting…';
+  try{
+    const d=await apiCall('install_clean_urls');
+    if(st) st.textContent=(d&&d.fleet)?'Reported just now ✓':'The dashboard did not accept the report — check the address and key.';
+  }catch(e){ if(st) st.textContent='Could not report: '+(e.message||e); }
+}
 
 // ── GOHIGHLEVEL add-on (Plugins module → Super-Admin only) ──────────────────
 // Phase 1: push each form submission into GHL as a lead. The Private Integration
