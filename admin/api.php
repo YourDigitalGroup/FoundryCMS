@@ -2632,7 +2632,11 @@ function fourgeFleetReport() {
         CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_TIMEOUT => 10, CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_FOLLOWLOCATION => false,   // a redirect could aim the key at a different host
         CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $key, 'Content-Type: application/json', 'Accept: application/json'],
-        CURLOPT_POSTFIELDS => json_encode(fourgeFleetSnapshot()),
+        // 'action' rides in the body, not a query string appended to the
+        // operator-entered URL — avoids double-'?' if that URL ever has its
+        // own query string, and needs no change on the receiving dashboard,
+        // which already falls back to $body['action'] when $_GET has none.
+        CURLOPT_POSTFIELDS => json_encode(['action' => 'register'] + fourgeFleetSnapshot()),
     ]);
     $res = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
