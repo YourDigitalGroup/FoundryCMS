@@ -81,6 +81,7 @@ $raw  = file_get_contents('php://input');
 $body = json_decode((string)$raw, true);
 if (!is_array($body)) $body = [];
 $action = (string)($_GET['action'] ?? $body['action'] ?? '');
+unset($body['action']);   // a control field, never part of a stored site record
 
 switch ($action) {
     // Called by a Fourge site's own login self-heal (fourgeFleetReport in
