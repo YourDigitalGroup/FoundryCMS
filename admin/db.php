@@ -330,6 +330,13 @@ function fourgeSecretPolicy() {
         // data/site.json (publicly readable) or in the admin's page source.
         'tlp_url' => 3,
         'tlp_key' => 3,
+        // Fleet Dashboard (44 Interactive's own cross-site status board) — Super
+        // Admin and above. Same shape as tlp_url/tlp_key: the address is not a
+        // secret and IS handed back to the browser so it can be seen and edited;
+        // the report key authenticates this site to the dashboard and is
+        // status-only, never returned once saved.
+        'fleet_url' => 3,
+        'fleet_key' => 3,
     ];
 }
 

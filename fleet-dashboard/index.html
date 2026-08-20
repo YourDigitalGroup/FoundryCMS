@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>Fleet Dashboard</title>
+<style>
+:root{--ember:#DB3516;--bg:#f7f5f0;--surface:#fff;--surface-2:#f0eee8;--border:#e4e0d6;--text:#1a1a1a;--muted:#6b6558;--green:#1E8A5B;--amber:#b45309;--red:#c81e1e}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 60px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+.top h1{font-size:22px;font-weight:800;letter-spacing:-.02em;margin:0}
+.top .sub{font-size:13px;color:var(--muted);margin-top:2px}
+.actions{display:flex;gap:8px;align-items:center}
+button{font-family:inherit;font-size:13px;font-weight:600;border-radius:8px;padding:9px 14px;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text)}
+button:hover{border-color:var(--ember)}
+button.primary{background:var(--ember);border-color:var(--ember);color:#fff}
+button.primary:hover{opacity:.92}
+button.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+button.danger{color:var(--red)}
+button:disabled{opacity:.5;cursor:default}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px}
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-card{width:100%;max-width:360px}
+.login-card h1{font-size:20px;font-weight:800;margin:0 0 4px}
+.login-card p{font-size:13px;color:var(--muted);margin:0 0 20px}
+.fg{margin-bottom:14px}
+.fg label{display:block;font-size:12px;font-weight:600;margin-bottom:6px}
+.fg input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;background:var(--surface-2);color:var(--text)}
+.fg input:focus{outline:2px solid var(--ember);outline-offset:1px}
+.err{font-size:12.5px;color:var(--red);margin-top:10px;min-height:16px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding:0 12px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+.site-name{font-weight:700}
+.site-url{font-size:12px;color:var(--muted);text-decoration:none}
+.site-url:hover{color:var(--ember)}
+.ring{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;border:2.5px solid;font-size:13px;font-weight:800}
+.ring.A{border-color:var(--green);color:var(--green)}
+.ring.B{border-color:var(--amber);color:var(--amber)}
+.ring.C{border-color:var(--red);color:var(--red)}
+.ring.none{border-color:var(--border);color:var(--muted);font-size:11px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px}
+.pill.ok{background:rgba(30,138,91,.12);color:var(--green)}
+.pill.warn{background:rgba(180,83,9,.12);color:var(--amber)}
+.pill.bad{background:rgba(200,30,30,.10);color:var(--red)}
+.pill.na{background:var(--surface-2);color:var(--muted)}
+.muted{color:var(--muted)}
+.empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty h2{font-size:16px;margin:0 0 6px;color:var(--text)}
+.tbl-wrap{overflow-x:auto}
+.remove-btn{font-size:11px;padding:5px 9px}
+.count{font-size:12px;color:var(--muted);font-weight:600}
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="login-wrap" style="display:none">
+  <div class="card login-card">
+    <h1>Fleet Dashboard</h1>
+    <p>Sign in to view every Fourge site reporting in.</p>
+    <div class="fg"><label>Password</label><input type="password" id="login-pw" autocomplete="current-password"></div>
+    <button class="primary" style="width:100%" id="login-btn" onclick="doLogin()">Sign In</button>
+    <div class="err" id="login-err"></div>
+  </div>
+</div>
+
+<div id="dash-screen" class="wrap" style="display:none">
+  <div class="top">
+    <div>
+      <h1>Fleet Dashboard</h1>
+      <div class="sub"><span class="count" id="site-count">0 sites</span> reporting</div>
+    </div>
+    <div class="actions">
+      <button onclick="loadSites()">↻ Refresh</button>
+      <button class="ghost" onclick="doLogout()">Sign out</button>
+    </div>
+  </div>
+  <div class="card" style="padding:0">
+    <div class="tbl-wrap">
+      <table id="sites-table" style="display:none">
+        <thead>
+          <tr>
+            <th>Site</th>
+            <th>Engine</th>
+            <th>SEO grade</th>
+            <th>On-page SEO</th>
+            <th>Sitemap</th>
+            <th>TLP pages</th>
+            <th>Post-Launch Check</th>
+            <th>Last reported</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="sites-body"></tbody>
+      </table>
+      <div class="empty" id="empty-state" style="display:none">
+        <h2>No sites have reported yet</h2>
+        <p>Save a Dashboard address and Report key in <strong>Plugins → Fleet Dashboard</strong> on a Fourge site — it reports here automatically the next time someone signs in.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+async function api(action, body){
+  const r = await fetch('api.php?action=' + encodeURIComponent(action), {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+    body: JSON.stringify(body || {})
+  });
+  let d = {};
+  try{ d = await r.json(); }catch(e){}
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
+
+function showLogin(){
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('dash-screen').style.display = 'none';
+}
+function showDashboard(){
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('dash-screen').style.display = 'block';
+}
+
+async function doLogin(){
+  const pw = document.getElementById('login-pw').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-err');
+  err.textContent = '';
+  btn.disabled = true;
+  try{
+    await api('login', {password: pw});
+    document.getElementById('login-pw').value = '';
+    showDashboard();
+    loadSites();
+  }catch(e){ err.textContent = e.message || 'Could not sign in'; }
+  finally{ btn.disabled = false; }
+}
+async function doLogout(){
+  try{ await api('logout'); }catch(e){}
+  showLogin();
+}
+
+// Relative time — "3 hours ago" reads faster than a raw ISO timestamp when
+// scanning a whole fleet for anything stale.
+function timeAgo(iso){
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '—';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60); if (m < 60) return m + 'm ago';
+  const h = Math.round(m / 60); if (h < 24) return h + 'h ago';
+  const d = Math.round(h / 24); if (d < 30) return d + 'd ago';
+  return new Date(t).toLocaleDateString();
+}
+
+function seoRingHtml(seo){
+  const grade = seo && seo.grade;
+  if (!grade) return '<span class="ring none">–</span>';
+  return '<span class="ring ' + esc(grade) + '">' + esc(grade) + '</span>';
+}
+function seoGenHtml(seo){
+  if (!seo || seo.totalPages == null || seo.totalPages === 0) return '<span class="muted">No pages</span>';
+  return '<span>' + seo.generatedPages + ' / ' + seo.totalPages + '</span> <span class="muted">(' + (seo.pct == null ? '–' : seo.pct + '%') + ')</span>';
+}
+function sitemapHtml(sm){
+  if (!sm || !sm.exists) return '<span class="pill bad">✗ none</span>';
+  return '<span class="pill ok">✓ ' + (sm.urlCount || 0) + ' URLs</span>';
+}
+function plcHtml(plc){
+  if (!plc || !plc.everRun) return '<span class="pill na">Never run</span>';
+  const when = timeAgo(plc.lastRun);
+  if (plc.clean) return '<span class="pill ok">✓ Clean · ' + esc(when) + '</span>';
+  const c = plc.counts || {};
+  const issues = (c.fail || 0) + (c.warn || 0) + (c.manual || 0);
+  return '<span class="pill warn">⚠ ' + issues + ' issue' + (issues === 1 ? '' : 's') + ' · ' + esc(when) + '</span>';
+}
+
+function rowHtml(site){
+  const name = site.name || '(no name set)';
+  const url = site.url || '';
+  return '<tr>'
+    + '<td><div class="site-name">' + esc(name) + '</div>' + (url ? '<a class="site-url" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url.replace(/^https?:\/\//,'')) + '</a>' : '') + '</td>'
+    + '<td class="muted">' + esc(site.engineVersion || '–') + '</td>'
+    + '<td>' + seoRingHtml(site.seo) + '</td>'
+    + '<td>' + seoGenHtml(site.seo) + '</td>'
+    + '<td>' + sitemapHtml(site.sitemap) + '</td>'
+    + '<td>' + (site.tlpCount || 0) + '</td>'
+    + '<td>' + plcHtml(site.postLaunch) + '</td>'
+    + '<td class="muted">' + esc(timeAgo(site.receivedAt)) + '</td>'
+    + '<td><button class="danger remove-btn" onclick="removeSite(' + JSON.stringify(url) + ')">Remove</button></td>'
+    + '</tr>';
+}
+
+async function loadSites(){
+  try{
+    const d = await api('status');
+    const sites = d.sites || [];
+    document.getElementById('site-count').textContent = sites.length + (sites.length === 1 ? ' site' : ' sites');
+    const table = document.getElementById('sites-table');
+    const empty = document.getElementById('empty-state');
+    if (!sites.length){ table.style.display = 'none'; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    table.style.display = 'table';
+    document.getElementById('sites-body').innerHTML = sites.map(rowHtml).join('');
+  }catch(e){
+    if (/not signed in/i.test(e.message || '')) { showLogin(); return; }
+    document.getElementById('empty-state').style.display = 'block';
+    document.getElementById('empty-state').innerHTML = '<h2>Could not load</h2><p>' + esc(e.message || '') + '</p>';
+    document.getElementById('sites-table').style.display = 'none';
+  }
+}
+async function removeSite(url){
+  if (!confirm('Remove ' + url + ' from the dashboard? It reappears the next time that site reports.')) return;
+  try{ await api('delete_site', {url}); loadSites(); }
+  catch(e){ alert('Could not remove: ' + (e.message || e)); }
+}
+
+document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+(async function(){
+  try{
+    const d = await api('whoami');
+    if (d.authed) { showDashboard(); loadSites(); }
+    else showLogin();
+  }catch(e){ showLogin(); }
+})();
+</script>
+</body>
+</html>
