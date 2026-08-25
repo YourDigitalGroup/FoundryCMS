@@ -597,7 +597,7 @@ function cmsDeleteFile($body) {
 
 // ── MAILGUN FORM ──────────────────────────────────────────────────────────────
 
-function cmsStoreEntry($formId, $fields, $siteUrl) {
+function cmsStoreEntry($formId, $fields, $siteUrl, $recaptcha = null) {
     try {
         $dir = __DIR__ . '/../data';
         if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
@@ -607,13 +607,22 @@ function cmsStoreEntry($formId, $fields, $siteUrl) {
             $raw = file_get_contents($file);
             $entries = json_decode($raw, true) ?: [];
         }
-        array_unshift($entries, [
+        $entry = [
             'id'     => uniqid('ent_'),
             'formId' => $formId,
             'date'   => date('Y-m-d H:i'),
             'data'   => $fields,
             'source' => $siteUrl,
-        ]);
+        ];
+        // Only ever 'passed' or 'allowed_unverified' here — cmsSendForm rejects
+        // a 'blocked' submission before this is ever called, so a stored entry
+        // never carries that verdict. Omitted entirely (not even a null) when
+        // there was nothing to check, so old entries and "passed" entries stay
+        // visually distinct from a site that simply has reCAPTCHA off.
+        if (is_array($recaptcha) && !empty($recaptcha['outcome'])) {
+            $entry['recaptcha'] = ['outcome' => $recaptcha['outcome'], 'score' => $recaptcha['score'] ?? null, 'reason' => $recaptcha['reason'] ?? null];
+        }
+        array_unshift($entries, $entry);
         // Cap at 1000 entries
         if (count($entries) > 1000) { $entries = array_slice($entries, 0, 1000); }
         file_put_contents($file, json_encode($entries, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -644,18 +653,35 @@ function cmsRecaptchaThreshold() {
     } catch (Exception $e) { return 0.5; }
 }
 
-// Records the outcome of the most recent reCAPTCHA check to data/recaptcha-debug.json
-// (no secrets, no PII — just the verdict) so the CMS can show the exact reason in
-// Plugins → reCAPTCHA without the admin needing server-log access.
+// Appends each reCAPTCHA verdict to data/recaptcha-debug.json as a bounded,
+// OLDEST-FIRST log (no secrets, no PII — just the verdict) capped at 1000,
+// same cap cmsStoreEntry already uses for entries.json. Oldest-first (not
+// unshift) is deliberate: Post-Launch Check's reCAPTCHA section already reads
+// this as entries.slice(-10) to mean "the 10 most recent", so recent entries
+// belong at the END of the array. Before this, the file held only a single
+// overwritten record — that dormant .slice(-10) logic never actually saw more
+// than one entry. A pre-upgrade file may still hold that old flat-object
+// shape; it's one throwaway diagnostic record, not worth migrating, so it's
+// simply superseded (not appended to) on the first write under this code.
 function cmsRecaptchaLog($rec) {
     try {
         $dir = __DIR__ . '/../data';
-        if (is_dir($dir) && is_writable($dir)) @file_put_contents($dir . '/recaptcha-debug.json', json_encode($rec));
+        if (!is_dir($dir) || !is_writable($dir)) return;
+        $file = $dir . '/recaptcha-debug.json';
+        $log = [];
+        if (is_file($file)) {
+            $existing = json_decode((string)@file_get_contents($file), true);
+            if (is_array($existing) && ($existing === [] || array_keys($existing) === range(0, count($existing) - 1))) $log = $existing;
+        }
+        $log[] = $rec;
+        if (count($log) > 1000) $log = array_slice($log, -1000);
+        @file_put_contents($file, json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     } catch (Throwable $e) {}
 }
 
-// Verify a submission's reCAPTCHA token and decide whether to BLOCK it. Returns one
-// of three outcomes (all recorded to the debug file so the CMS can show them):
+// Verify a submission's reCAPTCHA token and decide whether to BLOCK it. Returns
+// the full verdict record (score, reason, hostname, etc.) — also appended to the
+// debug log so the CMS can show it — whose 'outcome' key is one of three values:
 //   'passed'             — verified OK (v3 score >= threshold, or v2 success).
 //   'blocked'            — verified AND scored below the threshold: a real bot.
 //   'allowed_unverified' — verification could NOT run (no token, wrong keys, Google
@@ -674,7 +700,7 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
         $rec['outcome'] = $outcome; $rec['reason'] = $reason; $rec['ok'] = ($outcome === 'passed');
         error_log('Fourge reCAPTCHA: ' . strtoupper($outcome) . ' — ' . $reason);
         cmsRecaptchaLog($rec);
-        return $outcome;
+        return $rec;   // the full verdict (incl. score) — cmsSendForm attaches it to the stored entry
     };
     $letThrough = ' The submission was let through so a real lead is not lost — but reCAPTCHA is NOT protecting this form until this is fixed.';
     if ($token === '' || $token === null) {
@@ -727,8 +753,22 @@ function fourgeApiRecaptchaStatus($me, $body) {
         $cfg['hasSecret']  = !empty($rc['secret']);
         $cfg['hasSiteKey'] = !empty($rc['siteKey']);
     } catch (Throwable $e) {}
+    // data/recaptcha-debug.json is now a bounded, oldest-first log (see
+    // cmsRecaptchaLog) — 'last' stays the single most recent record, flat,
+    // for this panel's own direct field reads (last.score, last.reason, …);
+    // the full log rides along as last.entries for anything that wants
+    // recent history, e.g. Post-Launch Check's "how many of the last 10 were
+    // blocked". A file still in the old pre-upgrade single-record shape (not
+    // a list) is treated as no history yet rather than guessed at — it's
+    // superseded the next time a form is submitted.
+    $log = [];
+    try {
+        $j = @file_get_contents(__DIR__ . '/../data/recaptcha-debug.json');
+        $d = json_decode((string)$j, true);
+        if (is_array($d) && ($d === [] || array_keys($d) === range(0, count($d) - 1))) $log = $d;
+    } catch (Throwable $e) {}
     $last = null;
-    try { $j = @file_get_contents(__DIR__ . '/../data/recaptcha-debug.json'); if ($j) $last = json_decode($j, true); } catch (Throwable $e) {}
+    if ($log) { $last = $log[count($log) - 1]; $last['entries'] = $log; }
     echo json_encode(['ok' => true, 'config' => $cfg, 'last' => $last]);
 }
 
@@ -1356,15 +1396,19 @@ function cmsSendForm($body) {
     // (no token / wrong keys / Google unreachable) returns 'allowed_unverified' and
     // the lead is let through, so a broken setup never silently loses real leads.
     $rcSecret = cmsRecaptchaSecret();
+    $rcVerdict = null;
     if ($rcSecret) {
-        if (cmsVerifyRecaptcha($rcSecret, $rcToken, cmsRecaptchaThreshold()) === 'blocked') {
+        $rcVerdict = cmsVerifyRecaptcha($rcSecret, $rcToken, cmsRecaptchaThreshold());
+        if (($rcVerdict['outcome'] ?? '') === 'blocked') {
             http_response_code(400);
             echo json_encode(['error' => 'Your submission looked automated and was blocked. Please try again.']); return;
         }
     }
 
-    // Store the submission in data/entries.json (best-effort, non-fatal)
-    cmsStoreEntry($formId, $fields, $siteUrl);
+    // Store the submission in data/entries.json (best-effort, non-fatal). The
+    // verdict rides along so the score is on the entry itself, not just a
+    // separate log an admin has to cross-reference by timestamp.
+    cmsStoreEntry($formId, $fields, $siteUrl, $rcVerdict);
 
     // Push into GoHighLevel as a lead (best-effort; never blocks the form or email)
     $ghl = cmsGhlConfig();

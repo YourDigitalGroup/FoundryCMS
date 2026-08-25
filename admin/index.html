@@ -2632,7 +2632,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.102';
+const CMS_VERSION='1.14.103';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4433,10 +4433,11 @@ async function viewEntries(formId){
   if(!body)return;
   if(!rows.length){ body.innerHTML='<div class="empty"><h3>No submissions yet</h3><p>Entries will appear here when visitors submit this form.</p></div>'; return; }
   const cols=entryColumns(rows);
-  const thead='<tr><th style="white-space:nowrap">Date</th>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
+  const thead='<tr><th style="white-space:nowrap">Date</th><th style="white-space:nowrap">reCAPTCHA</th>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
   const tbody=rows.map(e=>{
     const d=e.data||{};
     return '<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc(e.date||'')+'</td>'
+      +'<td style="white-space:nowrap">'+recaptchaCellHtml(e.recaptcha)+'</td>'
       +cols.map(c=>'<td style="font-size:13px">'+esc(d[c]!=null?String(d[c]):'')+'</td>').join('')
       +'</tr>';
   }).join('');
@@ -4451,6 +4452,18 @@ function backToForms(){ goPanel('p-forms'); }
 function viewOrphanEntries(i){ const id=_orphanEntryIds[i]; if(id!=null) viewEntries(id); }
 function entriesForForm(formId){
   return (_entries||[]).filter(e=>(e.formId||'')===(formId||'')).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+}
+// A stored entry only ever carries a 'passed' or 'allowed_unverified' verdict —
+// cmsSendForm rejects anything reCAPTCHA actively scores as a bot before it's
+// ever stored, so 'blocked' never appears here. Entries saved before this field
+// existed, or submitted on a site with reCAPTCHA off, simply carry none.
+function recaptchaCellHtml(rc){
+  if(!rc||!rc.outcome) return '<span style="color:var(--muted);font-size:12px">—</span>';
+  if(rc.outcome==='allowed_unverified'){
+    return '<span title="'+esc(rc.reason||'')+'" style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;background:rgba(180,83,9,.10);color:var(--amber)">not verified</span>';
+  }
+  const score=rc.score!=null?Number(rc.score).toFixed(1):null;
+  return '<span title="'+esc(rc.reason||'')+'" style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;background:rgba(22,163,74,.1);color:var(--green)">'+(score!=null?score:'✓ passed')+'</span>';
 }
 // Columns = union of field labels across this form's entries, in first-seen order
 // (each entry's own key order follows the form's field order at submit time).
@@ -4473,8 +4486,12 @@ function exportEntriesCsv(){
   const rows=entriesForForm(formId);
   if(!rows.length){ toast('No entries to export','err'); return; }
   const cols=entryColumns(rows);
-  const header=['Date'].concat(cols).map(csvCell).join(',');
-  const lines=rows.map(e=>{ const d=e.data||{}; return [e.date||''].concat(cols.map(c=>d[c])).map(csvCell).join(','); });
+  const header=['Date','reCAPTCHA score','reCAPTCHA status'].concat(cols).map(csvCell).join(',');
+  const lines=rows.map(e=>{
+    const d=e.data||{}, rc=e.recaptcha||{};
+    const rcStatus=rc.outcome==='passed'?'passed':(rc.outcome==='allowed_unverified'?'not verified':'');
+    return [e.date||'',rc.score!=null?rc.score:'',rcStatus].concat(cols.map(c=>d[c])).map(csvCell).join(',');
+  });
   const csv='\uFEFF'+[header].concat(lines).join('\r\n')+'\r\n';   // BOM so Excel opens it as UTF-8
   let slug=((form?decodeHtml(form.title):formId)||'form').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
   if(!slug) slug='form';
