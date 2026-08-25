@@ -2378,17 +2378,7 @@ textarea.fb-input{resize:vertical}
   <div class="modal" style="width:520px;max-width:94vw;max-height:88vh;display:flex;flex-direction:column">
     <div class="mh"><h2 id="ev-modal-title">New Event</h2><button class="ib" onclick="closeM('m-event')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
     <div class="mb" style="overflow-y:auto">
-      <div class="fg"><label>Event Title *</label><input type="text" id="ev-title" placeholder="Fall Fundraiser Gala"></div>
-      <div class="fg"><label>Description</label><textarea id="ev-desc" rows="4" placeholder="What's happening, who it's for…"></textarea></div>
-      <div class="fr">
-        <div class="fg"><label>Start Date *</label><input type="date" id="ev-start" oninput="evUpdateRecurrencePreview()"></div>
-        <div class="fg"><label>End Date</label><input type="date" id="ev-end"><small>Leave blank for a one-day event.</small></div>
-      </div>
-      <div class="fr">
-        <div class="fg"><label>Start Time</label><input type="time" id="ev-start-time" oninput="evUpdateRecurrencePreview()"><small>Leave blank for an all-day event.</small></div>
-        <div class="fg"><label>End Time</label><input type="time" id="ev-end-time"></div>
-      </div>
-      <div class="fg"><label>External URL <span style="font-weight:400;color:var(--muted)">(tickets, RSVP, more info)</span></label><input type="url" id="ev-url" placeholder="https://…"></div>
+      <div id="ev-fields-simple"></div>
       <div class="fg"><label>Featured Image</label><div id="ev-featured-wrap"></div></div>
       <label class="pe-toggle-row"><span>Recurring</span><div class="fd-toggle" id="ev-recurring" onclick="this.classList.toggle('on');evToggleRecurrence()"><div class="fd-toggle-knob"></div></div></label>
       <div class="fg" id="ev-recurrence-wrap" style="display:none">
@@ -2643,7 +2633,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.105';
+const CMS_VERSION='1.14.106';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6497,7 +6487,54 @@ function eventClearFeatured(){
   w.dataset.url=''; w.innerHTML=eventFeaturedHtml('');
 }
 
+// Single source of truth for the event form's plain fields — the admin
+// modal renders from this list (ensureEventFieldsRendered, called by
+// openNewEvent/editEvent) instead of hand-written HTML, so a future field
+// addition or edit here is a one-place change. The public create-events
+// form (once built) reads this exact same list, so the two can never drift
+// out of sync the way two independently hand-maintained forms eventually do.
+const EVENT_FIELDS = [
+  {id:'ev-title', type:'text', label:'Event Title', required:true, placeholder:'Fall Fundraiser Gala'},
+  {id:'ev-desc',  type:'textarea', label:'Description', rows:4, placeholder:"What's happening, who it's for…"},
+  {id:'ev-start', type:'date', label:'Start Date', required:true, group:'dates', oninput:'evUpdateRecurrencePreview()'},
+  {id:'ev-end',   type:'date', label:'End Date', group:'dates', hint:'Leave blank for a one-day event.'},
+  {id:'ev-start-time', type:'time', label:'Start Time', group:'times', oninput:'evUpdateRecurrencePreview()', hint:'Leave blank for an all-day event.'},
+  {id:'ev-end-time',   type:'time', label:'End Time', group:'times'},
+  {id:'ev-url',   type:'url', label:'External URL', sub:'(tickets, RSVP, more info)', placeholder:'https://…'},
+];
+function eventFieldInputHtml(f){
+  const oninput=f.oninput?(' oninput="'+f.oninput+'"'):'';
+  const ph=f.placeholder?(' placeholder="'+esc(f.placeholder)+'"'):'';
+  const hint=f.hint?('<small>'+esc(f.hint)+'</small>'):'';
+  const sub=f.sub?(' <span style="font-weight:400;color:var(--muted)">'+esc(f.sub)+'</span>'):'';
+  const label='<label>'+esc(f.label)+(f.required?' *':'')+sub+'</label>';
+  if(f.type==='textarea') return '<div class="fg">'+label+'<textarea id="'+f.id+'" rows="'+(f.rows||3)+'"'+ph+'></textarea></div>';
+  return '<div class="fg">'+label+'<input type="'+f.type+'" id="'+f.id+'"'+ph+oninput+'>'+hint+'</div>';
+}
+// Consecutive fields sharing the same group key render side-by-side in one
+// .fr row (Start/End Date, Start/End Time) — everything else stands alone.
+function eventFieldsHtml(fields){
+  let html='', i=0;
+  while(i<fields.length){
+    const f=fields[i];
+    if(f.group && fields[i+1] && fields[i+1].group===f.group){
+      html+='<div class="fr">'+eventFieldInputHtml(f)+eventFieldInputHtml(fields[i+1])+'</div>';
+      i+=2;
+    }else{
+      html+=eventFieldInputHtml(f);
+      i+=1;
+    }
+  }
+  return html;
+}
+// Renders once per modal open (idempotent — the field STRUCTURE never
+// changes at runtime, only the values openNewEvent/editEvent set afterward).
+function ensureEventFieldsRendered(){
+  const wrap=document.getElementById('ev-fields-simple');
+  if(wrap) wrap.innerHTML=eventFieldsHtml(EVENT_FIELDS);
+}
 function openNewEvent(){
+  ensureEventFieldsRendered();
   _curEditEvent=null;
   document.getElementById('ev-modal-title').textContent='New Event';
   document.getElementById('ev-title').value='';
@@ -6516,6 +6553,7 @@ function openNewEvent(){
 }
 function editEvent(id){
   const ev=_events.find(e=>e.id===id); if(!ev) return;
+  ensureEventFieldsRendered();
   _curEditEvent=id;
   document.getElementById('ev-modal-title').textContent='Edit Event';
   document.getElementById('ev-title').value=decodeHtml(ev.title||'');
