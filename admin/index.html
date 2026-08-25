@@ -2377,6 +2377,10 @@ textarea.fb-input{resize:vertical}
         <div class="fg"><label>Start Date *</label><input type="date" id="ev-start" oninput="evUpdateRecurrencePreview()"></div>
         <div class="fg"><label>End Date</label><input type="date" id="ev-end"><small>Leave blank for a one-day event.</small></div>
       </div>
+      <div class="fr">
+        <div class="fg"><label>Start Time</label><input type="time" id="ev-start-time" oninput="evUpdateRecurrencePreview()"><small>Leave blank for an all-day event.</small></div>
+        <div class="fg"><label>End Time</label><input type="time" id="ev-end-time"></div>
+      </div>
       <div class="fg"><label>External URL <span style="font-weight:400;color:var(--muted)">(tickets, RSVP, more info)</span></label><input type="url" id="ev-url" placeholder="https://…"></div>
       <div class="fg"><label>Featured Image</label><div id="ev-featured-wrap"></div></div>
       <label class="pe-toggle-row"><span>Recurring</span><div class="fd-toggle" id="ev-recurring" onclick="this.classList.toggle('on');evToggleRecurrence()"><div class="fd-toggle-knob"></div></div></label>
@@ -2632,7 +2636,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.103';
+const CMS_VERSION='1.14.104';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6386,10 +6390,26 @@ function eventGroup(ev){
   const end=ev.end||ev.start||'';
   return (end && end<eventTodayKey()) ? 'past' : 'upcoming';
 }
+// "18:30" -> "6:30 PM" (the raw <input type="time"> value is always 24-hour
+// HH:MM, so this is a pure format, never a timezone conversion).
+function ft(t){
+  const m=/^(\d{1,2}):(\d{2})$/.exec(String(t||''));
+  if(!m) return '';
+  let h=parseInt(m[1],10);
+  const ap=h>=12?'PM':'AM';
+  h=h%12; if(h===0) h=12;
+  return h+':'+m[2]+' '+ap;
+}
 function eventDateRange(ev){
   if(!ev.start) return '';
-  if(!ev.end || ev.end===ev.start) return ev.start;
-  return ev.start+' – '+ev.end;
+  const sameDay=!ev.end || ev.end===ev.start;
+  if(sameDay){
+    const t=ev.startTime?' '+(ev.endTime?ft(ev.startTime)+' – '+ft(ev.endTime):ft(ev.startTime)):'';
+    return ev.start+t;
+  }
+  const st=ev.startTime?' '+ft(ev.startTime):'';
+  const et=ev.endTime?' '+ft(ev.endTime):'';
+  return ev.start+st+' – '+ev.end+et;
 }
 // A human label for a recurring event's occurrence pattern, e.g. "Every
 // Thursday" or "Monthly on the 15th" — derived from the pattern PLUS the
@@ -6397,7 +6417,7 @@ function eventDateRange(ev){
 // This is descriptive only: Fourge does not expand it into future calendar
 // entries, matching the "operator resets the date" design Recurring already
 // had before occurrence types existed.
-function eventRecurrenceLabel(rec, start){
+function eventRecurrenceLabel(rec, start, startTime){
   if(!start) return '';
   const d=new Date(start+'T00:00:00');
   if(isNaN(d.getTime())) return '';
@@ -6405,10 +6425,11 @@ function eventRecurrenceLabel(rec, start){
   const monthDay=d.toLocaleDateString('en-US',{month:'long',day:'numeric'});
   const n=d.getDate(), s=['th','st','nd','rd'], v=n%100;
   const ord=n+(s[(v-20)%10]||s[v]||s[0]);
-  if(rec==='biweekly') return 'Every other '+weekday;
-  if(rec==='monthly') return 'Monthly on the '+ord;
-  if(rec==='yearly') return 'Yearly on '+monthDay;
-  return 'Every '+weekday; // weekly, and the default for older records with no recurrence saved
+  const at=startTime?' at '+ft(startTime):'';
+  if(rec==='biweekly') return 'Every other '+weekday+at;
+  if(rec==='monthly') return 'Monthly on the '+ord+at;
+  if(rec==='yearly') return 'Yearly on '+monthDay+at;
+  return 'Every '+weekday+at; // weekly, and the default for older records with no recurrence saved
 }
 function evToggleRecurrence(){
   const on=document.getElementById('ev-recurring')?.classList.contains('on');
@@ -6420,7 +6441,8 @@ function evUpdateRecurrencePreview(){
   const p=document.getElementById('ev-recurrence-preview'); if(!p) return;
   const rec=document.getElementById('ev-recurrence')?.value||'weekly';
   const start=document.getElementById('ev-start')?.value||'';
-  p.textContent=start?eventRecurrenceLabel(rec,start):'Pick a start date to preview — e.g. "Every Thursday"';
+  const startTime=document.getElementById('ev-start-time')?.value||'';
+  p.textContent=start?eventRecurrenceLabel(rec,start,startTime):'Pick a start date to preview — e.g. "Every Thursday"';
 }
 function renderEvents(){
   const body=document.getElementById('events-body');
@@ -6439,7 +6461,7 @@ function renderEvents(){
     return '<table class="dt"><thead><tr><th>Title</th><th>Date</th><th></th></tr></thead><tbody>'
       +list.map(ev=>'<tr style="cursor:pointer" onclick="editEvent(\''+esc(ev.id)+'\')">'
         +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(ev.title||'Untitled'))+'</td>'
-        +'<td style="font-size:12px;color:var(--muted)">'+esc(opts&&opts.recurring?(eventRecurrenceLabel(ev.recurrence||'weekly',ev.start)||eventDateRange(ev)):eventDateRange(ev))+'</td>'
+        +'<td style="font-size:12px;color:var(--muted)">'+esc(opts&&opts.recurring?(eventRecurrenceLabel(ev.recurrence||'weekly',ev.start,ev.startTime)||eventDateRange(ev)):eventDateRange(ev))+'</td>'
         +'<td style="text-align:right;white-space:nowrap">'
           +(opts&&opts.dup?'<button class="btn btn-o btn-xs" onclick="event.stopPropagation();duplicateEvent(\''+esc(ev.id)+'\')" title="Copy this event to reuse for the next date">Duplicate</button> ':'')
           +'<button class="btn btn-o btn-xs" onclick="event.stopPropagation();editEvent(\''+esc(ev.id)+'\')">Edit</button> '
@@ -6475,6 +6497,8 @@ function openNewEvent(){
   document.getElementById('ev-desc').value='';
   document.getElementById('ev-start').value='';
   document.getElementById('ev-end').value='';
+  document.getElementById('ev-start-time').value='';
+  document.getElementById('ev-end-time').value='';
   document.getElementById('ev-url').value='';
   document.getElementById('ev-recurring').classList.remove('on');
   document.getElementById('ev-recurrence').value='weekly';
@@ -6491,6 +6515,8 @@ function editEvent(id){
   document.getElementById('ev-desc').value=decodeHtml(ev.description||'');
   document.getElementById('ev-start').value=ev.start||'';
   document.getElementById('ev-end').value=ev.end||'';
+  document.getElementById('ev-start-time').value=ev.startTime||'';
+  document.getElementById('ev-end-time').value=ev.endTime||'';
   document.getElementById('ev-url').value=ev.url||'';
   document.getElementById('ev-recurring').classList.toggle('on',!!ev.recurring);
   document.getElementById('ev-recurrence').value=ev.recurrence||'weekly';
@@ -6506,11 +6532,15 @@ function duplicateEvent(id){
   document.getElementById('ev-title').value=decodeHtml(src.title||'');
   document.getElementById('ev-desc').value=decodeHtml(src.description||'');
   document.getElementById('ev-url').value=src.url||'';
+  // Time-of-day usually repeats along with the event, unlike the date — the
+  // one thing "Duplicate" exists to make the operator pick fresh.
+  document.getElementById('ev-start-time').value=src.startTime||'';
+  document.getElementById('ev-end-time').value=src.endTime||'';
   document.getElementById('ev-recurring').classList.toggle('on',!!src.recurring);
   document.getElementById('ev-recurrence').value=src.recurrence||'weekly';
   evToggleRecurrence();
   const w=document.getElementById('ev-featured-wrap'); w.dataset.url=src.featured||''; w.innerHTML=eventFeaturedHtml(src.featured||'');
-  toast('Set the new date and save','ok');
+  toast(src.startTime?'Set the new date and save — time carried over':'Set the new date and save','ok');
 }
 async function saveEvent(){
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
@@ -6520,6 +6550,11 @@ async function saveEvent(){
   if(!start){ toast('Event needs a start date','err'); return; }
   const end=get('ev-end')||start;
   if(end<start){ toast('End date is before the start date','err'); return; }
+  const startTime=get('ev-start-time'), endTime=get('ev-end-time');
+  // Only meaningful to compare clock times on the SAME calendar day — a
+  // multi-day event ending earlier in the day than it started (e.g. Fri 6pm
+  // to Sun 2pm) is completely normal.
+  if(end===start && startTime && endTime && endTime<startTime){ toast('End time is before the start time','err'); return; }
   const existing=_curEditEvent!=null?_events.find(e=>e.id===_curEditEvent):null;
   const id=existing?existing.id:uid();
   let slug=slugify(title);
@@ -6529,7 +6564,7 @@ async function saveEvent(){
   const ev={
     id, title, slug,
     description:get('ev-desc'),
-    start, end,
+    start, end, startTime, endTime,
     url:get('ev-url'),
     featured:document.getElementById('ev-featured-wrap')?.dataset.url||'',
     recurring:recurringOn,
@@ -6658,17 +6693,20 @@ function eventsRuntimeAssets(){
     +'function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}\n'
     +'function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}\n'
     +'function frange(a,b){if(!a)return"";if(!b||b===a)return fd(a);return fd(a)+" \\u2013 "+fd(b);}\n'
-    +'function recLabel(rec,start){\n'
+    +'function ft(t){var m=/^(\\d{1,2}):(\\d{2})$/.exec(String(t||"")); if(!m)return""; var h=parseInt(m[1],10); var ap=h>=12?"PM":"AM"; h=h%12; if(h===0)h=12; return h+":"+m[2]+" "+ap;}\n'
+    +'function trange(a,b){if(!a)return"";if(!b)return ft(a);return ft(a)+" \\u2013 "+ft(b);}\n'
+    +'function recLabel(rec,start,startTime){\n'
     +'  if(!start)return"";\n'
     +'  var d=new Date(start+"T00:00:00"); if(isNaN(d.getTime()))return"";\n'
     +'  var wd=d.toLocaleDateString("en-US",{weekday:"long"});\n'
     +'  var md=d.toLocaleDateString("en-US",{month:"long",day:"numeric"});\n'
     +'  var n=d.getDate(), s=["th","st","nd","rd"], v=n%100;\n'
     +'  var ord=n+(s[(v-20)%10]||s[v]||s[0]);\n'
-    +'  if(rec==="biweekly")return"Every other "+wd;\n'
-    +'  if(rec==="monthly")return"Monthly on the "+ord;\n'
-    +'  if(rec==="yearly")return"Yearly on "+md;\n'
-    +'  return"Every "+wd;\n'
+    +'  var at=startTime?" at "+ft(startTime):"";\n'
+    +'  if(rec==="biweekly")return"Every other "+wd+at;\n'
+    +'  if(rec==="monthly")return"Monthly on the "+ord+at;\n'
+    +'  if(rec==="yearly")return"Yearly on "+md+at;\n'
+    +'  return"Every "+wd+at;\n'
     +'}\n'
     +'function pad(n){return n<10?"0"+n:""+n;}\n'
     +'function dstr(y,m,d){return y+"-"+pad(m+1)+"-"+pad(d);}\n'
@@ -6681,7 +6719,7 @@ function eventsRuntimeAssets(){
     +'  root.innerHTML="<article class=\\"fev-single\\">"\n'
     +'    +"<a class=\\"fev-back\\" href=\\"events.html\\">\\u2190 All events</a>"\n'
     +'    +(ev.featured?"<img class=\\"fev-s-img\\" src=\\""+esc(ev.featured)+"\\" alt=\\""+esc(dec(ev.title))+"\\">":"")\n'
-    +'    +"<div class=\\"fev-s-date\\">"+esc(frange(ev.start,ev.end))+(ev.recurring?"<span class=\\"fev-badge\\">"+esc(recLabel(ev.recurrence||"weekly",ev.start))+"</span>":"")+"</div>"\n'
+    +'    +"<div class=\\"fev-s-date\\">"+esc(frange(ev.start,ev.end)+(trange(ev.startTime,ev.endTime)?" \\u00b7 "+trange(ev.startTime,ev.endTime):""))+(ev.recurring?"<span class=\\"fev-badge\\">"+esc(recLabel(ev.recurrence||"weekly",ev.start,ev.startTime))+"</span>":"")+"</div>"\n'
     +'    +"<h1>"+esc(dec(ev.title))+"</h1>"\n'
     +'    +(desc?"<div class=\\"fev-s-desc\\">"+desc+"</div>":"")\n'
     +'    +(ev.url?"<a class=\\"fev-cta\\" href=\\""+esc(ev.url)+"\\" target=\\"_blank\\" rel=\\"noopener\\">More Info</a>":"")\n'
@@ -6690,8 +6728,8 @@ function eventsRuntimeAssets(){
     // eventStatus/eventAttendanceMode: Fourge never asserts a fact it has no
     // real data for, and this feature has no venue field to draw one from.
     +'  var ld={"@context":"https://schema.org","@type":"Event",name:dec(ev.title)};\n'
-    +'  if(ev.start)ld.startDate=ev.start;\n'
-    +'  if(ev.end)ld.endDate=ev.end;\n'
+    +'  if(ev.start)ld.startDate=ev.start+(ev.startTime?"T"+ev.startTime:"");\n'
+    +'  if(ev.end)ld.endDate=ev.end+(ev.endTime?"T"+ev.endTime:"");\n'
     +'  if(ev.description)ld.description=dec(ev.description);\n'
     +'  if(ev.featured)ld.image=ev.featured;\n'
     +'  if(ev.url)ld.url=ev.url;\n'
