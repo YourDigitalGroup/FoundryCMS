@@ -337,6 +337,15 @@ function fourgeSecretPolicy() {
         // status-only, never returned once saved.
         'fleet_url' => 3,
         'fleet_key' => 3,
+        // Custom AI endpoint (self-hosted / OpenAI-compatible) — Architect only,
+        // same tier as claude_key: this is an alternative to it, tried first
+        // when all three of these are set, so it carries the same server-side
+        // AI-proxy risk. The endpoint URL and model name are not secrets and
+        // ARE handed back to the browser; the key is status-only and never
+        // returned once saved, same split as every other url/key pair above.
+        'ai_endpoint_url'   => 4,
+        'ai_endpoint_key'   => 4,
+        'ai_endpoint_model' => 4,
     ];
 }
 

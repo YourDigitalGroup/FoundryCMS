@@ -1871,6 +1871,13 @@ textarea.fb-input{resize:vertical}
           <div class="fg"><label>API Key</label><input type="password" id="s-claude" placeholder="sk-ant-…"></div>
           <button class="fd-btn-primary" onclick="saveClaudeKey()">Save</button>
         </div>
+        <div class="si-sec architect-only"><h2>Custom AI Endpoint</h2><div class="desc">Optional — point Markup generation at a self-hosted, OpenAI-compatible endpoint (Open WebUI, Ollama, LM Studio, vLLM…) instead of the key above. Used only when all three fields below are set; clear any one of them (blank + Save) to fall back to the Markup API Key automatically. Visible to the Architect account only.</div>
+          <div class="fg"><label>Endpoint URL</label><input type="url" id="s-ai-endpoint-url" placeholder="https://your-host.example.com/api/chat/completions"></div>
+          <div class="fg"><label>API Key</label><input type="password" id="s-ai-endpoint-key" placeholder="sk-…"></div>
+          <div class="fg"><label>Model</label><input type="text" id="s-ai-endpoint-model" placeholder="e.g. gpt-4o, llama3.1, or a router tier name"></div>
+          <div style="display:flex;gap:8px"><button class="fd-btn-primary" onclick="saveAiEndpoint()">Save</button><button class="fd-btn-secondary" onclick="testAiEndpoint()">Test Connection</button></div>
+          <div id="s-ai-endpoint-test-result" style="margin-top:10px;font-size:12px"></div>
+        </div>
         <!-- Same diagnostic as Plugins → Email delivery (shared sendTestEmail handler
              + send_test_email action) — surfaced here too so it's findable from
              Settings. admin-only to match the server-side gate (level 2+). -->
@@ -2636,7 +2643,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.104';
+const CMS_VERSION='1.14.105';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -11619,6 +11626,9 @@ function loadSettings(){
   // configured server-side in config.secret.php — neither has UI fields to fill.
   // The Markup (Claude) key still lives in the encrypted DB, surfaced via get_secrets.
   const clEl=document.getElementById('s-claude');if(clEl){clEl.value='';clEl.placeholder=(_secretStatus&&_secretStatus.claude_key)?'Key saved on server':'sk-ant-…';}
+  const aiUrlEl=document.getElementById('s-ai-endpoint-url');if(aiUrlEl)aiUrlEl.value=(_secrets&&_secrets.ai_endpoint_url)||'';
+  const aiModelEl=document.getElementById('s-ai-endpoint-model');if(aiModelEl)aiModelEl.value=(_secrets&&_secrets.ai_endpoint_model)||'';
+  const aiKeyEl=document.getElementById('s-ai-endpoint-key');if(aiKeyEl){aiKeyEl.value='';aiKeyEl.placeholder=(_secretStatus&&_secretStatus.ai_endpoint_key)?'Key saved on server':'sk-…';}
   const whoami=document.getElementById('s-pw-whoami');if(whoami)whoami.textContent=getSessionUser().username||'';
   // reCAPTCHA config now lives in the Plugins module (its add-on card), not here.
   const vd=document.getElementById('s-ver-display');if(vd)vd.value='v'+CMS_VERSION;
@@ -11669,6 +11679,37 @@ async function saveClaudeKey(){
     document.getElementById('s-claude').placeholder='Saved ✓';
     toast('Markup key saved (encrypted, server-side) ✓','ok');
   }catch(e){toast('Save failed: '+e.message,'err');}
+}
+// URL and model are always sent (so blanking either one is enough to turn
+// the custom endpoint off — fourgeAiEndpointCfg() falls back to the Markup
+// key the moment any of the three is missing); the key field is only sent
+// when actually retyped, so re-saving the URL alone never silently wipes it —
+// same convention fleetSave() already uses for fleet_url/fleet_key.
+async function saveAiEndpoint(){
+  const url=document.getElementById('s-ai-endpoint-url')?.value.trim()||'';
+  const key=document.getElementById('s-ai-endpoint-key')?.value.trim()||'';
+  const model=document.getElementById('s-ai-endpoint-model')?.value.trim()||'';
+  if(url && !/^https:\/\//i.test(url)){ toast('The endpoint URL must start with https://','err'); return; }
+  try{
+    await apiCall('set_secret',{name:'ai_endpoint_url',value:url});
+    await apiCall('set_secret',{name:'ai_endpoint_model',value:model});
+    if(key) await apiCall('set_secret',{name:'ai_endpoint_key',value:key});
+    _secrets.ai_endpoint_url=url; _secrets.ai_endpoint_model=model;
+    if(key) _secretStatus.ai_endpoint_key=true;
+    const keyEl=document.getElementById('s-ai-endpoint-key');
+    if(keyEl){ keyEl.value=''; keyEl.placeholder=(_secretStatus&&_secretStatus.ai_endpoint_key)?'Key saved on server':'sk-…'; }
+    toast('Custom AI endpoint saved ✓','ok');
+  }catch(e){toast('Save failed: '+e.message,'err');}
+}
+async function testAiEndpoint(){
+  const box=document.getElementById('s-ai-endpoint-test-result'); if(!box) return;
+  box.style.color='var(--muted)'; box.textContent='Testing…';
+  try{
+    const d=await apiCall('ai_endpoint_test');
+    box.style.color='var(--green)'; box.textContent='✓ Connected — replied: "'+(d.reply||'')+'"';
+  }catch(e){
+    box.style.color='var(--red)'; box.textContent='✗ '+(e.message||'Could not reach the endpoint');
+  }
 }
 // Change the signed-in user's own password via the server (verifies the
 // current password and rehashes with Argon2id; clears any forced-change flag).

@@ -183,7 +183,7 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //    Bearer-token path can reach them; both handlers authenticate internally
 //    (session OR constant-time Bearer match) and refuse everything else.
 $PUBLIC_ACTIONS  = ['login', 'send_form', 'seo_package', 'seo_pkg_tick'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status','seo_pkg_admin'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -243,6 +243,7 @@ try {
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
+        case 'ai_endpoint_test': ob_end_clean(); fourgeApiAiEndpointTest($authUser, $body); break;
         case 'secret_exposure':    ob_end_clean(); fourgeApiSecretExposure($authUser, $body); break;
         case 'ai_autofix':         ob_end_clean(); fourgeApiAiAutofix($authUser, $body); break;
         case 'reviews_fetch':      ob_end_clean(); fourgeApiReviewsFetch($authUser, $body); break;
@@ -1999,7 +2000,12 @@ function fourgeApiChangePassword($me, $body) {
 // Secrets whose cleartext the browser legitimately needs (the Architect's
 // browser publishes to GitHub directly; the Mailgun routing fields are shown so
 // they can be edited). The Mailgun API KEY stays status-only — never sent back.
-function fourgeClientFullSecrets() { return ['github_pat', 'repo_override', 'mg_domain', 'mg_from', 'mg_notify_to', 'tlp_url']; }
+// Names in this list have their VALUE (not just saved/not-saved status)
+// returned to the browser — fleet_url was documented in fourgeSecretPolicy's
+// own comment as belonging here ("handed back to the browser so it can be
+// seen and edited") but was never actually added, so the Dashboard address
+// field silently rendered blank on every reload despite saving correctly.
+function fourgeClientFullSecrets() { return ['github_pat', 'repo_override', 'mg_domain', 'mg_from', 'mg_notify_to', 'tlp_url', 'fleet_url', 'ai_endpoint_url', 'ai_endpoint_model']; }
 
 function fourgeApiGetSecrets($me) {
     $pdo = fourgeDb();
@@ -3074,9 +3080,29 @@ function fourgeAiKey() {
     if ($key === '' || strpos($key, 'REPLACE') !== false) return '';
     return $key;
 }
-// One server-side Claude call that RETURNS text (claudeProxy echoes to the
+// A custom endpoint is used only when ALL THREE fields are set — a half-filled
+// one (e.g. a key pasted before the model name) is treated as not configured
+// at all rather than guessing a default, so a typo fails obviously (missing
+// key error) instead of silently misrouting a real request.
+function fourgeAiEndpointCfg() {
+    $pdo = fourgeDb();
+    $url = ''; $key = ''; $model = '';
+    try { $url   = trim((string)fourgeGetSecret($pdo, 'ai_endpoint_url'));   } catch (Throwable $e) {}
+    try { $key   = trim((string)fourgeGetSecret($pdo, 'ai_endpoint_key'));   } catch (Throwable $e) {}
+    try { $model = trim((string)fourgeGetSecret($pdo, 'ai_endpoint_model')); } catch (Throwable $e) {}
+    if ($url === '' || $key === '' || $model === '') return null;
+    if (!fourgeTlpUrlOk($url)) return null;   // same https/public-host guard every other operator-supplied URL gets
+    return ['url' => $url, 'key' => $key, 'model' => $model];
+}
+// One server-side LLM call that RETURNS text (claudeProxy echoes to the
 // client, which is no use to a batch job). Returns a string, or ['error'=>…].
+// A configured custom endpoint (Settings → Custom AI Endpoint) is preferred
+// over Anthropic — same "more specific wins" precedence cmsSendForm already
+// uses for SMTP over Mailgun — so an operator who has set one up never pays
+// for both providers on the same generation.
 function fourgeAiText($system, $user, $max = 400) {
+    $custom = fourgeAiEndpointCfg();
+    if ($custom) return fourgeAiTextCustomEndpoint($custom, $system, $user, $max);
     $key = fourgeAiKey();
     if ($key === '') return ['error' => 'No Anthropic API key is configured for this site.'];
     $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -3097,6 +3123,44 @@ function fourgeAiText($system, $user, $max = 400) {
     }
     $text = '';
     foreach ((array)($d['content'] ?? []) as $blk) if (($blk['type'] ?? '') === 'text') $text .= (string)($blk['text'] ?? '');
+    return trim($text);
+}
+// "Test Connection" — exercises the CUSTOM endpoint specifically (not
+// fourgeAiText(), which would silently fall back to Anthropic if the
+// endpoint is half-configured, defeating the point of a connectivity test).
+function fourgeApiAiEndpointTest($me, $body) {
+    if (fourgeLevel($me) < 4) { http_response_code(403); echo json_encode(['error' => 'Architect access required']); return; }
+    $custom = fourgeAiEndpointCfg();
+    if (!$custom) { http_response_code(400); echo json_encode(['error' => 'Set the endpoint URL, key, and model first, then save.']); return; }
+    $reply = fourgeAiTextCustomEndpoint($custom, 'You are a connectivity test. Reply with exactly one word.', 'Reply with the single word: ok', 10);
+    if (is_array($reply)) { http_response_code(502); echo json_encode(['error' => $reply['error'] ?? 'Unknown error']); return; }
+    echo json_encode(['ok' => true, 'reply' => $reply]);
+}
+// A generic OpenAI-compatible /chat/completions call — Open WebUI, Ollama, LM
+// Studio and vLLM all speak this same request/response shape, unlike
+// Anthropic's: the system prompt rides inside messages[] rather than a
+// separate top-level field, and the reply is choices[0].message.content
+// rather than a content-blocks array. A longer timeout than the Anthropic
+// call: a self-hosted single-worker instance can queue behind other traffic.
+function fourgeAiTextCustomEndpoint($cfg, $system, $user, $max) {
+    $ch = curl_init($cfg['url']);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 60,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Authorization: Bearer ' . $cfg['key']],
+        CURLOPT_POSTFIELDS => json_encode(['model' => $cfg['model'], 'max_tokens' => (int)$max,
+            'messages' => [['role' => 'system', 'content' => (string)$system], ['role' => 'user', 'content' => (string)$user]]]),
+    ]);
+    $res = (string)curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($err) return ['error' => 'Could not reach the custom AI endpoint: ' . $err];
+    $d = json_decode($res, true);
+    if ($code !== 200) {
+        return ['error' => 'AI endpoint ' . $code . ': ' . mb_substr((string)($d['error']['message'] ?? $res), 0, 200)];
+    }
+    $text = (string)($d['choices'][0]['message']['content'] ?? '');
     return trim($text);
 }
 // Models wrap JSON in ``` fences however you ask them not to.
