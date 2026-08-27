@@ -2633,7 +2633,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.106';
+const CMS_VERSION='1.14.107';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3121,8 +3121,14 @@ function applyRole(){
   // admin-only elements (old class-based)
   document.querySelectorAll('.admin-only').forEach(el=>el.style.display=rank>=2?'':'none');
   document.querySelectorAll('.superadmin-only').forEach(el=>el.style.display=rank>=3?'':'none');
-  // architect-only elements (GitHub + secret keys) — only the single Architect account
-  document.querySelectorAll('.architect-only').forEach(el=>el.style.display=isArchitect(user)?'':'none');
+  // architect-only elements (GitHub + secret keys) — only the single Architect account.
+  // Explicit 'block', not '' — .architect-only{display:none} is a CSS CLASS rule
+  // (see the stylesheet), and clearing an inline style only removes an inline
+  // override; it falls back to the cascade, where that class rule still applies.
+  // '' therefore never actually revealed anything: every architect-only section
+  // (GitHub Integration, Repository Override, Markup API Key, Custom AI Endpoint,
+  // Go Live) has been permanently invisible, on every site, regardless of account.
+  document.querySelectorAll('.architect-only').forEach(el=>el.style.display=isArchitect(user)?'block':'none');
 
   // Nav visibility map
   const navShow = {
