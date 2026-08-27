@@ -1668,6 +1668,14 @@ textarea.fb-input{resize:vertical}
               <span id="si-headings-status" style="font-size:12px;color:var(--muted)"></span>
             </div>
           </div>
+          <div class="si-sec"><h2>Custom CSS</h2><div class="desc">Advanced: your own CSS rules, applied to every page on the site. Anything you write here wins over the fonts and heading styles above, so use it for one-off tweaks the rest of Design doesn't cover. Leave it blank if you don't need it.</div>
+            <textarea id="si-customcss" rows="10" spellcheck="false" style="font-family:var(--font-mono);font-size:12px;width:100%" placeholder="/* Optional CSS for the whole site, e.g. */&#10;.btn{border-radius:999px}"></textarea>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+              <button type="button" class="fd-btn-primary" onclick="customCssApplyAll()"><i class="fa-solid fa-check-double"></i> Apply CSS to all pages</button>
+              <span id="si-customcss-status" style="font-size:12px;color:var(--muted)"></span>
+            </div>
+            <div class="desc" style="margin-top:8px">Save &amp; Publish stores it, and any page you edit from then on picks it up on save. Use this button to sweep the pages nobody has opened since.</div>
+          </div>
           <div class="si-sec"><h2>Favicon</h2><div class="desc">The small icon shown in browser tabs, bookmarks, and search results. Upload a square image (512×512 PNG recommended; SVG, ICO, JPG, and WebP also work). It's saved to the site root as <code>/favicon</code>, the tab / Android / iPhone sizes are generated automatically, and it's applied to every page instantly — new pages pick it up when saved. Replacing it publishes under a fresh address, so browsers can't keep showing the old icon.</div>
             <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
               <div id="si-favicon-prev"></div>
@@ -2633,7 +2641,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.107';
+const CMS_VERSION='1.14.108';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4171,13 +4179,15 @@ function veFinalizePageHtml(html, pg){
   try{ html=ensureMapRuntime(html); }catch(e){}
   // …and the events calendar / single-event block's runtime.
   try{ html=ensureEventsRuntime(html); }catch(e){}
-  // Every saved page carries the CURRENT site fonts and heading styles, so a
-  // page created after the design was set is not left behind. Guarded on the
-  // site config actually being loaded — otherwise a save could strip the block
-  // rather than refresh it.
+  // Every saved page carries the CURRENT site fonts, heading styles and
+  // site-wide custom CSS, so a page created after the design was set is not
+  // left behind. Guarded on the site config actually being loaded — otherwise
+  // a save could strip the block rather than refresh it.
   try{
-    if(_site && Object.keys(_site).length)
+    if(_site && Object.keys(_site).length){
       html=designInjectIntoHtml(html,_site.typography||null,_site.headingStyles||null);
+      html=siteCssInjectIntoHtml(html,_site.customCss||'');
+    }
   }catch(e){}
   // Every saved page carries the CURRENT favicon tags — pages created after the
   // favicon was set used to miss out until someone re-ran "apply to all".
@@ -9700,6 +9710,7 @@ async function loadSiteInfo(){
   faviconRender();
   siRenderTypography(_site.typography||{});    // site-wide fonts
   siRenderHeadings(_site.headingStyles||{});   // site-wide heading controls
+  const ccEl=document.getElementById('si-customcss'); if(ccEl) ccEl.value=_site.customCss||'';
   designAutofill();   // fill brand colors + any empty contact/social from the site's HTML
 }
 // Pull what we can from the live site HTML: brand-color CSS variables, and any
@@ -10676,6 +10687,8 @@ async function saveSiteInfo(){
   if(document.getElementById('sh-h1-size')){ const hs=siReadHeadings(); if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles; }
   // Site-wide fonts — same guard: only when the Design tab has been rendered.
   if(document.getElementById('ty-body-font')){ const ty=siReadTypography(); if(ty) _site.typography=ty; else delete _site.typography; }
+  // Site-wide custom CSS — same guard: only when the Design tab has been rendered.
+  if(document.getElementById('si-customcss')){ const css=document.getElementById('si-customcss').value; if(css.trim()) _site.customCss=css; else delete _site.customCss; }
 
   const json=JSON.stringify(_site,null,2);
   let savedLocal=false, savedGH=false;
@@ -12840,6 +12853,25 @@ function headingInjectIntoHtml(html,hs){
   return designInjectIntoHtml(html,(_site&&_site.typography)||null,hs);
 }
 
+// ── SITE-WIDE CUSTOM CSS (Design tab) ────────────────────────────────────────
+// Deliberately its own strip/inject pair rather than a third argument threaded
+// through designAssets/designInjectIntoHtml above: those are exercised by three
+// existing call sites (page save, "apply fonts", "apply headings") and this way
+// none of them need to change, or need to remember to pass along a value they
+// don't own. Called right after the typography/headings stamp in
+// veFinalizePageHtml, so this block lands last in <head> and its rules win
+// ties against them — the point of a manual override box.
+function siteCssStripManaged(html){
+  return String(html||'').replace(/<style id="fourge-site-css"[\s\S]*?<\/style>\s*/gi,'');
+}
+function siteCssInjectIntoHtml(html,css){
+  html=siteCssStripManaged(html);
+  css=String(css||'').trim();
+  if(!css) return html;
+  const block='<style id="fourge-site-css" data-fourge-site-css>'+css+'</style>';
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>block+'\n'+m) : (block+'\n'+html);
+}
+
 // ── the Typography controls ─────────────────────────────────────────────────
 function tyFontSelect(id,val,label){
   const inCur=GOOGLE_FONTS.indexOf(val||'')>=0;
@@ -13068,6 +13100,36 @@ async function headingsApplyAll(){
   }
   if(st) st.textContent='Applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'');
   toast(done?('Heading styles applied to '+done+' page(s)'):'Nothing updated', done?'ok':'err');
+}
+// Retroactive pass for the Custom CSS box — same shape as typographyApplyAll,
+// but it only owns _site.customCss, so it doesn't need to touch typography or
+// headings on its way through (siteCssInjectIntoHtml strips/reinserts just its
+// own block, leaving whatever those two already stamped untouched).
+async function customCssApplyAll(){
+  if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
+  const css=document.getElementById('si-customcss')?.value||'';
+  if(css.trim()) _site.customCss=css; else delete _site.customCss;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+  catch(e){ toast('Could not save the site settings: '+e.message,'err'); return; }
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList();
+  if(!pages.length){ toast('No pages found','err'); return; }
+  const st=document.getElementById('si-customcss-status');
+  let done=0,skipped=0,failed=0;
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    if(st) st.textContent='Applying to '+fp+'…';
+    try{
+      const d=await apiCall('read_file',{path:fp});
+      const html=d.content||''; if(!html){ failed++; continue; }
+      const out=siteCssInjectIntoHtml(html,_site.customCss||'');
+      if(out===html){ skipped++; continue; }
+      await apiCall('write_file',{path:fp,content:out});
+      done++;
+    }catch(e){ failed++; }
+  }
+  if(st) st.textContent=done+' page(s) updated'+(skipped?(', '+skipped+' already current'):'')+(failed?(', '+failed+' failed'):'')+'.';
+  toast(done?('Custom CSS applied to '+done+' page(s) ✓'):'Every page was already up to date','ok');
 }
 async function savePagesJson(){
   const json=JSON.stringify(_pages,null,2); let ok=false;
