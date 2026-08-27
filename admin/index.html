@@ -2641,7 +2641,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.108';
+const CMS_VERSION='1.14.109';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -11217,6 +11217,21 @@ async function gaViewReport(month){
 
 // ── PLUGINS ──────────────────────────────────────────────────────
 async function initPlugins(){
+  // Server-first load, same three-tier shape as initPosts/initEvents — this used
+  // to read straight from GitHub only, which after the write-side fix above would
+  // otherwise show stale GitHub content while the real current state lives in the
+  // local file the server-first write now prefers.
+  try{
+    const{url,token}=getApiCfg();
+    if(url&&token){
+      const d=await apiCall('read_file',{path:F_INJECT});
+      if(d.content){_inject=JSON.parse(d.content);renderPlugins();return;}
+    }
+  }catch{}
+  try{
+    const r=await fetch('../data/injections.json?t='+Date.now());
+    if(r.ok){_inject=await r.json();renderPlugins();return;}
+  }catch{}
   try{const{content}=await ghRead(F_INJECT);_inject=JSON.parse(content);}catch{_inject=[];}
   renderPlugins();
 }
@@ -11671,8 +11686,19 @@ async function togglePlugin(name,on,idx){
   const preset=PLUG_PRESETS[idx];const existing=_inject.findIndex(p=>p.name===name);
   if(on&&existing===-1){_inject.push({name,loc:preset.loc,html:preset.tpl(),active:true});}
   else if(!on&&existing!==-1){_inject[existing].active=false;}
-  try{const sha=await ghSHA(F_INJECT);await ghWrite(F_INJECT,JSON.stringify(_inject,null,2),sha,'CMS: plugins update');toast(name+(on?' enabled':' disabled'),'ok');}
-  catch(e){toast('Save failed: '+e.message,'err');}
+  // Server API first, exactly like saveFormsJson/savePostsJson/saveEventsJson —
+  // GitHub is only a fallback for a site with no server API at all. This used
+  // to call ghSHA/ghWrite unconditionally, which meant it depended on a valid
+  // GitHub token being cached in THIS browser even on a site whose local save
+  // works fine, and surfaced GitHub's raw error ("Bad credentials") instead of
+  // just saving like every other data file in this admin already does.
+  try{
+    const json=JSON.stringify(_inject,null,2);
+    const{url,token}=getApiCfg();
+    if(url&&token){ await apiCall('write_file',{path:F_INJECT,content:json}); }
+    else{ const sha=await ghSHA(F_INJECT); await ghWrite(F_INJECT,json,sha,'CMS: plugins update'); }
+    toast(name+(on?' enabled':' disabled'),'ok');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
   renderPlugins();
 }
 function loadSettings(){
@@ -16581,7 +16607,17 @@ function savePageSEO(){toast('Use visual editor — click Save to publish page',
 function selPageTree(){}
 
 
-async function saveInjections(){try{const sha=await ghSHA(F_INJECT);await ghWrite(F_INJECT,JSON.stringify(_inject,null,2),sha,'CMS: injections save');toast('Plugins saved','ok');}catch(e){toast('Save failed: '+e.message,'err');}}
+// Same server-first/GitHub-fallback shape as togglePlugin() above — the two are
+// the only writers of F_INJECT and need to agree on how they persist it.
+async function saveInjections(){
+  try{
+    const json=JSON.stringify(_inject,null,2);
+    const{url,token}=getApiCfg();
+    if(url&&token){ await apiCall('write_file',{path:F_INJECT,content:json}); }
+    else{ const sha=await ghSHA(F_INJECT); await ghWrite(F_INJECT,json,sha,'CMS: injections save'); }
+    toast('Plugins saved','ok');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
 
 // ── SETTINGS ──────────────────────────────────
 // Mailgun is configured manually in admin/config.secret.php (mg_domain /
