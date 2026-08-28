@@ -2641,7 +2641,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.109';
+const CMS_VERSION='1.14.110';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3263,6 +3263,12 @@ async function initApp(){
   }
   // Update check runs during the post-login loader (see initUpdateGate)
   try{ await initUpdateGate(); }catch(e){ console.warn('Update gate:',e.message); }
+  // One-time, silent sweep so pages published before the generator-tag feature
+  // shipped get it too — see generatorTagSweepOnce(). Fire-and-forget: it must
+  // never hold up login, and initUpdateGate() above may have already reloaded
+  // the page (an update in progress never reaches this line at all — the next
+  // initApp(), after reload, is what actually runs it).
+  try{ generatorTagSweepOnce().catch(()=>{}); }catch(e){}
 }
 
 // Runs at the tail of post-login init while the loader is still up.
@@ -4192,7 +4198,51 @@ function veFinalizePageHtml(html, pg){
   // Every saved page carries the CURRENT favicon tags — pages created after the
   // favicon was set used to miss out until someone re-ran "apply to all".
   try{ html=faviconInjectIntoHtml(html); }catch(e){}
+  // Every saved page carries a <meta name="generator"> tag identifying it as
+  // Fourge-built — lets a plain HTML fetch (an audit tool, a partner, anyone)
+  // detect a Fourge site directly, with no registry or extra request. No
+  // config, no manual button: same always-on shape as the ensure*Runtime()
+  // calls above, since there's nothing for an operator to set.
+  try{ html=generatorInjectIntoHtml(html); }catch(e){}
   return html;
+}
+// ── GENERATOR META TAG ───────────────────────────────────────────────────────
+function fourgeGeneratorTag(){ return 'Fourge '+CMS_VERSION; }
+// Strips ANY existing generator tag, not just a prior Fourge one — a page
+// cloned or migrated from elsewhere (e.g. a WordPress export) may already
+// carry its own, and leaving it in place would leave two conflicting
+// <meta name="generator"> tags rather than Fourge's being authoritative.
+function generatorStripManaged(html){
+  return String(html||'').replace(/<meta\s+name=["']generator["'][^>]*>\s*/gi,'');
+}
+function generatorInjectIntoHtml(html){
+  html=generatorStripManaged(html);
+  const tag='<meta name="generator" content="'+esc(fourgeGeneratorTag())+'">';
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>tag+'\n'+m) : (tag+'\n'+html);
+}
+// One-time retroactive sweep so pages published BEFORE this shipped get the
+// tag too, not just pages saved from now on. Runs itself once per site (see
+// the initApp() call site) rather than needing a manual "apply to all"
+// button — there's nothing to configure, so there's nothing to review before
+// applying, unlike Typography/Favicon/Adaptify's sweeps. Gated by a persisted
+// flag (not sessionStorage, like ensureCleanUrlRewrite()'s self-heal) since
+// this loops every page rather than making one cheap PHP call, and should
+// never repeat that work once it has actually succeeded.
+async function generatorTagSweepOnce(){
+  if(!canCallApi() || (_site&&_site.generatorTagSwept)) return;
+  if(!Object.keys(_pages).length) await loadPages();
+  const pages=getPageList();
+  for(const pg of pages){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp});
+      const html=d.content||''; if(!html) continue;
+      const out=generatorInjectIntoHtml(html);
+      if(out!==html) await apiCall('write_file',{path:fp,content:out});
+    }catch(e){}
+  }
+  _site.generatorTagSwept=true;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
 }
 
 // ── FORM PLACEMENTS (attribute every on-page form to a managed form) ──
