@@ -2641,7 +2641,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.110';
+const CMS_VERSION='1.14.111';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3269,6 +3269,9 @@ async function initApp(){
   // the page (an update in progress never reaches this line at all — the next
   // initApp(), after reload, is what actually runs it).
   try{ generatorTagSweepOnce().catch(()=>{}); }catch(e){}
+  // Same one-time-per-site idea, for the events calendar/single-page CSS fix —
+  // see eventsRuntimeCssSweepOnce().
+  try{ eventsRuntimeCssSweepOnce().catch(()=>{}); }catch(e){}
 }
 
 // Runs at the tail of post-login init while the loader is still up.
@@ -6773,9 +6776,15 @@ function eventsRuntimeCss(){
     +'.fev-cal-head h2{font-size:19px;font-weight:700;margin:0}'
     +'.fev-nav{background:none;border:1px solid rgba(0,0,0,.15);border-radius:8px;width:34px;height:34px;font-size:16px;cursor:pointer;color:inherit;flex-shrink:0}'
     +'.fev-nav:hover{background:rgba(0,0,0,.05)}'
-    +'.fev-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}'
+    // minmax(0,1fr), not bare 1fr: a grid track's default min-width is
+    // "auto" (content-based), so one long, un-wrapped event pill could still
+    // inflate its whole column even with .fev-pill's own overflow:hidden —
+    // that overflow only clips content AFTER the track has already grown to
+    // fit it. minmax(0,…) caps the track's minimum instead of leaving it to
+    // content, which is what actually lets the ellipsis below take effect.
+    +'.fev-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}'
     +'.fev-grid-head{margin-bottom:6px;font-size:11px;font-weight:700;text-transform:uppercase;opacity:.55;text-align:center}'
-    +'.fev-cell{min-height:92px;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:6px;font-size:12px;display:flex;flex-direction:column;gap:3px;box-sizing:border-box}'
+    +'.fev-cell{min-width:0;overflow:hidden;min-height:92px;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:6px;font-size:12px;display:flex;flex-direction:column;gap:3px;box-sizing:border-box}'
     +'.fev-cell.fev-pad{border-color:transparent}'
     +'.fev-cell.fev-today{border-color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));border-width:2px}'
     +'.fev-daynum{font-weight:700;opacity:.6;font-size:11px}'
@@ -6785,7 +6794,11 @@ function eventsRuntimeCss(){
     +'.fev-empty{text-align:center;opacity:.65;padding:40px 0}'
     +'.fev-single{max-width:720px;margin:0 auto}'
     +'.fev-back{font-size:14px;font-weight:600;display:inline-block;margin-bottom:20px;text-decoration:none}'
-    +'.fev-s-img{width:100%;border-radius:14px;margin-bottom:24px;aspect-ratio:16/9;object-fit:cover;display:block}'
+    // contain, not cover: a featured image the operator didn't crop to 16:9
+    // (e.g. a tall sponsorship flyer) was having its bottom cut off — cover
+    // fills the box by cropping overflow, contain always shows the whole
+    // image instead, same tradeoff the media picker already makes elsewhere.
+    +'.fev-s-img{width:100%;border-radius:14px;margin-bottom:24px;aspect-ratio:16/9;object-fit:contain;display:block}'
     +'.fev-s-date{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;opacity:.65;margin-bottom:10px}'
     +'.fev-badge{background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff;border-radius:99px;padding:2px 9px;font-size:10.5px;text-transform:none;letter-spacing:0;font-weight:700;margin-left:6px}'
     +'.fev-single h1{font-size:34px;font-weight:800;letter-spacing:-.02em;line-height:1.15;margin:0 0 18px}'
@@ -6909,6 +6922,28 @@ function ensureEventsRuntime(html){
   html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
   html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
   return html;
+}
+// One-time backfill so the corrected calendar/single-event CSS above (the
+// long-title grid stretch, the cropped featured image) reaches events.html/
+// event.html on a site that already has them, without waiting for either
+// page to be opened and re-saved. Same self-triggered, flag-gated shape as
+// generatorTagSweepOnce() — just the two known page ids here rather than a
+// full-site loop, since that's everywhere this runtime's CSS can live.
+async function eventsRuntimeCssSweepOnce(){
+  if(!canCallApi() || (_site&&_site.eventsRuntimeCssSwept)) return;
+  if(!Object.keys(_pages).length) await loadPages();
+  for(const pid of ['events','event']){
+    const pg=_pages[pid]; if(!pg) continue;
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp});
+      const html=d.content||''; if(!html) continue;
+      const out=ensureEventsRuntime(html);
+      if(out!==html) await apiCall('write_file',{path:fp,content:out});
+    }catch(e){}
+  }
+  _site.eventsRuntimeCssSwept=true;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
 }
 
 // ── VIDEO ───────────────────────────────────────────────────────────────────
