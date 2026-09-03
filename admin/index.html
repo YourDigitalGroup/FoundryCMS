@@ -2641,7 +2641,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.111';
+const CMS_VERSION='1.14.112';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3269,9 +3269,10 @@ async function initApp(){
   // the page (an update in progress never reaches this line at all — the next
   // initApp(), after reload, is what actually runs it).
   try{ generatorTagSweepOnce().catch(()=>{}); }catch(e){}
-  // Same one-time-per-site idea, for the events calendar/single-page CSS fix —
-  // see eventsRuntimeCssSweepOnce().
-  try{ eventsRuntimeCssSweepOnce().catch(()=>{}); }catch(e){}
+  // Similar idea for the events calendar/single-event runtime, but version-
+  // gated rather than a one-time flag, so it re-fires for each release that
+  // actually changes that runtime — see eventsRuntimeSweepIfStale().
+  try{ eventsRuntimeSweepIfStale().catch(()=>{}); }catch(e){}
 }
 
 // Runs at the tail of post-login init while the loader is still up.
@@ -6839,7 +6840,13 @@ function eventsRuntimeAssets(){
     +'  var ev=events.find(function(e){return e.slug===slug;});\n'
     +'  if(!ev){ root.innerHTML="<div class=\\"fev-empty\\">Event not found. <a href=\\"events.html\\">\\u2190 Back to all events</a></div>"; return; }\n'
     +'  document.title=dec(ev.title);\n'
-    +'  var desc=(ev.description||"").split(/\\n{2,}/).filter(function(pp){return pp.trim();}).map(function(pp){return "<p>"+esc(pp).replace(/\\n/g,"<br>")+"</p>";}).join("");\n'
+    // Not esc()'d: the description is admin-authored free text in a plain
+    // textarea (events have no public submission form — every event comes
+    // from a signed-in editor), same trust tier as a page's Custom CSS box.
+    // Escaping the whole paragraph meant pasted markup — e.g. a hashtag's
+    // real <a href> copied straight out of a Facebook post — rendered as
+    // visible "<a href=...>" text instead of an actual link.
+    +'  var desc=(ev.description||"").split(/\\n{2,}/).filter(function(pp){return pp.trim();}).map(function(pp){return "<p>"+pp.replace(/\\n/g,"<br>")+"</p>";}).join("");\n'
     +'  root.innerHTML="<article class=\\"fev-single\\">"\n'
     +'    +"<a class=\\"fev-back\\" href=\\"events.html\\">\\u2190 All events</a>"\n'
     +'    +(ev.featured?"<img class=\\"fev-s-img\\" src=\\""+esc(ev.featured)+"\\" alt=\\""+esc(dec(ev.title))+"\\">":"")\n'
@@ -6854,7 +6861,10 @@ function eventsRuntimeAssets(){
     +'  var ld={"@context":"https://schema.org","@type":"Event",name:dec(ev.title)};\n'
     +'  if(ev.start)ld.startDate=ev.start+(ev.startTime?"T"+ev.startTime:"");\n'
     +'  if(ev.end)ld.endDate=ev.end+(ev.endTime?"T"+ev.endTime:"");\n'
-    +'  if(ev.description)ld.description=dec(ev.description);\n'
+    // Schema.org description wants plain prose, not markup — strip any real
+    // tags the on-page render above is now allowed to keep (e.g. a hashtag's
+    // <a href>), so structured data still reads as clean text either way.
+    +'  if(ev.description)ld.description=dec(ev.description).replace(/<[^>]+>/g,"").trim();\n'
     +'  if(ev.featured)ld.image=ev.featured;\n'
     +'  if(ev.url)ld.url=ev.url;\n'
     +'  var s=document.createElement("script");s.type="application/ld+json";s.textContent=JSON.stringify(ld);document.head.appendChild(s);\n'
@@ -6923,14 +6933,25 @@ function ensureEventsRuntime(html){
   html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
   return html;
 }
-// One-time backfill so the corrected calendar/single-event CSS above (the
-// long-title grid stretch, the cropped featured image) reaches events.html/
-// event.html on a site that already has them, without waiting for either
-// page to be opened and re-saved. Same self-triggered, flag-gated shape as
+// Bump this to the CURRENT CMS_VERSION whenever eventsRuntimeAssets() /
+// ensureEventsRuntime() changes in a way an already-published events.html /
+// event.html should pick up without being manually re-opened and re-saved —
+// then eventsRuntimeSweepIfStale() below re-stamps both pages once, the next
+// time the site signs in. Deliberately its OWN watermark, not a bare one-time
+// flag and not CMS_VERSION itself: a flat boolean (this sweep's original
+// 1.14.111 shape) would have silently skipped THIS release's separate
+// description-escaping fix on any site that had already run the CSS-only
+// sweep once — and comparing against CMS_VERSION directly would re-run the
+// full read/write pass on every login forever, since that bumps on every
+// release, not just ones that touch this runtime.
+const EVENTS_RUNTIME_SWEEP_VERSION='1.14.112';
+// Version-gated backfill so a change to the events runtime above reaches
+// events.html/event.html on a site that already has them, without waiting
+// for either page to be opened and re-saved. Same self-triggered shape as
 // generatorTagSweepOnce() — just the two known page ids here rather than a
-// full-site loop, since that's everywhere this runtime's CSS can live.
-async function eventsRuntimeCssSweepOnce(){
-  if(!canCallApi() || (_site&&_site.eventsRuntimeCssSwept)) return;
+// full-site loop, since that's everywhere this runtime's markup can live.
+async function eventsRuntimeSweepIfStale(){
+  if(!canCallApi() || (_site&&_site.eventsRuntimeSweptVersion===EVENTS_RUNTIME_SWEEP_VERSION)) return;
   if(!Object.keys(_pages).length) await loadPages();
   for(const pid of ['events','event']){
     const pg=_pages[pid]; if(!pg) continue;
@@ -6942,7 +6963,7 @@ async function eventsRuntimeCssSweepOnce(){
       if(out!==html) await apiCall('write_file',{path:fp,content:out});
     }catch(e){}
   }
-  _site.eventsRuntimeCssSwept=true;
+  _site.eventsRuntimeSweptVersion=EVENTS_RUNTIME_SWEEP_VERSION;
   try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
 }
 
