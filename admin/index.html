@@ -2461,6 +2461,10 @@ textarea.fb-input{resize:vertical}
         <div class="fg"><label>Password *</label><input type="password" id="au-pw"></div>
         <div class="fg"><label>Role</label><select id="au-role" onchange="renderAddUserPerms()"></select></div>
       </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:2px 0 12px">
+        <input type="checkbox" id="au-mustchange" checked style="width:auto;margin:2px 0 0;cursor:pointer">
+        <span>Require a password change on first login<br><small style="color:var(--muted)">They sign in with the password above once, then must set their own before doing anything else.</small></span>
+      </label>
       <div id="au-perms-section" style="margin-top:4px"></div>
     </div>
     <div class="mf"><button class="fd-btn-secondary" onclick="closeM('m-adduser')">Cancel</button><button class="fd-btn-primary" onclick="addUser()">Add User</button></div>
@@ -2483,6 +2487,10 @@ textarea.fb-input{resize:vertical}
         <div class="fg"><label>New Password (blank = keep)</label><input type="password" id="eu-pw"></div>
         <div class="fg"><label>Role</label><select id="eu-role" onchange="renderEditUserPerms()"></select></div>
       </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:13px;color:var(--text);margin:2px 0 12px">
+        <input type="checkbox" id="eu-mustchange" style="width:auto;margin:2px 0 0;cursor:pointer">
+        <span>Require a password change on next login<br><small style="color:var(--muted)">Forces them to set a new password before doing anything else — useful right after resetting it for them, or if they haven't signed in since being added.</small></span>
+      </label>
       <div id="eu-perms-section" style="margin-top:8px"></div>
     </div>
     <div class="mf"><button class="btn btn-r btn-sm" onclick="deleteUser()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg> Delete</button><div style="flex:1"></div><button class="fd-btn-secondary" onclick="closeM('m-edituser')">Cancel</button><button class="fd-btn-primary" onclick="saveEditUser()">Save</button></div>
@@ -2641,7 +2649,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.112';
+const CMS_VERSION='1.14.113';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -12000,6 +12008,9 @@ function openAddUser(){
       .map(o=>'<option value="'+o.v+'"'+(o.v==='editor'?' selected':'')+'>'+o.l+'</option>').join('');
   }
   ['au-first','au-last','au-username','au-email','au-pw'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  // Checked by default: adding someone new is exactly the case this is for —
+  // give them a throwaway password above and let them set their own real one.
+  const mcEl=document.getElementById('au-mustchange'); if(mcEl) mcEl.checked=true;
   renderAddUserPerms();
   openM('m-adduser');
 }
@@ -12016,7 +12027,8 @@ async function addUser(){
   if(pw.length<8){toast('Password must be at least 8 characters','err');return;}
   const me=getSessionUser();
   if((ROLE_RANK[role]||1)>accessLevel(me)){toast('You cannot create a user above your own role','err');return;}
-  const body={username,email,firstName,lastName,password:pw,role}; // the architect flag is never assignable through the UI
+  const mustChangePassword=!!document.getElementById('au-mustchange')?.checked;
+  const body={username,email,firstName,lastName,password:pw,role,mustChangePassword}; // the architect flag is never assignable through the UI
   if(role==='editor') body.permissions=getTogglePerms('au');
   try{
     await apiCall('save_user',body);
@@ -12091,6 +12103,7 @@ function editUser(i){
   document.getElementById('eu-first').value=u.firstName||'';
   document.getElementById('eu-last').value=u.lastName||'';
   document.getElementById('eu-pw').value='';
+  const mcEl=document.getElementById('eu-mustchange'); if(mcEl) mcEl.checked=!!u.mustChangePassword;
   renderEditUserPerms();
   openM('m-edituser');
 }
@@ -12105,13 +12118,19 @@ async function saveEditUser(){
   if(String(target.username||'').toLowerCase()===String(me.username||'').toLowerCase()){toast('Use Change Password to update your own account','err');return;}
   if((ROLE_RANK[role]||1) > accessLevel(me)){toast('You cannot assign a role above your own','err');return;}
   if(pw && pw.length<8){toast('Password must be at least 8 characters','err');return;}
+  // mustChangePassword is always sent explicitly (not just when checked): the
+  // server treats a MISSING field as "leave the existing value alone" and a
+  // PRESENT one as authoritative (see fourgeApiSaveUser's $mustChange), so an
+  // unrelated edit here never silently clears — or silently sets — this flag
+  // by omission.
   const body={
     id: idEl.value || target.id,
     username: document.getElementById('eu-username').value.trim(),
     email: document.getElementById('eu-email').value.trim(),
     firstName: document.getElementById('eu-first').value.trim(),
     lastName: document.getElementById('eu-last').value.trim(),
-    role
+    role,
+    mustChangePassword: !!document.getElementById('eu-mustchange')?.checked
   };
   if(pw) body.password=pw;
   if(role==='editor') body.permissions=getTogglePerms('eu'); // admin/superadmin inherit all
