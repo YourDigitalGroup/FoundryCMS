@@ -1920,7 +1920,14 @@ function fourgeApiSaveUser($me, $body) {
     $pw          = (string)($body['password'] ?? '');
     $permissions = array_key_exists('permissions', $body) ? json_encode($body['permissions']) : null;
     if ($role !== 'editor') $permissions = null;  // admin/superadmin inherit all modules
-    $mustChange  = !empty($body['mustChangePassword']) ? 1 : 0;
+    // null = caller didn't send this field at all (as opposed to an explicit
+    // false) — resolved below into "preserve the existing value" for an edit,
+    // or "off by default" for a brand-new account. Never just default it to 0
+    // unconditionally: the admin UI now sends this explicitly on every save,
+    // but a caller that doesn't know about the field yet must not silently
+    // CLEAR an existing user's pending forced password change out from under
+    // them just by saving an unrelated edit.
+    $mustChange  = array_key_exists('mustChangePassword', $body) ? (!empty($body['mustChangePassword']) ? 1 : 0) : null;
     $display     = trim("$first $last");
     $now = date('c');
 
@@ -1945,6 +1952,7 @@ function fourgeApiSaveUser($me, $body) {
             if (strlen($pw) < 8) { http_response_code(400); echo json_encode(['error' => 'Password must be at least 8 characters']); return; }
             fourgeSetPassword($pdo, $existing['username'], $pw);
         }
+        if ($mustChange === null) $mustChange = (int)!empty($existing['must_change_password']); // not sent → leave as-is
         $pdo->prepare("UPDATE users SET username=?, email=?, first_name=?, last_name=?, display_name=?, role=?, permissions=?, must_change_password=?, updated_at=? WHERE id=?")
             ->execute([$username, $email, $first, $last, $display, $role, $permissions, $mustChange, $now, $id]);
         if (strtolower($existing['username']) !== $username) {          // keep sessions valid across a username change
@@ -1957,6 +1965,7 @@ function fourgeApiSaveUser($me, $body) {
             http_response_code(409); echo json_encode(['error' => 'That username or email is already in use']); return;
         }
         if ($display === '') $display = $username;
+        if ($mustChange === null) $mustChange = 0; // not sent → off by default, same as before this field existed
         $hash = password_hash($pw, fourgePwAlgo());
         $pdo->prepare("INSERT INTO users (username, display_name, email, first_name, last_name, role, is_architect, password_hash, must_change_password, permissions, created_at, updated_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
