@@ -278,7 +278,13 @@ body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 .fg label{display:block;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
 .fg input,.fg select,.fg textarea{width:100%;padding:8px 10px;border:1px solid var(--border);font-family:var(--font-sans);font-size:13px;color:var(--text);outline:none;background:var(--surface);transition:border-color .15s;border-radius:var(--r-sm)}
 .fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--ember)}.fg textarea{resize:vertical;min-height:60px}
-.brand-swatch{width:56px!important;height:56px;padding:3px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--surface);display:block}
+/* height and padding need !important too, not just width: .fg input already
+   wins width (hence that !important) via a higher-specificity selector
+   (.fg input, 0,2,0 vs .brand-swatch's bare 0,1,0), but its OWN padding
+   (8px 10px — asymmetric) was ALSO beating .brand-swatch's padding:3px on
+   specificity, which the 56x56 box hid at the outer edge but not on the
+   actual visible color patch inside it — a 40x36 rectangle, not a square. */
+.brand-swatch{width:56px!important;height:56px!important;padding:3px!important;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--surface);display:block}
 /* RGBA color control: the native swatch sits on a checkerboard and is faded to
    its own alpha, so partial opacity is visible rather than just a number. */
 .fc-wrap{--fc-a:1;display:inline-flex;align-items:center;gap:7px;max-width:100%;vertical-align:middle}
@@ -290,6 +296,11 @@ body.sb-collapsed .tb-collapse svg{transform:rotate(180deg)}
 .fc-wrap .fc-sw>input[type=color]{position:relative;z-index:1;opacity:var(--fc-a)}
 .fc-wrap .fc-range{flex:1 1 54px;min-width:44px;max-width:120px;height:16px;padding:0;margin:0;cursor:pointer;accent-color:var(--ember);background:transparent;border:none}
 .fc-wrap .fc-pct{flex:0 0 auto;font-size:10px;font-variant-numeric:tabular-nums;color:var(--muted);min-width:30px;text-align:right}
+/* Opt-in hex readout/input (data-fc-hex on the source <input type=color>) — type
+   or paste an exact value instead of only ever using the OS color wheel. */
+.fc-wrap .fc-hex{flex:0 0 84px;width:84px;height:32px;padding:0 9px;border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono,ui-monospace,monospace);font-size:12px;letter-spacing:.02em;color:var(--text);background:var(--surface);outline:none;text-transform:lowercase}
+.fc-wrap .fc-hex:focus{border-color:var(--ember)}
+.fc-wrap .fc-hex.fc-hex-bad{border-color:var(--red,#c0392b);color:var(--red,#c0392b)}
 /* A picker declared width:100% (the accessibility panel, the visual editor's
    property panel) is a full-width block, not a chip. Inside a content-sized flex
    parent its percentage has nothing to resolve against and it collapses to a
@@ -1646,7 +1657,7 @@ textarea.fb-input{resize:vertical}
         </div>
         <div class="tab-panel" id="si-design">
           <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Your two main brand colors. Pick them here and click Apply, and they’ll be used across every page of your site. They start from the colors your site already uses, so you can adjust from there.</div>
-            <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch"></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch"></div></div>
+            <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch" data-fc-hex></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch" data-fc-hex></div></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="fd-btn-primary" onclick="brandApplyAll()"><i class="fa-solid fa-check-double"></i> Apply colors to all pages</button>
               <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
@@ -2649,7 +2660,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.113';
+const CMS_VERSION='1.14.114';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2807,6 +2818,29 @@ function fcUpgrade(el){
   el.parentNode.insertBefore(wrap,el);
   const sw=document.createElement('span'); sw.className='fc-sw';
   wrap.appendChild(sw); sw.appendChild(el);
+  // Opt-in (data-fc-hex on the source element) hex text field: type or paste
+  // an exact value instead of only ever using the OS color wheel. Off by
+  // default so every OTHER existing picker (Typography, Heading Styles, …)
+  // keeps its current appearance untouched.
+  let hx=null;
+  if(el.dataset.fcHex!=null){
+    hx=document.createElement('input');
+    hx.type='text'; hx.className='fc-hex'; hx.spellcheck=false; hx.autocomplete='off';
+    hx.placeholder='#rrggbb';
+    hx.value=fcHex(el.value)||'';
+    hx.addEventListener('input',()=>{
+      const p=fcParse(hx.value);
+      if(p.hex){
+        fcSet(el,hx.value);
+        hx.classList.remove('fc-hex-bad');
+        el.dispatchEvent(new Event('input',{bubbles:true}));
+        el.dispatchEvent(new Event('change',{bubbles:true}));
+      }else{
+        hx.classList.toggle('fc-hex-bad',hx.value.trim()!=='');
+      }
+    });
+    wrap.appendChild(hx);
+  }
   const sl=document.createElement('input');
   sl.type='range'; sl.min='0'; sl.max='100'; sl.step='1'; sl.className='fc-range';
   sl.id=el.id+'-fca';
@@ -2827,7 +2861,11 @@ function fcUpgrade(el){
   };
   sl.addEventListener('input',()=>push(true));
   sl.addEventListener('change',()=>push(true));
-  el.addEventListener('input',()=>fcPaint(el));
+  // The guard skips re-writing the hex field while its OWN input handler is
+  // what triggered this (document.activeElement is still the hex field at
+  // that point) — so typing there never fights itself, while a color picked
+  // via the native swatch still updates the hex text to match.
+  el.addEventListener('input',()=>{ fcPaint(el); if(hx && document.activeElement!==hx) hx.value=fcHex(el.value)||''; });
   wrap.appendChild(sl); wrap.appendChild(pct);
   fcPaint(el);
 }
@@ -2835,6 +2873,17 @@ function fcUpgradeAll(root){
   const scope=root||document;
   if(scope.querySelectorAll) scope.querySelectorAll('input[type="color"]:not([data-fc-up])').forEach(fcUpgrade);
   if(scope.matches && scope.matches('input[type="color"]:not([data-fc-up])')) fcUpgrade(scope);
+}
+// fcSet() writes el.value directly without dispatching an input event (by
+// design — callers like designAutofill() pre-fill a control without wanting
+// every other input listener on the page to react as if the user had typed).
+// A hex-enabled picker's own text field won't hear about that change on its
+// own, so any caller using fcSet() on one should call this right after.
+function fcSyncHex(el){
+  if(!el) return;
+  const wrap=el.closest?el.closest('.fc-wrap'):null;
+  const hx=wrap?wrap.querySelector('.fc-hex'):null;
+  if(hx) hx.value=fcHex(el.value)||'';
 }
 // One observer covers every panel the admin renders, now and later.
 function fcWatch(){
@@ -4197,13 +4246,18 @@ function veFinalizePageHtml(html, pg){
   try{ html=ensureMapRuntime(html); }catch(e){}
   // …and the events calendar / single-event block's runtime.
   try{ html=ensureEventsRuntime(html); }catch(e){}
-  // Every saved page carries the CURRENT site fonts, heading styles and
-  // site-wide custom CSS, so a page created after the design was set is not
-  // left behind. Guarded on the site config actually being loaded — otherwise
-  // a save could strip the block rather than refresh it.
+  // Every saved page carries the CURRENT site fonts, heading styles, brand
+  // colors and site-wide custom CSS, so a page created after the design was
+  // set is not left behind. Guarded on the site config actually being
+  // loaded — otherwise a save could strip the block rather than refresh it.
+  // Brand colors used to update ONLY when someone remembered to click
+  // "Apply colors to all pages" — every sibling Design setting here already
+  // self-heals on save, so a page edited any time after a color change was
+  // the one place --brand-color-primary/secondary could silently go stale.
   try{
     if(_site && Object.keys(_site).length){
       html=designInjectIntoHtml(html,_site.typography||null,_site.headingStyles||null);
+      html=brandInjectIntoHtml(html,(_site.brand&&_site.brand.primary)||'',(_site.brand&&_site.brand.secondary)||'');
       html=siteCssInjectIntoHtml(html,_site.customCss||'');
     }
   }catch(e){}
@@ -9846,21 +9900,28 @@ async function designAutofill(){
     fillIf('si-linkedin',  grabSoc(/href=["'](https?:\/\/(?:www\.)?linkedin\.com\/[^"']+)/i));
     fillIf('si-youtube',   grabSoc(/href=["'](https?:\/\/(?:www\.)?youtube\.com\/[^"']+)/i));
   }
-  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP) fcSet(pe,brandP);
-  const se=document.getElementById('si-brand-secondary'); if(se&&brandS) fcSet(se,brandS);
+  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP){ fcSet(pe,brandP); fcSyncHex(pe); }
+  const se=document.getElementById('si-brand-secondary'); if(se&&brandS){ fcSet(se,brandS); fcSyncHex(se); }
 }
-// Inject a managed :root override defining the brand-color variables, appended last
-// so it wins over any earlier definition. Idempotent (replaces its prior block).
+// Regex strip-and-splice, not a DOMParser round-trip: this now runs on EVERY
+// page save (see veFinalizePageHtml), and re-serialising a client's
+// hand-written HTML through the DOM parser on every save is a risk this
+// feature doesn't need to take — same reasoning Typography/Headings and
+// Site-wide Custom CSS already follow. Still finds and replaces a block
+// stamped by the OLD DOM-based version (same id), so an already-live site
+// that used "Apply colors to all pages" before this change stays in sync.
+function brandStripManaged(html){
+  return String(html||'').replace(/<style id="fourge-brand"[\s\S]*?<\/style>\s*/gi,'');
+}
 function brandInjectIntoHtml(html, primary, secondary){
-  const doc=new DOMParser().parseFromString(html,'text/html');
-  const head=doc.head||doc.documentElement;
-  doc.querySelectorAll('[data-fourge-brand]').forEach(el=>el.remove());
+  html=brandStripManaged(html);
   // Sanitized: these land in a <style> block on a live page, and the pickers can
   // now produce rgba() as well as hex.
   const p1=fcCssColor(primary), p2=fcCssColor(secondary);
   const decls=[]; if(p1)decls.push('--brand-color-primary:'+p1); if(p2)decls.push('--brand-color-secondary:'+p2);
-  if(decls.length){ const st=doc.createElement('style'); st.id='fourge-brand'; st.setAttribute('data-fourge-brand',''); st.textContent=':root{'+decls.join(';')+'}'; head.appendChild(st); }
-  return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+  if(!decls.length) return html;
+  const block='<style id="fourge-brand" data-fourge-brand>:root{'+decls.join(';')+'}</style>';
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>block+'\n'+m) : (block+'\n'+html);
 }
 async function brandApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
