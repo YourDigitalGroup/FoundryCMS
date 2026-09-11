@@ -1720,7 +1720,9 @@ textarea.fb-input{resize:vertical}
            PLUGINS / INJECTIONS
       ═══════════════════════════════════════════════════════ -->
       <div class="panel" id="p-inject">
-        <div class="ta"><button class="fd-btn-primary" onclick="saveInjections()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg> Save &amp; Publish</button></div>
+        <!-- The old "Save & Publish" only wrote data/injections.json, which no page
+             ever read — snippets are published from Analytics → Custom Code. -->
+        <div class="ta"><button class="fd-btn-secondary" onclick="navTo('analytics');setTimeout(function(){gaTab('setup');},50)">Open Custom Code →</button></div>
 
         <div class="si-sec admin-only" style="display:none;margin-bottom:22px">
           <h2>SEO Platform — Import package</h2>
@@ -2661,7 +2663,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.115';
+const CMS_VERSION='1.14.116';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -11536,18 +11538,22 @@ const PLUG_PRESETS=[
 function renderPlugins(){
   const body=document.getElementById('plugins-body');if(!body)return;
   const active=_inject.filter(p=>p.active!==false);
-  const presets=PLUG_PRESETS.map((preset,i)=>{
-    const existing=_inject.find(p=>p.name===preset.name);
-    const isOn=existing?.active!==false&&!!existing;
-    return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)}</div></div><label class="tog"><input type="checkbox" ${isOn?'checked':''} onchange="togglePlugin('${esc(preset.name)}',this.checked,${i})"><span class="tog-sl"></span></label></div>`;}).join('');
+  // The old on/off toggles only wrote data/injections.json — nothing ever read
+  // that file back into the pages, so a "published" pixel was never on the site.
+  // Each preset now points at the Custom Code slot that actually publishes.
+  const presets=PLUG_PRESETS.map(preset=>{
+    const home=PLUG_PRESET_HOME[preset.name]||'Functional → Header';
+    return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)} · Custom Code → ${home}</div></div><button class="fd-btn-secondary" style="font-size:12px;padding:6px 12px;white-space:nowrap" onclick="navTo('analytics');setTimeout(function(){gaTab('setup');},50)">Open Custom Code →</button></div>`;}).join('');
   body.innerHTML=recaptchaAddonHtml()
     +fleetAddonHtml()
     +ghlAddonHtml()
     +mailAddonHtml()
     +`<div class="pl-sec-label">Code injections</div>`
-    +`<div class="info-b" style="margin-bottom:14px">Active code injections are added to every page when published. ${active.length} active. <strong>Google Analytics has moved</strong> — set up GA4, Tag Manager, and Ads in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a>.</div>`
+    +`<div class="info-b" style="margin-bottom:14px"><strong>Code injections have moved to Analytics → Custom Code.</strong> Paste any snippet there (Functional / Analytics / Marketing, header or body) and <em>Save &amp; Apply to All Pages</em> publishes it to every page inside a managed block — nothing on this panel writes to your pages. Google Analytics, Tag Manager and Ads are set up in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a> as well.${active.length?' <span style="color:var(--muted)">('+active.length+' legacy toggle'+(active.length===1?'':'s')+' still saved in data/injections.json — not published.)</span>':''}</div>`
     +presets;
 }
+// Where each legacy preset now lives in Analytics → Custom Code.
+const PLUG_PRESET_HOME={'Facebook Pixel':'Marketing → Header','Custom CSS':'Functional → Header (wrap it in a &lt;style&gt; tag)','Custom JavaScript':'Functional → Body'};
 // The reCAPTCHA add-on lives here in Plugins (its home) instead of buried in Site
 // Foundry. Keys are stored server-side in site.json (saveRecaptcha → saveSiteInfo);
 // api.php verifies submissions; renderFormHtml injects the widget into every form
@@ -12582,6 +12588,10 @@ const BLOCK_TYPES=[
 // ═══════════════════════════════════════════════════════════════
 let _pages={}, _pagesSHA='', _curPage='home';
 let _veHtml={}, _veOrigHtml={};
+// Page id → the HTML as it exists in the FILE on the server (read on load, updated
+// on save). veStripRuntimeDom compares the live document against it: a custom
+// element, script or stylesheet the file never mentions was injected at runtime.
+let _veDiskHtml={};
 let _veSel=null;
 
 function getPageList(){
@@ -13653,9 +13663,17 @@ async function veLoadPage(id){
           s.id='__foundry_bridge__';
           s.textContent=veBridgeCode();
           (doc.body||doc.documentElement).appendChild(s);
-          // Cache current DOM for saving
-          _veHtml[id]='<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+          // Cache current DOM for saving — through the same clean serializer the
+          // Save uses, so runtime-injected widget DOM (chat bubbles etc.) that
+          // already ran on this live load never counts as page content.
+          _veHtml[id]=veSerializeClean()||('<!DOCTYPE html>\n'+doc.documentElement.outerHTML);
           _veOrigHtml[id]=_veHtml[id];
+          // The live page has already run its scripts here, so fetch the FILE in the
+          // background as the reference for the "not on disk → injected at runtime"
+          // guard in veStripRuntimeDom. Never blocks; the selector list still applies
+          // if it hasn't arrived by the time the page is saved.
+          delete _veDiskHtml[id];
+          if(canCallApi()) apiCall('read_file',{path:filePath}).then(d=>{ if(d&&d.content) _veDiskHtml[id]=d.content; }).catch(()=>{});
           captureFooterCredit(doc); // remember the "Site by …" credit for the login panel
         }catch(e){
           // Cross-origin or other error — fall back to srcdoc via api.php
@@ -13687,6 +13705,7 @@ async function veLoadPageViaApi(id,filePath){
       }
       _veHtml[id]=html;
       _veOrigHtml[id]=html;
+      _veDiskHtml[id]=html;
       veRenderHtml(id,html);
       return;
     }
@@ -14259,6 +14278,23 @@ return '(function(){\n'
 }
 
 
+// Known chat / support loaders — neutralized inside the editor wherever they sit
+// (a hand-pasted footer snippet included). The install tag itself is kept and
+// restored on save; only its execution while editing is suppressed.
+const VE_LOADER_SRC=/leadconnectorhq\.com\/loader\.js|embed\.tawk\.to|code\.tidio\.co|widget\.intercom\.io|js\.hs-scripts\.com|js\.driftt\.com|client\.crisp\.chat|connect\.podium\.com|birdeye\.com\/embed/i;
+function veNeutralizeThirdParty(html){
+  // Tag a <script> as text/foundry-ga (skips tags already tagged) — the exact
+  // marker veSerializeClean strips back out, so the round trip is byte-for-byte.
+  const neut=s=>s.replace(/<script(?![^>]*text\/foundry-ga)(\s|>)/gi,'<script type="text/foundry-ga"$1');
+  try{
+    [[CC_HEAD_START,CC_HEAD_END],[CC_BODY_START,CC_BODY_END]].forEach(([s,e])=>{
+      html=html.replace(new RegExp(gaEscRe(s)+'[\\s\\S]*?'+gaEscRe(e),'g'),neut);
+    });
+    html=html.replace(/<script\b[^>]*\bsrc=["'][^"']+["'][^>]*>/gi,tag=>VE_LOADER_SRC.test(tag)?neut(tag):tag);
+  }catch(e){}
+  return html;
+}
+
 function veRenderHtml(id,html){
   const iframe=document.getElementById('visual-iframe');
   if(!iframe) return;
@@ -14301,6 +14337,11 @@ function veRenderHtml(id,html){
     const gaBlockRe=new RegExp(gaEscRe(GA_HEAD_START)+'[\\s\\S]*?'+gaEscRe(GA_HEAD_END),'g');
     processed=processed.replace(gaBlockRe,m=>m.replace(/<script(\s|>)/gi,'<script type="text/foundry-ga"$1'));
   }catch(e){}
+  // Same treatment for the Custom Code blocks (Functional / Analytics / Marketing)
+  // and for known chat-widget loaders wherever they sit: a live chat bubble has
+  // no business rendering inside the editor, and the DOM it injects must never
+  // reach a saved file (see veStripRuntimeDom). Restored verbatim on save.
+  processed=veNeutralizeThirdParty(processed);
 
   // Neutralize EVERY remaining executable script for the editing session — not
   // just analytics. Third-party runtime (GTM self-spawning script tags, the
@@ -15210,14 +15251,95 @@ window.addEventListener('resize', ()=>{ if(_veDevice==='desktop') veApplyDeviceS
 // ── CODE EDITOR (Visual ⇄ Code) ─────────────────────────────────────────────
 let _veMode='visual', _cmEditor=null, _cmLoadedValue='';
 
+// ── THIRD-PARTY RUNTIME DOM — never let it into a saved file ────────────────
+// Chat widgets, reCAPTCHA, ADAptify and similar loaders inject their UI into the
+// page while it runs. The visual editor works on the LIVE document, so before
+// this filter a Save wrote that injected DOM into the .html file; on the next
+// visit the loader ran again and visitors saw two widgets. Seen in production:
+// GoHighLevel's <chat-widget> plus the bundle scripts its loader injects were
+// baked into index.html, which kept a second chat bubble alive even after the
+// install snippet was removed from Custom Code. Only runtime OUTPUT is listed
+// here — never a site's install snippet (e.g. widgets.leadconnectorhq.com/
+// loader.js), which must survive the save so the one intended widget still loads.
+const VE_RUNTIME_DOM_SELECTORS=[
+  // GoHighLevel / LeadConnector chat: host element + the bundle scripts and
+  // Stencil style block its loader injects at runtime
+  'chat-widget','[data-loader-instance-id]',
+  'script[src*="leadconnectorhq.com/chat-widget/"]','script[data-stencil-namespace]',
+  'script[src*="leadconnectorhq.com/libphonenumber"]','style[data-styles]',
+  // Other common chat / support widgets — the containers they inject
+  '#tidio-chat','#tidio-chat-code','#intercom-container','#intercom-frame','.intercom-lightweight-app',
+  '#hubspot-messages-iframe-container','#drift-widget-container','#drift-frame-controller','#drift-frame-chat',
+  '.crisp-client','#podium-website-widget','#podium-bubble','#birdeye-webchat','#tawkchat-container',
+  // Cookie-consent banners (Osano/cookieconsent markup, as injected by consent
+  // scripts such as processwebsitedata / sitedataprocessing) — runtime DOM only;
+  // the script that draws them stays in Custom Code and redraws on every load
+  '.cc-window','.cc-revoke','link[href*="sitedataprocessing.com/consent/"]',
+  // reCAPTCHA runtime (the CMS-managed data-fourge-rc tags are NOT matched here)
+  '.grecaptcha-badge','script[src*="gstatic.com/recaptcha/releases/"]','iframe[src*="google.com/recaptcha/"]',
+  'meta[http-equiv="origin-trial"]',
+  // ADAptify rebuilds itself on every load; its live DOM is never page content
+  '#adaptify-root','#adaptify-dyn','#adaptify-mag','#adaptify-guide','.adaptify-mask'
+];
+// Tags the CMS or the editor placed on purpose (SEO, brand, favicon, reCAPTCHA,
+// per-page CSS/JS, fonts picked in the editor…) all carry a data-fourge-* /
+// data-foundry-* attribute. They are never treated as runtime injections.
+function veIsCmsManaged(el){
+  if(!el||!el.attributes) return false;
+  for(const a of el.attributes){ if(a.name.indexOf('data-fourge')===0||a.name.indexOf('data-foundry')===0) return true; }
+  return false;
+}
+// Remove every runtime-injected node under `root` (a Document, or an Element
+// such as a cloned <html>/<footer>). `diskHtml`, when known, is the page as it
+// exists in the server FILE and enables a second, vendor-agnostic pass: any
+// custom element, external script or stylesheet the file never mentions was
+// injected by a script at runtime. Returns the number of nodes removed.
+function veStripRuntimeDom(root, diskHtml){
+  if(!root||!root.querySelectorAll) return 0;
+  let n=0;
+  // Loaders wrap their widget in a bare positioning <div>; drop it once empty.
+  const dropWrapper=p=>{ if(p&&p.tagName==='DIV'&&!p.id&&!p.className&&!p.children.length&&!p.textContent.trim()) p.remove(); };
+  // Pass 1 — known runtime output.
+  VE_RUNTIME_DOM_SELECTORS.forEach(sel=>{
+    let nodes=[]; try{ nodes=[...root.querySelectorAll(sel)]; }catch(e){ return; }
+    nodes.forEach(el=>{ const p=el.parentElement; el.remove(); n++; dropWrapper(p); });
+  });
+  // Pass 2 — anything the file on disk never mentions (catches vendors that
+  // aren't on the list above). Only while the disk copy is known; a page that
+  // already carries a baked-in copy is handled by pass 1, not this one.
+  if(typeof diskHtml==='string' && diskHtml.length){
+    const disk=diskHtml.toLowerCase();
+    [...root.querySelectorAll('*')].forEach(el=>{
+      const tag=el.tagName.toLowerCase();
+      if(tag.indexOf('-')===-1||!root.contains(el)||veIsCmsManaged(el)) return;   // custom elements only
+      if(disk.indexOf('<'+tag)!==-1) return;                                      // authored in the file
+      const p=el.parentElement; el.remove(); n++; dropWrapper(p);
+    });
+    root.querySelectorAll('script[src],link[rel="stylesheet"][href]').forEach(el=>{
+      if(veIsCmsManaged(el)||!root.contains(el)) return;
+      const ref=(el.getAttribute('src')||el.getAttribute('href')||'').trim(); if(!ref) return;
+      if(diskHtml.indexOf(ref)!==-1) return;                                      // referenced in the file
+      const bare=ref.split(/[?#]/)[0]; if(bare&&diskHtml.indexOf(bare)!==-1) return; // same file, new cache-buster
+      el.remove(); n++;
+    });
+  }
+  // ADAptify also toggles adaptify-* classes on <html> for the editor's OWN
+  // browser prefs (contrast, font…) — those must not become the page's classes.
+  const htmlEl=root.documentElement||(root.tagName==='HTML'?root:null);
+  if(htmlEl&&htmlEl.classList) [...htmlEl.classList].forEach(c=>{ if(c.indexOf('adaptify-')===0){ htmlEl.classList.remove(c); n++; } });
+  if(htmlEl&&htmlEl.classList&&!htmlEl.classList.length) htmlEl.removeAttribute('class');
+  return n;
+}
+
 // Produce clean page HTML from the LIVE visual document (clone + strip the
-// editing bridge) — identical to what veSavePage writes. Returns null if the
-// iframe has no document yet.
+// editing bridge and any runtime-injected widget DOM) — identical to what
+// veSavePage writes. Returns null if the iframe has no document yet.
 function veSerializeClean(){
   const iframe=document.getElementById('visual-iframe');
   const doc=iframe&&iframe.contentDocument;
   if(!doc||!doc.documentElement) return null;
   const root=doc.documentElement.cloneNode(true);
+  veStripRuntimeDom(root, _veDiskHtml[_curPage]);
   ['__fe_done__','__fe_ov__','__fe_badge__','__fe_handles__','__foundry_bridge__','__ve_pause_style__','__fe_fmt__'].forEach(id=>{ root.querySelector('#'+id)?.remove(); });
   root.querySelectorAll('style').forEach(s=>{ if(s.textContent.includes('__fe_')||s.dataset.foundry) s.remove(); });
   root.classList.remove('__ve_paused');
@@ -15697,12 +15819,13 @@ async function veAiPageRun(){
   if(btn){ btn.disabled=true; btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="animation:spin .8s linear infinite"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg> Generating\u2026'; }
   if(status) status.textContent = 'Reading page HTML\u2026';
 
-  // Get current page HTML from iframe
+  // Get current page HTML from iframe — via the clean serializer, so neither the
+  // editing bridge nor runtime-injected widget DOM is sent to the model or
+  // written back afterwards.
   let pageHtml = '';
   try{
-    const doc = document.getElementById('visual-iframe')?.contentDocument;
-    if(!doc) throw new Error('Page not loaded in editor');
-    pageHtml = '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+    pageHtml = veSerializeClean();
+    if(!pageHtml) throw new Error('Page not loaded in editor');
   }catch(e){
     toast('Load a page in the editor first','err');
     if(btn){ btn.disabled=false; btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Generate Changes'; }
@@ -15778,7 +15901,11 @@ async function veSaveTemplateToAll(zone){
   const el = doc.querySelector(selectors[zone] || zone);
   if(!el){ toast('Could not find '+zone+' element on this page','err'); return; }
 
-  const templateHtml = el.outerHTML;
+  // Serialize a CLEAN clone: anything a widget injected into this section at
+  // runtime must not be stamped onto every page (see veStripRuntimeDom).
+  const tplClone = el.cloneNode(true);
+  veStripRuntimeDom(tplClone, _veDiskHtml[_curPage]);
+  const templateHtml = tplClone.outerHTML;
   const pages = getPageList();
   if(!pages.length){ toast('No pages found','err'); return; }
 
@@ -16773,6 +16900,7 @@ async function veSavePage(){
 
     _veHtml[_curPage]=html;
     _veOrigHtml[_curPage]=html;
+    _veDiskHtml[_curPage]=html;   // what is on disk now
     document.getElementById('ve-unsaved')?.classList.remove('on');
     renderVePageList();
 
@@ -17167,6 +17295,7 @@ async function pageFromSiteShell(title, contentHtml){
     // Drop any editor artifacts / page-specific managed blocks a donor may carry.
     doc.querySelectorAll('[data-feid],[data-fid]').forEach(el=>{el.removeAttribute('data-feid');el.removeAttribute('data-fid');});
     doc.querySelectorAll('#__foundry_bridge__,#__fe_done__,#__fe_ov__,#__fe_badge__,#__fe_handles__,#fourge-responsive,#fourge-hover,[data-fourge-seo],[data-fourge-page]').forEach(el=>el.remove());
+    veStripRuntimeDom(doc);   // a donor saved by an older engine may carry baked-in widget DOM
     let t=doc.querySelector('title'); if(!t){t=doc.createElement('title');(doc.head||doc.documentElement).appendChild(t);} t.textContent=title;
     const md=doc.querySelector('meta[name="description"]'); if(md) md.remove(); // SEO regenerates this per page
     // Wrap the content in a centered, padded section with its OWN layout styles
