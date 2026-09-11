@@ -182,8 +182,10 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //  • 'seo_package' / 'seo_pkg_tick' are listed public ONLY so the machine-to-machine
 //    Bearer-token path can reach them; both handlers authenticate internally
 //    (session OR constant-time Bearer match) and refuse everything else.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'seo_package', 'seo_pkg_tick'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test'];
+//    'blog_sync_tick' is the same shape, for the same reason: an external
+//    scheduler needs to reach it with no session at all.
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -215,7 +217,7 @@ if (!in_array($action, $PUBLIC_ACTIONS, true)) {
 // is the server-side backstop for hosts that don't honor .htaccess (e.g. nginx)
 // or have mod_rewrite disabled. Localhost/dev is exempt; set 'require_https' =>
 // false in config.secret.php only for a deliberate plain-HTTP setup.
-$HTTPS_REQUIRED_ACTIONS = ['login', 'change_password', 'set_secret', 'save_user', 'ga_save_credentials', 'set_page_password', 'seo_pkg_admin'];
+$HTTPS_REQUIRED_ACTIONS = ['login', 'change_password', 'set_secret', 'save_user', 'ga_save_credentials', 'set_page_password', 'seo_pkg_admin', 'blog_sync_admin'];
 if (REQUIRE_HTTPS && in_array($action, $HTTPS_REQUIRED_ACTIONS, true) && !fourgeIsHttps() && !fourgeIsLocalRequest()) {
     ob_end_clean(); http_response_code(403);
     echo json_encode(['error' => 'For your security, signing in and changing credentials require a secure (HTTPS) connection. Please load this site over https:// and try again.']);
@@ -254,6 +256,8 @@ try {
         case 'seo_pkg_tick':    ob_end_clean(); fourgeApiSeoPkgTick($authUser, $body); break;
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
         case 'seo_pkg_publish_all': ob_end_clean(); fourgeApiSeoPkgPublishAll($authUser, $body); break;
+        case 'blog_sync_tick':  ob_end_clean(); fourgeApiBlogSyncTick($authUser, $body); break;
+        case 'blog_sync_admin': ob_end_clean(); fourgeApiBlogSyncAdmin($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
@@ -2260,6 +2264,215 @@ HT;
     }
     return file_put_contents($htPath, $existing) !== false;
 }
+// ── BLOG SYNC: partner-site syndication ─────────────────────────────────────
+// Copies every post from a source Fourge site (e.g. 44idigital.com blogging
+// for its partner network) into THIS site's own posts.json, so this site's
+// blog page renders them like any other local post. Split into a network
+// half (fetch) and a pure half (apply) so the merge/dedupe logic is
+// unit-testable without ever calling out to a real site.
+//
+// Whole-object copy is deliberate: 44i's posts carry extra fields (authorRole,
+// authorBio, topic, category, readMins) this CMS's own post editor doesn't
+// know about. Re-mapping field-by-field would silently drop them; copying the
+// object and only overriding what MUST be site-local (id, slug, plus the
+// bookkeeping fields below) keeps them intact for any partner theme that
+// wants to render them.
+function fourgeWriteBlogSyncApiHtaccess() {
+    $htPath   = PUBLIC_HTML . '/.htaccess';
+    $existing = is_file($htPath) ? file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Blog Sync API';
+    $end   = '# END Fourge Blog Sync API';
+    $rules = <<<'HT'
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^api/blog-sync/tick/?$ admin/api.php?action=blog_sync_tick [L,QSA]
+</IfModule>
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        // Must sit ABOVE the clean-URL block: that block rewrites any
+        // extensionless request to <path>.html, which would swallow this.
+        $cu = strpos($existing, '# BEGIN Fourge Clean URLs');
+        if ($cu !== false) $existing = substr($existing, 0, $cu) . $block . "\n\n" . substr($existing, $cu);
+        else $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+function fourgeBlogSyncUid() {
+    // Mirrors the client's uid(): Math.random().toString(36).slice(2,9) — a
+    // 7-char base36 id. Only needs to be locally unique, not cryptographic.
+    $chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+    $s = '';
+    for ($i = 0; $i < 7; $i++) $s .= $chars[random_int(0, 35)];
+    return $s;
+}
+function fourgeBlogSyncAuthorized($me, $body) {
+    if ($me && fourgeLevel($me) >= 2) return true;
+    $tok = '';
+    $hdr = trim((string)($_SERVER['HTTP_AUTHORIZATION'] ?? ''));
+    if ($hdr !== '' && preg_match('~^Bearer\s+(.+)$~i', $hdr, $m)) $tok = trim($m[1]);
+    if ($tok === '') $tok = trim((string)($_SERVER['HTTP_X_BLOG_SYNC_TOKEN'] ?? ''));
+    if ($tok === '') $tok = trim((string)($body['sync_token'] ?? ''));
+    if ($tok === '') return false;
+    $stored = '';
+    try { $stored = (string)fourgeGetSecret(fourgeDb(), 'blog_sync_token'); } catch (Throwable $e) { $stored = ''; }
+    if ($stored === '') return false;
+    return hash_equals($stored, $tok);
+}
+// Network half: fetch the source site's posts.json and keep only what its own
+// blog runtime would treat as live right now (published, or scheduled with a
+// publishAt that has already passed) — the exact same rule loadBlog() uses.
+function fourgeBlogSyncFetchRemotePosts($sourceUrl) {
+    $sourceUrl = rtrim(trim((string)$sourceUrl), '/');
+    if ($sourceUrl === '' || !fourgeTlpUrlOk($sourceUrl)) return null;
+    $ch = curl_init($sourceUrl . '/data/posts.json');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_FOLLOWLOCATION => false,   // a redirect could aim this at a different host
+        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        CURLOPT_USERAGENT => 'FourgeCMS Blog Sync',
+    ]);
+    $raw  = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200 || $raw === false) return null;
+    $posts = json_decode((string)$raw, true);
+    if (!is_array($posts)) return null;
+
+    $now = time();
+    $live = [];
+    foreach ($posts as $p) {
+        if (!is_array($p) || empty($p['id'])) continue;
+        if (!empty($p['published'])) { $live[] = $p; continue; }
+        $publishAt = $p['publishAt'] ?? null;
+        if ($publishAt) {
+            $t = strtotime((string)$publishAt);
+            if ($t !== false && $t <= $now) $live[] = $p;
+        }
+    }
+    return $live;
+}
+// Pure half: given the site record and an already-fetched+filtered remote
+// post list, decide what's new, copy it into local posts.json, and return
+// updated blogSync bookkeeping for the caller to persist into site.json.
+// No network access — fully unit-testable with a stubbed $remotePosts array.
+function fourgeBlogSyncApplyRemotePosts($site, $remotePosts) {
+    $blogSync  = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
+    $syncedIds = is_array($blogSync['syncedIds'] ?? null) ? $blogSync['syncedIds'] : [];
+    $syncedSet = array_flip(array_map('strval', $syncedIds));
+    $sourceUrl = rtrim(trim((string)($blogSync['sourceUrl'] ?? '')), '/');
+
+    if (!is_array($remotePosts)) {
+        $blogSync['lastCheckedAt'] = gmdate('c');
+        $blogSync['lastResult']    = 'Could not reach the source blog — check the source address.';
+        return ['blogSync' => $blogSync, 'added' => 0];
+    }
+
+    $posts = cmsPkgReadJson('posts.json', []);
+    if (!is_array($posts)) $posts = [];
+    $existingSlugs = [];
+    foreach ($posts as $p) { if (is_array($p) && !empty($p['slug'])) $existingSlugs[$p['slug']] = true; }
+
+    $added = 0;
+    foreach ($remotePosts as $rp) {
+        if (!is_array($rp)) continue;
+        $rid = (string)($rp['id'] ?? '');
+        if ($rid === '' || isset($syncedSet[$rid])) continue;
+
+        $post  = $rp;                      // whole-object copy — see note above
+        $newId = fourgeBlogSyncUid();
+        $slug  = (string)($rp['slug'] ?? $newId);
+        if (isset($existingSlugs[$slug])) $slug = $slug . '-' . substr($newId, 0, 4);
+
+        $post['id']             = $newId;
+        $post['slug']           = $slug;
+        $post['canonicalUrl']   = $sourceUrl !== '' ? ($sourceUrl . '/posts.html?p=' . rawurlencode((string)($rp['slug'] ?? ''))) : null;
+        $post['syncedFrom']     = $sourceUrl;
+        $post['syncedSourceId'] = $rid;
+
+        array_unshift($posts, $post);
+        $existingSlugs[$slug] = true;
+        $syncedSet[$rid] = true;
+        $added++;
+    }
+
+    if ($added > 0) cmsPkgWriteJson('posts.json', $posts);
+
+    $blogSync['syncedIds']     = array_values(array_keys($syncedSet));
+    $blogSync['lastCheckedAt'] = gmdate('c');
+    $blogSync['lastResult']    = $added > 0
+        ? ($added . ' new post' . ($added === 1 ? '' : 's') . ' synced')
+        : 'Up to date — no new posts';
+    return ['blogSync' => $blogSync, 'added' => $added];
+}
+// Combines fetch+apply and persists site.json. Silent, cheap no-op when Blog
+// Sync isn't enabled or has no source configured — safe to call from both the
+// explicit tick endpoint and the opportunistic login rider below.
+function fourgeBlogSyncDoSync($site) {
+    $blogSync = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
+    if (empty($blogSync['enabled'])) return ['ok' => true, 'added' => 0, 'skipped' => 'Blog Sync is not enabled.'];
+    $sourceUrl = trim((string)($blogSync['sourceUrl'] ?? ''));
+    if ($sourceUrl === '') return ['ok' => true, 'added' => 0, 'skipped' => 'No source URL configured.'];
+
+    $remote = fourgeBlogSyncFetchRemotePosts($sourceUrl);
+    $result = fourgeBlogSyncApplyRemotePosts($site, $remote);
+    $site['blogSync'] = $result['blogSync'];
+    cmsPkgWriteJson('site.json', $site);
+    return ['ok' => $remote !== null, 'added' => $result['added'], 'lastResult' => $result['blogSync']['lastResult']];
+}
+// Opportunistic rider on the login self-heal chain (fourgeApiInstallCleanUrls):
+// gives sites that are actively logged into a reasonably fresh sync with zero
+// setup. A site nobody logs into for weeks still needs a real external
+// scheduler hitting blog_sync_tick for a guaranteed ~10-minute cadence —
+// Fourge itself has no cron of its own to fall back on.
+function fourgeBlogSyncTickIfDue() {
+    $site = cmsPkgReadJson('site.json', []);
+    if (!is_array($site)) return null;
+    $blogSync = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
+    if (empty($blogSync['enabled'])) return null;
+    $last = strtotime((string)($blogSync['lastCheckedAt'] ?? ''));
+    if ($last !== false && (time() - $last) < 600) return null;   // < 10 minutes — not due yet
+    return fourgeBlogSyncDoSync($site);
+}
+function fourgeApiBlogSyncTick($me, $body) {
+    if (!fourgeBlogSyncAuthorized($me, $body)) { http_response_code(401); echo json_encode(['ok' => false, 'error' => 'Unauthorized']); return; }
+    $site = cmsPkgReadJson('site.json', []);
+    if (!is_array($site)) $site = [];
+    $result = fourgeBlogSyncDoSync($site);
+    echo json_encode($result + ['checked_at' => date('c')]);
+}
+function fourgeApiBlogSyncAdmin($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
+    $op = strtolower(trim((string)($body['op'] ?? 'status')));
+    $has = false;
+    try { $has = trim((string)fourgeGetSecret(fourgeDb(), 'blog_sync_token')) !== ''; } catch (Throwable $e) { $has = false; }
+    $scheme = fourgeIsHttps() ? 'https' : 'http';
+    $host   = (string)($_SERVER['HTTP_HOST'] ?? '');
+    $endpoint = $host !== '' ? ($scheme . '://' . $host . '/api/blog-sync/tick') : '/api/blog-sync/tick';
+    if ($op === 'regenerate') {
+        if (fourgeLevel($me) < 3) { http_response_code(403); echo json_encode(['error' => 'Super Admin access required to rotate the key']); return; }
+        try {
+            $tok = bin2hex(random_bytes(24));
+            fourgeSetSecret(fourgeDb(), 'blog_sync_token', $tok, (string)($me['username'] ?? ''));
+            echo json_encode(['ok' => true, 'token' => $tok, 'endpoint' => $endpoint, 'hasToken' => true,
+                'note' => 'Copy this key now — it is stored encrypted and cannot be shown again.']);
+        } catch (Throwable $e) {
+            http_response_code(500); echo json_encode(['error' => 'Could not store the key: ' . $e->getMessage()]);
+        }
+        return;
+    }
+    if ($op === 'revoke') {
+        if (fourgeLevel($me) < 3) { http_response_code(403); echo json_encode(['error' => 'Super Admin access required']); return; }
+        try { fourgeDb()->prepare("DELETE FROM secrets WHERE name=?")->execute(['blog_sync_token']); } catch (Throwable $e) {}
+        echo json_encode(['ok' => true, 'hasToken' => false, 'endpoint' => $endpoint]);
+        return;
+    }
+    echo json_encode(['ok' => true, 'hasToken' => $has, 'endpoint' => $endpoint]);
+}
 // ── GOOGLE REVIEWS ──────────────────────────────────────────────────────────
 // Reviews are fetched HERE, on the server, because the Places API key is
 // billable and data/site.json is publicly readable. The key lives encrypted in
@@ -3599,8 +3812,15 @@ function fourgeApiInstallCleanUrls($me) {
     // Fleet Dashboard: silent no-op on every site that has not configured one.
     $fleet = false;
     try { $fleet  = fourgeFleetReport();            } catch (Throwable $e) { $fleet = false; }
+    // Blog Sync: install the tick endpoint's rewrite rule, then opportunistically
+    // check the source blog if it's been ≥10 minutes since the last check.
+    // Silent no-op on every site that has not enabled it.
+    $blogSyncApi = false; $blogSync = null;
+    try { $blogSyncApi = fourgeWriteBlogSyncApiHtaccess(); } catch (Throwable $e) { $blogSyncApi = false; }
+    try { $blogSync     = fourgeBlogSyncTickIfDue();       } catch (Throwable $e) { $blogSync = null; }
     echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
-        'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet]);
+        'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
+        'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
