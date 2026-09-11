@@ -317,6 +317,13 @@ function fourgeSecretPolicy() {
         // encrypted server-side; never written into data/site.json (that file is
         // publicly readable).
         'seo_pkg_token' => 3,
+        // Blog Sync — Super Admin and above. Bearer token an external scheduler
+        // presents to trigger this site's blog_sync_tick without a login
+        // session. Its own dedicated secret (not seo_pkg_token or the blanket
+        // API_TOKEN) so it can be issued/rotated/revoked independently — a
+        // leak only affects this one feature, not deploy packages or every
+        // other token-gated action.
+        'blog_sync_token' => 3,
         // Google Places API key for the reviews plugin — Super Admin and above.
         // Encrypted server-side and never returned to the browser: the key is
         // billable, and data/site.json is publicly readable so it cannot live
