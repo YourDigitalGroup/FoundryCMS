@@ -1879,6 +1879,12 @@ textarea.fb-input{resize:vertical}
           <div class="fg"><label>GitHub Token</label><input type="password" id="s-pat" placeholder="ghp_…"><small>Needs <code>repo</code> scope.</small></div>
           <div style="display:flex;gap:8px"><button class="fd-btn-primary" onclick="saveGHToken()">Save Token</button><button class="fd-btn-secondary" onclick="testGH()">Test Connection</button></div>
           <div id="s-repo-info" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
+          <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Backfill to GitHub</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">Normally this runs on its own the next time an admin signs in after an engine update. Use this to run it right now instead of waiting: pushes every current page, post, event, and core data file into the repo above (skipping anything already byte-identical there), and makes sure the repo itself is set to private.</div>
+            <button class="fd-btn-secondary" onclick="ghSyncNow()" id="s-gh-sync-btn">Sync Site to GitHub Now</button>
+            <div id="s-gh-sync-status" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
+          </div>
         </div>
         <div class="si-sec architect-only"><h2>Repository Override</h2><div class="desc">Manually set GitHub repo if <code>data/site.json</code> hasn't been configured yet.</div>
           <div class="fg"><label>Repository (owner/repo)</label><input type="text" id="s-repo-override" placeholder="YourDigitalGroup/my-client-site"></div>
@@ -2663,7 +2669,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.118';
+const CMS_VERSION='1.14.119';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3029,14 +3035,18 @@ async function ghMirror(path,content,message,opts){
 // from doUpdate() on every engine update — cheap once a site is caught up,
 // since fourgeApiGhMirror() skips the write for a file GitHub already has
 // byte-identical, so a repeat run mostly just confirms nothing changed.
-async function ghSyncSiteContent(){
-  if(!canCallApi()) return;
+// verbose=true (the manual "Sync to GitHub Now" button) surfaces a
+// not-configured/failed result as a toast; the silent default (the automatic
+// call from doUpdate() on every admin login) never interrupts with one.
+async function ghSyncSiteContent(verbose){
+  if(!canCallApi()){ if(verbose) toast('Sign in again to sync to GitHub','err'); return; }
   // doUpdate() now runs automatically on EVERY login (see initUpdateGate), for
   // any role, while the loader is still up — not just a deliberate admin
   // action. Admin+ only, so a plain editor's login is never held up by (or
   // shown a toast about) a GitHub sync they have no context for; the next
-  // admin/superadmin/architect login still picks it up.
-  if(accessLevel(getSessionUser())<2) return;
+  // admin/superadmin/architect login still picks it up. (The manual button
+  // is only ever shown to Architect sessions, so this never blocks it.)
+  if(accessLevel(getSessionUser())<2){ if(verbose) toast('Admin access required','err'); return; }
   const read=async(path)=>{ try{ const d=await apiCall('read_file',{path}); return (d&&d.content!=null)?d.content:null; }catch(e){ return null; } };
 
   const pagesRaw=await read(F_PAGES);
@@ -3079,24 +3089,59 @@ async function ghSyncSiteContent(){
     });
   }
 
-  if(notConfigured) return;   // GitHub isn't set up for this site — silent, matches every other optional GitHub feature here
+  if(notConfigured){
+    // Silent on the automatic login-triggered path (matches every other
+    // optional GitHub feature); the manual button says so explicitly, since
+    // someone who just clicked "Sync Now" deserves to know why nothing moved.
+    if(verbose) toast("GitHub isn't configured for this site yet — add a token and repo above, then try again.",'err');
+    return {ok:true, notConfigured:true, pushed:0, upToDate:0, failed:0};
+  }
   toast(`GitHub sync: ${pushed} pushed, ${upToDate} already current${failed?`, ${failed} failed`:''}`, failed?'err':'ok');
+  return {ok:!failed, notConfigured:false, pushed, upToDate, failed};
 }
 // A client site's own repo is source control for its business content — no
 // reason for it to be publicly readable. Idempotent (fourgeApiGhSetPrivate
 // checks first, so an already-private repo is a silent no-op) and safe to
 // call on every admin login. Same Admin+/Architect gate as
 // ghSyncSiteContent(), for the same reason: doUpdate() now runs on every
-// login, for any role, not just a deliberate admin action. Silent on
-// failure — a token without repo-admin rights isn't a broken CMS, and a
-// GitHub-visibility error toast would only confuse a non-technical editor.
-async function ghEnsureRepoPrivate(){
-  if(!canCallApi()) return;
-  if(accessLevel(getSessionUser())<2) return;
+// login, for any role, not just a deliberate admin action. Silent by default
+// on failure — a token without repo-admin rights isn't a broken CMS, and a
+// GitHub-visibility error toast would only confuse a non-technical editor —
+// but verbose=true (the manual "Sync to GitHub Now" button) surfaces it.
+async function ghEnsureRepoPrivate(verbose){
+  if(!canCallApi()){ if(verbose) toast('Sign in again to update GitHub','err'); return; }
+  if(accessLevel(getSessionUser())<2){ if(verbose) toast('Admin access required','err'); return; }
   try{
     const r=await apiCall('gh_set_private',{});
     if(r&&r.ok&&!r.already) toast('GitHub repo set to private ✓','ok');
-  }catch(e){ console.warn('Could not set GitHub repo private:',e.message); }
+    else if(verbose && r && !r.ok) toast('Could not set the repo private: '+(r.error||r.reason||'unknown error'),'err');
+    return r;
+  }catch(e){
+    console.warn('Could not set GitHub repo private:',e.message);
+    if(verbose) toast('Could not set the repo private: '+e.message,'err');
+    return {ok:false, error:e.message};
+  }
+}
+// The manual "Sync Site to GitHub Now" button (Settings → GitHub Integration):
+// runs the same two steps the automatic login flow does, but right now,
+// regardless of whether an engine update is pending — and with a persistent
+// status line, since a toast alone fades before anyone reads it.
+async function ghSyncNow(){
+  const btn=document.getElementById('s-gh-sync-btn');
+  const st=document.getElementById('s-gh-sync-status');
+  if(btn){ btn.disabled=true; btn.textContent='Syncing…'; }
+  if(st) st.textContent='Syncing…';
+  try{
+    const sync=await ghSyncSiteContent(true);
+    const priv=await ghEnsureRepoPrivate(true);
+    if(st){
+      if(sync&&sync.notConfigured) st.textContent="GitHub isn't configured for this site — add a token and repo above first.";
+      else if(sync) st.textContent=`${sync.pushed} pushed, ${sync.upToDate} already current${sync.failed?`, ${sync.failed} failed`:''}. Repo: ${priv&&priv.ok?(priv.already?'already private':'set to private ✓'):'could not confirm private — see above'}.`;
+      else st.textContent='Could not run — see the notification above.';
+    }
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='Sync Site to GitHub Now'; }
+  }
 }
 async function checkGH(){
   const dot=document.getElementById('gh-dot'),lbl=document.getElementById('gh-lbl');
