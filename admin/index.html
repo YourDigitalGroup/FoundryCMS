@@ -1567,6 +1567,13 @@ textarea.fb-input{resize:vertical}
               <label class="pe-field-label">Advanced — extra CSS (targets <code>.foundry-form</code>)</label>
               <textarea id="fb-css" rows="6" spellcheck="false" style="width:100%;font-family:var(--font-mono);font-size:12px" placeholder="/* e.g. */&#10;.foundry-form .ff-submit{background:#111;border-radius:999px}&#10;.foundry-form input{border-color:#c8531e}"></textarea>
             </div>
+            <div class="pe-side-card">
+              <div class="pe-side-title">Outbound Webhook</div>
+              <label class="pe-field-label">Send each submission as JSON to this URL (optional) — e.g. Zapier, Make, Slack, or your own endpoint</label>
+              <input type="text" id="fb-webhook-url" placeholder="https://hooks.zapier.com/…" style="width:100%;margin-bottom:12px">
+              <label class="pe-field-label">Signing secret (optional)</label>
+              <input type="password" id="fb-webhook-secret" placeholder="Used to verify the request really came from this form" style="width:100%">
+            </div>
             <div class="pe-side-card" id="fb-ghl-card" style="display:none">
               <div class="pe-side-title">Lead Generation — match a CRM form</div>
               <label class="pe-field-label">Paste the CRM form's share link and map this form's fields onto its real fields — so submissions feed your automations with the exact fields they use, not just a note.</label>
@@ -3678,6 +3685,9 @@ function showFormBuilder(f){
   set('fb-css',_curFormMeta.css);
   set('fb-header-title',_curFormMeta.headerTitle);
   set('fb-header-desc',_curFormMeta.headerDesc);
+  set('fb-webhook-url',_curFormMeta.webhookUrl);
+  const whSec=document.getElementById('fb-webhook-secret');
+  if(whSec){ whSec.value=''; whSec.placeholder=_curFormMeta.webhookSecret?'Secret saved — leave blank to keep it':'Used to verify the request really came from this form'; }
   const style=_curFormMeta.style||{};
   // rgba-aware: fcSet loads the hex into the swatch and the alpha into the slider.
   const setColor=(id,val,def)=>{const el=document.getElementById(id);if(!el)return; if(val){fcSet(el,val);el.dataset.set='1';}else{fcSet(el,def);el.dataset.set='0';}};
@@ -4097,6 +4107,8 @@ async function saveForm(){
       headerTitle:get('fb-header-title'),
       headerDesc:get('fb-header-desc'),
       style,
+      webhookUrl:get('fb-webhook-url'),
+      webhookSecret:get('fb-webhook-secret')||(_curFormMeta&&_curFormMeta.webhookSecret)||'',
       phoneFormat:((document.getElementById('fb-phone-format')||{}).checked?'us':''),
       ghlSource:(_curFormMeta&&_curFormMeta.ghlSource)||null,   // CRM form this one is matched to
       ghlAuto:(_curFormMeta&&Array.isArray(_curFormMeta.ghlAuto))?_curFormMeta.ghlAuto:[]
@@ -4764,7 +4776,7 @@ async function viewEntries(formId){
   if(!body)return;
   if(!rows.length){ body.innerHTML='<div class="empty"><h3>No submissions yet</h3><p>Entries will appear here when visitors submit this form.</p></div>'; return; }
   const cols=entryColumns(rows);
-  const thead='<tr><th style="white-space:nowrap">Date</th><th style="white-space:nowrap">reCAPTCHA</th>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
+  const thead='<tr><th style="white-space:nowrap">Date</th><th style="white-space:nowrap">Captcha</th>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
   const tbody=rows.map(e=>{
     const d=e.data||{};
     return '<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc(e.date||'')+'</td>'
@@ -4956,6 +4968,9 @@ function renderFormHtml(form){
   // v2 renders the "I'm not a robot" checkbox inline; v3 is invisible (Google
   // injects its own floating badge) and the token is fetched at submit time.
   const rcHtml=(rcKey&&!rcV3)?'<div class="ff-field"><div class="g-recaptcha" data-sitekey="'+esc(rcKey)+'"></div></div>':'';
+  const hc=(_site&&_site.hcaptcha)||{};
+  const hcKey=(hc.enabled&&hc.siteKey)||'';
+  const hcHtml=hcKey?'<div class="ff-field"><div class="h-captcha" data-sitekey="'+esc(hcKey)+'"></div></div>':'';
   const submitLabel=esc((form.settings&&form.settings.submitLabel)||'Submit');
   let navBtns='';
   if(multi){
@@ -4978,10 +4993,12 @@ function renderFormHtml(form){
     +hdr
     +pagesHtml
     +rcHtml
+    +hcHtml
     +'<div class="ff-msg" style="display:none"></div>'
     +navBtns
     +'</form>'
-    +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js'+(rcV3?'?render='+encodeURIComponent(rcKey):'')+'" async defer></scr'+'ipt>':'');
+    +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js'+(rcV3?'?render='+encodeURIComponent(rcKey):'')+'" async defer></scr'+'ipt>':'')
+    +(hcKey?'<scr'+'ipt src="https://js.hcaptcha.com/1/api.js" async defer></scr'+'ipt>':'');
 }
 
 // Turn a form's simple style settings into ONE scoped <style> block. Scoped by the
@@ -5113,15 +5130,22 @@ function formsRuntimeAssets(){
     +'var hasFile=!!form.querySelector("input[type=file]")||!!form.querySelector("canvas.ff-sig");'
     +'var badSig=null;form.querySelectorAll("canvas.ff-sig[data-required]").forEach(function(c){if(!c.dataset.hasInk)badSig=c;});'
     +'if(badSig){msg.className="ff-msg err";msg.style.display="";msg.textContent="Please provide a signature.";return false;}'
-    +'var data={};if(!hasFile)new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
+    // The reCAPTCHA/hCaptcha widgets each render their own named response
+    // field inside the form; strip both so a submission's own passcode-like
+    // token never lands in the visitor-submitted fields (entries.json, the
+    // notification email) as if it were something the visitor typed.
+    +'var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});delete data["g-recaptcha-response"];delete data["h-captcha-response"];}'
     +'btn.disabled=true;btn.textContent="Sending…";'   // register the click first — never wait on reCAPTCHA to show feedback
     +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3")||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||"";'
     +'if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});}catch(_e){res("");}}),new Promise(function(res){setTimeout(function(){res("");},4000);})]);}catch(e){rcTok="";}}'   // race a 4s timeout so a bad key can never freeze the form
-    +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
-    +'try{var res;if(hasFile){var fd=new FormData(form);fd.append("action","send_form");fd.append("formId",form.getAttribute("data-form-id"));fd.append("recaptcha",rcTok);fd.append("subject",document.title);fd.append("siteUrl",location.href);'
+    +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";'
+    +'if(form.querySelector(".g-recaptcha")&&!rcTok){btn.disabled=false;btn.textContent="Submit";msg.className="ff-msg err";msg.style.display="";msg.textContent="Please complete the reCAPTCHA.";return false;}}'
+    +'var hcTok=(form.querySelector("[name=h-captcha-response]")||{}).value||"";'
+    +'if(form.querySelector(".h-captcha")&&!hcTok){btn.disabled=false;btn.textContent="Submit";msg.className="ff-msg err";msg.style.display="";msg.textContent="Please complete the captcha.";return false;}'
+    +'try{var res;if(hasFile){var fd=new FormData(form);fd.append("action","send_form");fd.append("formId",form.getAttribute("data-form-id"));fd.append("recaptcha",rcTok);fd.append("hcaptcha",hcTok);fd.append("subject",document.title);fd.append("siteUrl",location.href);'
     +'var sigs=form.querySelectorAll("canvas.ff-sig");for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,"image/png");});if(blob)fd.append(sc.getAttribute("name")||"signature",blob,"signature.png");}'
     +'res=await fetch(ffApiBase(),{method:"POST",body:fd});}'
-    +'else{res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});}'
+    +'else{res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,hcaptcha:hcTok,subject:document.title,siteUrl:location.href})});}'
     +'var d=await res.json();if(d.error)throw new Error(d.error);'
     +'msg.className="ff-msg ok";msg.style.display="";msg.textContent=form.getAttribute("data-confirm");form.querySelectorAll(".ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});}'
     +'catch(err){msg.className="ff-msg err";msg.style.display="";msg.textContent="Something went wrong: "+err.message;btn.disabled=false;btn.textContent="'+'Submit'+'";}'
@@ -6739,6 +6763,7 @@ function ffRenderForm(form){
   var sl=esc((form.settings&&form.settings.submitLabel)||'Submit');
   var nav=multi?('<div class=\"ff-nav\"><button type=\"button\" class=\"ff-prev\" data-dir=\"-1\" style=\"display:none\">← Previous</button><button type=\"button\" class=\"ff-next\" data-dir=\"1\">Next →</button><button type=\"submit\" class=\"ff-submit\" style=\"display:none\">'+sl+'</button></div>'):('<button type=\"submit\" class=\"ff-submit\">'+sl+'</button>');
   var rc=(_rcSiteKey&&!_rcV3)?'<div class=\"ff-field\"><div class=\"g-recaptcha\" data-sitekey=\"'+_rcSiteKey+'\"></div></div>':'';
+  var hcHtml=_hcSiteKey?'<div class=\"ff-field\"><div class=\"h-captcha\" data-sitekey=\"'+_hcSiteKey+'\"></div></div>':'';
   var st=(form.settings&&form.settings.style)||{};
   function ffCol(v){v=(''+v).trim();return (v&&/^[#a-zA-Z0-9(),.% ]+$/.test(v))?v:'';}
   var R='#'+fid, rs=[];
@@ -6757,7 +6782,7 @@ function ffRenderForm(form){
   var hs=form.settings||{}, ht=(hs.headerTitle||'').toString().trim(), hd=(hs.headerDesc||'').toString().trim();
   var hdr=(ht||hd)?('<div class=\"ff-header\">'+(ht?'<h2 class=\"ff-form-title\">'+esc(ht)+'</h2>':'')+(hd?'<p class=\"ff-form-desc\">'+esc(hd).replace(/\\n/g,'<br>')+'</p>':'')+'</div>'):'';
   var fst=stl+((((form.settings&&form.settings.css)||'').toString().trim())?('<style>'+form.settings.css+'</style>'):'');
-  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us=\"1\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
+  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us=\"1\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+hcHtml+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
 }
 function ffCondVal(form,fid){var src=form.querySelector('[data-fid=\"'+fid+'\"]');if(!src)return '';var v;if(src.tagName==='DIV'){var ch=src.querySelector('input:checked');v=ch?ch.value:'';}else v=src.value;return v==null?'':v;}
 function ffEvalCond(form){form.querySelectorAll('[data-cond-rules]').forEach(function(el){var rules;try{rules=JSON.parse(el.getAttribute('data-cond-rules')||'[]');}catch(e){rules=[];}var logic=el.getAttribute('data-cond-logic')||'AND';var results=rules.map(function(r){var cur=ffCondVal(form,r.field);return r.op==='is'?(cur===r.value):r.op==='is not'?(cur!==r.value):r.op==='contains'?(cur.indexOf(r.value)>=0):true;});var show=results.length===0?true:(logic==='OR'?results.some(function(x){return x;}):results.every(function(x){return x;}));el.style.display=show?'':'none';});}
@@ -6770,13 +6795,14 @@ function ffSigStop(){_ffSigActive=null;_ffSigLast=null;}
 document.addEventListener('mousedown',ffSigStart);document.addEventListener('mousemove',ffSigMove);document.addEventListener('mouseup',ffSigStop);
 document.addEventListener('touchstart',ffSigStart,{passive:false});document.addEventListener('touchmove',ffSigMove,{passive:false});document.addEventListener('touchend',ffSigStop);
 document.addEventListener('click',function(e){var b=e.target.closest('.ff-sig-clear');if(!b)return;var c=b.previousElementSibling;if(c&&c.classList.contains('ff-sig')){c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.hasInk='';}});
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]')||!!form.querySelector('canvas.ff-sig');var badSig=null;form.querySelectorAll('canvas.ff-sig[data-required]').forEach(function(c){if(!c.dataset.hasInk)badSig=c;});if(badSig){msg.className='ff-msg err';msg.style.display='';msg.textContent='Please provide a signature.';return false;}var data={};if(!hasFile)new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('subject',document.title);fd.append('siteUrl',location.href);var sigs=form.querySelectorAll('canvas.ff-sig');for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,'image/png');});if(blob)fd.append(sc.getAttribute('name')||'signature',blob,'signature.png');}res=await fetch('admin/api.php',{method:'POST',body:fd});}else{res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]')||!!form.querySelector('canvas.ff-sig');var badSig=null;form.querySelectorAll('canvas.ff-sig[data-required]').forEach(function(c){if(!c.dataset.hasInk)badSig=c;});if(badSig){msg.className='ff-msg err';msg.style.display='';msg.textContent='Please provide a signature.';return false;}var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});delete data['g-recaptcha-response'];delete data['h-captcha-response'];}btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}var hcTok=(form.querySelector('[name=h-captcha-response]')||{}).value||'';if(_hcSiteKey&&!hcTok){btn.disabled=false;btn.textContent='Submit';var m3=form.querySelector('.ff-msg');m3.className='ff-msg err';m3.style.display='';m3.textContent='Please complete the captcha.';return false;}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('hcaptcha',hcTok);fd.append('subject',document.title);fd.append('siteUrl',location.href);var sigs=form.querySelectorAll('canvas.ff-sig');for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,'image/png');});if(blob)fd.append(sc.getAttribute('name')||'signature',blob,'signature.png');}res=await fetch('admin/api.php',{method:'POST',body:fd});}else{res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,hcaptcha:hcTok,subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,'');if(d.length>11)return v;var p='';if(d.length===11){if(d[0]!=='1')return v;p='1 ';d=d.slice(1);}if(!d.length)return '';if(d.length<4)return p+'('+d;if(d.length<7)return p+'('+d.slice(0,3)+') '+d.slice(3);return p+'('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);}
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
-var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
+var _blogForms=[];var _rcSiteKey='';var _rcV3=false;var _hcSiteKey='';
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
-try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}}}catch(e){}
-if(_rcSiteKey){var s=document.createElement('script');s.src='https://www.google.com/recaptcha/api.js'+(_rcV3?'?render='+encodeURIComponent(_rcSiteKey):'');s.async=true;s.defer=true;document.head.appendChild(s);}}
+try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}if(sj&&sj.hcaptcha&&sj.hcaptcha.enabled){_hcSiteKey=sj.hcaptcha.siteKey||'';}}}catch(e){}
+if(_rcSiteKey){var s=document.createElement('script');s.src='https://www.google.com/recaptcha/api.js'+(_rcV3?'?render='+encodeURIComponent(_rcSiteKey):'');s.async=true;s.defer=true;document.head.appendChild(s);}
+if(_hcSiteKey){var hs=document.createElement('script');hs.src='https://js.hcaptcha.com/1/api.js';hs.async=true;hs.defer=true;document.head.appendChild(hs);}}
 function renderShortcodes(html){
   return html.replace(new RegExp('\\\\[form id=([\\\\w-]+)\\\\]','g'),function(m,id){
     var form=_blogForms.find(function(f){return f.id===id;});
@@ -11904,6 +11930,7 @@ function renderPlugins(){
     const home=PLUG_PRESET_HOME[preset.name]||'Functional → Header';
     return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)} · Custom Code → ${home}</div></div><button class="fd-btn-secondary" style="font-size:12px;padding:6px 12px;white-space:nowrap" onclick="navTo('analytics');setTimeout(function(){gaTab('setup');},50)">Open Custom Code →</button></div>`;}).join('');
   body.innerHTML=recaptchaAddonHtml()
+    +hcaptchaAddonHtml()
     +fleetAddonHtml()
     +ghlAddonHtml()
     +mailAddonHtml()
@@ -11991,6 +12018,58 @@ function rcRenderStatus(d){
 }
 // Show the v3 score-threshold control only when v3 is selected.
 function rcToggleV3(v){ const row=document.getElementById('s-rc-threshold-row'); if(row) row.style.display=(v==='v3')?'':'none'; }
+
+// ── hCaptcha add-on ──────────────────────────────────────────────────────────
+// An alternative to reCAPTCHA above — same site-wide on/off + two-key shape
+// (site.json's hcaptcha key, verified server-side by cmsVerifyHcaptcha), but
+// only the standard checkbox challenge (no invisible/score mode reCAPTCHA v3
+// has), so there's no version or threshold control to configure here.
+function hcaptchaAddonHtml(){
+  const hc=(_site&&_site.hcaptcha)||{};
+  const on=!!hc.enabled, siteKey=hc.siteKey||'', hasSecret=!!hc.hasSecret;
+  const hint='font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5';
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#0074BF"></rect><path d="M12 6l5 2v4c0 3.5-2.2 6-5 7-2.8-1-5-3.5-5-7V8z" fill="none" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"></path><path d="M9.5 12l1.8 1.8L14.5 10" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">hCaptcha <span class="pl-badge${on?' on':''}">${on?'Active':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">A privacy-focused alternative to reCAPTCHA — blocks spam-bot form submissions with its own checkbox challenge. Enter your two keys once — every form on the site is protected. Create keys at <code>dashboard.hcaptcha.com</code>.</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <div class="fg"><label>Site Key (public)</label><input type="text" id="s-hc-site" placeholder="10000000-0000-0000-0000-000000000001" value="${esc(siteKey)}"></div>
+      <div class="fg"><label>Secret Key (kept on the server)</label><input type="password" id="s-hc-secret" placeholder="${hasSecret?'Secret saved on server':'0x0000… (kept on server)'}"></div>
+      <div class="pl-addon-actions">
+        <button class="fd-btn-primary" onclick="saveHcaptcha()">Save hCaptcha</button>
+        ${on?'<button class="fd-btn-ghost" onclick="disableHcaptcha()">Turn off</button>':''}
+        <a href="https://dashboard.hcaptcha.com/signup" target="_blank" rel="noopener" class="pl-addon-link">Get your keys ↗</a>
+      </div>
+      <div style="${hint}">Uses its own widget, separate from reCAPTCHA above — most sites only need one. Turning both on protects every form with both checks.</div>
+    </div>
+  </div>`;
+}
+async function saveHcaptcha(){
+  const siteKey=document.getElementById('s-hc-site')?.value.trim()||'';
+  const secret=document.getElementById('s-hc-secret')?.value.trim()||'';
+  if(!_site.hcaptcha) _site.hcaptcha={};
+  _site.hcaptcha.siteKey=siteKey;
+  if(secret) _site.hcaptcha.secret=secret;
+  _site.hcaptcha.hasSecret=!!(secret||_site.hcaptcha.secret);
+  _site.hcaptcha.enabled=!!siteKey;
+  try{
+    await saveSiteInfo();
+    const hcSec=document.getElementById('s-hc-secret');if(hcSec){hcSec.value='';hcSec.placeholder='Secret saved on server';}
+    if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
+    toast(siteKey?'hCaptcha saved — forms are now protected ✓':'hCaptcha keys cleared','ok');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+async function disableHcaptcha(){
+  if(!_site.hcaptcha||!_site.hcaptcha.enabled){ toast('hCaptcha is already off'); return; }
+  _site.hcaptcha.enabled=false;
+  try{ await saveSiteInfo(); toast('hCaptcha turned off','ok'); renderPlugins(); }
+  catch(e){ toast('Save failed: '+e.message,'err'); }
+}
 
 // ── FLEET DASHBOARD add-on ───────────────────────────────────────────────────
 // Off by default on every site — same shape as the TLP feed connection (an

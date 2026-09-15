@@ -745,6 +745,54 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
     return $finish('passed', 'passed (v2 checkbox — no score)');
 }
 
+// hCaptcha: an alternative to reCAPTCHA (Plugins → hCaptcha), same site-wide
+// on/off + two-key shape as reCAPTCHA above, read straight from data/site.json.
+function cmsHcaptchaSecret() {
+    try {
+        $file = __DIR__ . '/../data/site.json';
+        if (!file_exists($file)) return '';
+        $site = json_decode(file_get_contents($file), true);
+        if (!empty($site['hcaptcha']['enabled']) && !empty($site['hcaptcha']['secret'])) {
+            return $site['hcaptcha']['secret'];
+        }
+    } catch (Exception $e) {}
+    return '';
+}
+// hCaptcha's checkbox challenge has no score to threshold against (unlike
+// reCAPTCHA v3) — same non-losing philosophy as reCAPTCHA v2: a successful
+// verification passes, anything else (no token, bad token, hCaptcha
+// unreachable) is 'allowed_unverified' rather than actively blocking, so a
+// real lead is never lost to a misconfigured or momentarily-down check.
+function cmsVerifyHcaptcha($secret, $token) {
+    $rec = ['at' => date('c'), 'outcome' => '', 'ok' => false, 'reason' => '', 'score' => null, 'tokenReceived' => ($token !== '' && $token !== null)];
+    $finish = function ($outcome, $reason) use (&$rec) {
+        $rec['outcome'] = $outcome; $rec['reason'] = $reason; $rec['ok'] = ($outcome === 'passed');
+        error_log('Fourge hCaptcha: ' . strtoupper($outcome) . ' — ' . $reason);
+        return $rec;
+    };
+    $letThrough = ' The submission was let through so a real lead is not lost — but hCaptcha is NOT protecting this form until this is fixed.';
+    if ($token === '' || $token === null) {
+        return $finish('allowed_unverified', 'No token received from the form — the hCaptcha widget did not load on the page.' . $letThrough);
+    }
+    $ch = curl_init('https://hcaptcha.com/siteverify');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => http_build_query(['secret' => $secret, 'response' => $token]),
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    $res = curl_exec($ch); $curlErr = curl_error($ch);
+    curl_close($ch);
+    if (!$res) return $finish('allowed_unverified', 'No response from hCaptcha siteverify' . ($curlErr ? ' (' . $curlErr . ')' : '') . ' — the server may be blocking outbound HTTPS.' . $letThrough);
+    $data = json_decode($res, true);
+    if (empty($data['success'])) {
+        $codes = isset($data['error-codes']) ? implode(', ', (array)$data['error-codes']) : 'unknown';
+        return $finish('allowed_unverified', 'hCaptcha rejected the verification: ' . $codes . '.' . $letThrough);
+    }
+    return $finish('passed', 'passed');
+}
+
 // Admin diagnostic: report the current reCAPTCHA config + the outcome of the most
 // recent submission check, so the exact reason a form is blocked is visible in the
 // CMS (Plugins → reCAPTCHA) without needing server-log access. Never returns keys.
@@ -891,6 +939,48 @@ function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl, $form
         curl_exec($ch2); curl_close($ch2);
     }
     return true;
+}
+
+// Generic outbound webhook config for one form — reads data/forms.json (same
+// lookup-by-id as cmsGhlFormMapping) and returns its settings.webhookUrl/
+// webhookSecret, or null if the form has none configured.
+function cmsFormWebhookConfig($formId) {
+    if ($formId === '') return null;
+    $forms = json_decode(@file_get_contents(__DIR__ . '/../data/forms.json'), true);
+    if (!is_array($forms)) return null;
+    $form = null;
+    foreach ($forms as $f) { if (($f['id'] ?? '') === $formId) { $form = $f; break; } }
+    if (!$form) return null;
+    $url = trim((string)($form['settings']['webhookUrl'] ?? ''));
+    if ($url === '') return null;
+    return ['url' => $url, 'secret' => (string)($form['settings']['webhookSecret'] ?? '')];
+}
+// POSTs one submission as JSON to an operator-supplied URL. Guarded by the same
+// https-and-public-host check every other operator-supplied URL in this codebase
+// gets (fourgeTlpUrlOk — see the TLP feed / Fleet Dashboard / custom AI endpoint).
+// When a secret is set, the raw JSON body is HMAC-SHA256 signed the same way
+// GitHub/Stripe webhooks are, so the receiving end can verify it really came from
+// this form and wasn't forged or replayed by a different sender.
+function cmsSendWebhook($url, $secret, $payload) {
+    if (!fourgeTlpUrlOk($url)) return false;
+    $body = json_encode($payload);
+    $headers = ['Content-Type: application/json'];
+    if ($secret !== '') {
+        $headers[] = 'X-Fourge-Signature: sha256=' . hash_hmac('sha256', $body, $secret);
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => $headers,
+        CURLOPT_POSTFIELDS     => $body,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $code >= 200 && $code < 300;
 }
 
 // Same slug the form renderer uses for input names (admin/index.html slugify()),
@@ -1522,7 +1612,8 @@ function cmsSendForm($body) {
         $toEmail = (string)($_POST['to']      ?? $mg['notify']);
         $siteUrl = (string)($_POST['siteUrl'] ?? '');
         $rcToken = (string)($_POST['recaptcha'] ?? '');
-        $metaKeys = ['action', 'formId', 'subject', 'to', 'siteUrl', 'recaptcha'];
+        $hcToken = (string)($_POST['hcaptcha'] ?? '');
+        $metaKeys = ['action', 'formId', 'subject', 'to', 'siteUrl', 'recaptcha', 'hcaptcha'];
         $fields = [];
         foreach ($_POST as $k => $v) {
             if (in_array($k, $metaKeys, true)) continue;
@@ -1539,6 +1630,7 @@ function cmsSendForm($body) {
     $siteUrl = $body['siteUrl'] ?? '';
     $formId  = $body['formId']  ?? '';
     $rcToken = $body['recaptcha'] ?? '';
+    $hcToken = $body['hcaptcha'] ?? '';
     }
 
     // reCAPTCHA (only when a secret is configured in site.json). The check ALWAYS
@@ -1555,6 +1647,16 @@ function cmsSendForm($body) {
             echo json_encode(['error' => 'Your submission looked automated and was blocked. Please try again.']); return;
         }
     }
+    // hCaptcha: an alternative to reCAPTCHA, same non-losing philosophy — but it
+    // has no score to threshold against, so (like reCAPTCHA v2) it never actively
+    // blocks, only verifies-and-logs. If reCAPTCHA already produced a verdict above,
+    // that one stays authoritative on the stored entry; hCaptcha's only fills in
+    // when reCAPTCHA isn't configured.
+    $hcSecret = cmsHcaptchaSecret();
+    if ($hcSecret) {
+        $hcVerdict = cmsVerifyHcaptcha($hcSecret, $hcToken);
+        if (!$rcVerdict) $rcVerdict = $hcVerdict;
+    }
 
     // Store the submission in data/entries.json (best-effort, non-fatal). The
     // verdict rides along so the score is on the entry itself, not just a
@@ -1564,6 +1666,19 @@ function cmsSendForm($body) {
     // Push into GoHighLevel as a lead (best-effort; never blocks the form or email)
     $ghl = cmsGhlConfig();
     if ($ghl) { try { cmsGhlPushLead($ghl['token'], $ghl['locationId'], $fields, $subject, $siteUrl, $formId); } catch (Throwable $e) { /* non-fatal */ } }
+
+    // Generic outbound webhook: a per-form URL (Settings → this form → Outbound
+    // Webhook) gets the raw submission as signed JSON — Zapier/Make/Slack/your own
+    // endpoint, the operator's choice. Best-effort; never blocks the form or email.
+    try {
+        $webhook = cmsFormWebhookConfig($formId);
+        if ($webhook && $webhook['url']) {
+            cmsSendWebhook($webhook['url'], $webhook['secret'], [
+                'formId' => $formId, 'subject' => $subject, 'siteUrl' => $siteUrl,
+                'fields' => $fields, 'date' => date('c'),
+            ]);
+        }
+    } catch (Throwable $e) { /* non-fatal */ }
 
     if (!$toEmail) {
         // Entry already stored; report success even without email config
