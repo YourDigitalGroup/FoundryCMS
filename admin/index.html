@@ -1574,6 +1574,16 @@ textarea.fb-input{resize:vertical}
               <label class="pe-field-label">Signing secret (optional)</label>
               <input type="password" id="fb-webhook-secret" placeholder="Used to verify the request really came from this form" style="width:100%">
             </div>
+            <div class="pe-side-card">
+              <div class="pe-side-title">Protections</div>
+              <label class="pe-field-label">Password (optional)</label>
+              <input type="password" id="fb-password" placeholder="Leave blank for no password" style="width:100%;margin-bottom:6px">
+              <label class="fb-check" id="fb-password-clear-row" style="display:none;margin-bottom:12px"><input type="checkbox" id="fb-password-clear"> Remove password protection</label>
+              <label class="pe-field-label">Response limit (optional)</label>
+              <input type="number" id="fb-max-responses" min="1" placeholder="e.g. 100" style="width:100%;margin-bottom:12px">
+              <label class="pe-field-label">Close date (optional)</label>
+              <input type="date" id="fb-close-date" style="width:100%">
+            </div>
             <div class="pe-side-card" id="fb-ghl-card" style="display:none">
               <div class="pe-side-title">Lead Generation — match a CRM form</div>
               <label class="pe-field-label">Paste the CRM form's share link and map this form's fields onto its real fields — so submissions feed your automations with the exact fields they use, not just a note.</label>
@@ -3602,8 +3612,20 @@ async function saveFormsJson(){
   await ghWrite(F_FORMS,json,sha,'CMS: forms update');
 }
 
+let _formAnalytics={};
+// Best-effort — a form that predates this feature, or a fresh site with no
+// views yet, just has no key here; renderFormsList() treats that as 0 views.
+async function loadFormAnalytics(){
+  try{
+    const{url,token}=getApiCfg();
+    if(url&&token){ const d=await apiCall('read_file',{path:'data/form-analytics.json'}); if(d.content){_formAnalytics=JSON.parse(d.content);return;} }
+  }catch{}
+  try{ const r=await fetch('../data/form-analytics.json?t='+Date.now()); if(r.ok){_formAnalytics=await r.json();return;} }catch{}
+  _formAnalytics={};
+}
 async function initForms(){
   await loadEntries();   // load submissions first so the forms list shows accurate entry counts
+  await loadFormAnalytics();
   try{
     const{url,token}=getApiCfg();
     if(url&&token){
@@ -3631,11 +3653,14 @@ function renderFormsList(){
   }
   let rows=_forms.map((f,i)=>{
       const entCount=_entries.filter(e=>e.formId===f.id).length;
+      const views=(_formAnalytics[f.id]&&_formAnalytics[f.id].views)||0;
+      const rate=views>0?Math.round(entCount/views*100):null;
       return '<tr style="cursor:pointer" onclick="editForm('+i+')">'
         +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(f.title||'Untitled'))+'</td>'
         +'<td style="font-size:12px;color:var(--muted)">'+(f.fields?f.fields.length:0)+'</td>'
         +'<td><code style="font-family:var(--font-mono);font-size:11px;background:var(--surface-3);padding:2px 6px;border-radius:4px;cursor:pointer" onclick="event.stopPropagation();copyShortcode(\''+f.id+'\')">[form id='+f.id+']</code></td>'
         +'<td style="font-size:12px"><a href="#" onclick="event.stopPropagation();viewEntries(\''+f.id+'\');return false" style="color:var(--ember);font-weight:600">'+entCount+'</a></td>'
+        +'<td style="font-size:12px;color:var(--muted)">'+views+(rate!=null?' <span style="font-size:11px">('+rate+'% completion)</span>':'')+'</td>'
         +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();editForm('+i+')">Edit</button></td>'
         +'</tr>';
     }).join('');
@@ -3647,10 +3672,11 @@ function renderFormsList(){
         +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td style="font-size:12px"><a href="#" onclick="viewOrphanEntries('+oi+');return false" style="color:var(--ember);font-weight:600">'+orphanCounts[id]+'</a></td>'
+        +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td></td>'
         +'</tr>'
     ).join('');
-  body.innerHTML='<table class="dt"><thead><tr><th>Form</th><th>Fields</th><th>Shortcode</th><th>Entries</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  body.innerHTML='<table class="dt"><thead><tr><th>Form</th><th>Fields</th><th>Shortcode</th><th>Entries</th><th>Views</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function copyShortcode(id){
@@ -3688,6 +3714,12 @@ function showFormBuilder(f){
   set('fb-webhook-url',_curFormMeta.webhookUrl);
   const whSec=document.getElementById('fb-webhook-secret');
   if(whSec){ whSec.value=''; whSec.placeholder=_curFormMeta.webhookSecret?'Secret saved — leave blank to keep it':'Used to verify the request really came from this form'; }
+  set('fb-max-responses',_curFormMeta.maxResponses||'');
+  set('fb-close-date',_curFormMeta.closeDate);
+  const pwField=document.getElementById('fb-password');
+  if(pwField){ pwField.value=''; pwField.placeholder=_curFormMeta.password?'Password set — leave blank to keep it':'Leave blank for no password'; }
+  const pwClearBox=document.getElementById('fb-password-clear'); if(pwClearBox) pwClearBox.checked=false;
+  const pwClearRow=document.getElementById('fb-password-clear-row'); if(pwClearRow) pwClearRow.style.display=_curFormMeta.password?'':'none';
   const style=_curFormMeta.style||{};
   // rgba-aware: fcSet loads the hex into the swatch and the alpha into the slider.
   const setColor=(id,val,def)=>{const el=document.getElementById(id);if(!el)return; if(val){fcSet(el,val);el.dataset.set='1';}else{fcSet(el,def);el.dataset.set='0';}};
@@ -4094,6 +4126,19 @@ async function saveForm(){
   const btn=colorVal('fb-style-button'); if(btn) style.button=btn;
   const lc=colorVal('fb-style-label'); if(lc) style.label=lc;
   const bc=colorVal('fb-style-border'); if(bc) style.border=bc;
+  // Password: hash a newly-typed one server-side (bcrypt isn't available in
+  // JS); leaving the field blank keeps whatever hash is already saved,
+  // unless "Remove password protection" is checked.
+  const pwNew=get('fb-password');
+  const pwClear=(document.getElementById('fb-password-clear')||{}).checked;
+  let passwordHash=(_curFormMeta&&_curFormMeta.password)||'';
+  if(pwClear) passwordHash='';
+  else if(pwNew){
+    try{ const r=await apiCall('hash_form_password',{password:pwNew}); passwordHash=r.hash; }
+    catch(e){ toast('Could not set password: '+e.message,'err'); return; }
+  }
+  const maxRespRaw=get('fb-max-responses');
+  const maxResponses=(maxRespRaw!==''&&isFinite(+maxRespRaw)&&+maxRespRaw>0)?Math.round(+maxRespRaw):0;
   const form={
     id:(_curForm!=null&&_forms[_curForm]?.id)||('form-'+uid().slice(0,5)),
     title,
@@ -4109,6 +4154,9 @@ async function saveForm(){
       style,
       webhookUrl:get('fb-webhook-url'),
       webhookSecret:get('fb-webhook-secret')||(_curFormMeta&&_curFormMeta.webhookSecret)||'',
+      password:passwordHash,
+      maxResponses,
+      closeDate:get('fb-close-date'),
       phoneFormat:((document.getElementById('fb-phone-format')||{}).checked?'us':''),
       ghlSource:(_curFormMeta&&_curFormMeta.ghlSource)||null,   // CRM form this one is matched to
       ghlAuto:(_curFormMeta&&Array.isArray(_curFormMeta.ghlAuto))?_curFormMeta.ghlAuto:[]
@@ -4989,13 +5037,16 @@ function renderFormHtml(form){
       +(hdrTitle?'<h2 class="ff-form-title">'+esc(hdrTitle)+'</h2>':'')
       +(hdrDesc?'<p class="ff-form-desc">'+esc(hdrDesc).replace(/\n/g,'<br>')+'</p>':'')
       +'</div>':'';
-  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'"'+(rcKey&&rcV3?' data-rc-v3="'+esc(rcKey)+'"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us="1"':'')+' data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
-    +hdr
-    +pagesHtml
-    +rcHtml
-    +hcHtml
-    +'<div class="ff-msg" style="display:none"></div>'
-    +navBtns
+  const pwHash=String(s.password||'').trim();
+  const gateHtml=pwHash?'<div class="ff-gate"><label class="ff-label">Password Required</label>'
+    +'<input type="password" class="ff-gate-input" placeholder="Enter password">'
+    +'<button type="button" class="ff-gate-btn" onclick="return ffCheckFormPassword(this)">Unlock</button>'
+    +'<div class="ff-gate-err" style="display:none"></div></div>':'';
+  const content=hdr+pagesHtml+rcHtml+hcHtml+'<div class="ff-msg" style="display:none"></div>'+navBtns;
+  const closeDate=String(s.closeDate||'').trim();
+  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'"'+(rcKey&&rcV3?' data-rc-v3="'+esc(rcKey)+'"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us="1"':'')+(closeDate?' data-close-date="'+esc(closeDate)+'"':'')+' data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
+    +gateHtml
+    +(pwHash?'<div class="ff-gated-content" style="display:none">'+content+'</div>':content)
     +'</form>'
     +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js'+(rcV3?'?render='+encodeURIComponent(rcKey):'')+'" async defer></scr'+'ipt>':'')
     +(hcKey?'<scr'+'ipt src="https://js.hcaptcha.com/1/api.js" async defer></scr'+'ipt>':'');
@@ -5078,7 +5129,11 @@ function formsRuntimeCss(){
     +'.foundry-form .ff-prev{background:#888}'
     +'.foundry-form .ff-nav{display:flex;gap:10px;justify-content:space-between}'
     +'.foundry-form .ff-msg{padding:14px;border-radius:8px;margin-bottom:14px;font-size:14px}'
-    +'.foundry-form .ff-msg.ok{background:#dcfce7;color:#166534}.foundry-form .ff-msg.err{background:#fee2e2;color:#991b1b}'
+    +'.foundry-form .ff-msg.ok{background:#dcfce7;color:#166534}.foundry-form .ff-msg.err{background:#fee2e2;color:#991b1b}.foundry-form .ff-msg.info{background:#eef2ff;color:#3730a3}'
+    +'.foundry-form .ff-gate{max-width:320px;margin:0 auto}'
+    +'.foundry-form .ff-gate-input{margin-bottom:10px}'
+    +'.foundry-form .ff-gate-btn{width:100%;background:var(--ember,#C8531E);color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}'
+    +'.foundry-form .ff-gate-err{color:#991b1b;font-size:13px;margin-top:8px}'
     +'</style>';
 }
 function formsRuntimeAssets(){
@@ -5097,7 +5152,27 @@ function formsRuntimeAssets(){
     +'el.style.display=show?"":"none";});}'
     +'document.addEventListener("input",function(e){var f=e.target.closest(".foundry-form");if(f)ffEvalCond(f);});'
     +'document.addEventListener("change",function(e){var f=e.target.closest(".foundry-form");if(f)ffEvalCond(f);});'
-    +'document.querySelectorAll(".foundry-form").forEach(function(f){ffEvalCond(f);});'
+    // Fire-and-forget view beacon + client-side close-date check, once per
+    // form present when the page loads (ordinary pages never insert a form
+    // later — it's baked into the HTML at placement time).
+    +'function ffFormInit(form){'
+    +'var fid=form.getAttribute("data-form-id");'
+    +'if(fid){try{var payload=JSON.stringify({action:"form_view",formId:fid});if(navigator.sendBeacon){navigator.sendBeacon(ffApiBase(),new Blob([payload],{type:"application/json"}));}else{fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:payload}).catch(function(){});}}catch(e){}}'
+    +'var cd=form.getAttribute("data-close-date");'
+    +'if(cd){var closeAt=new Date(cd+"T23:59:59");if(!isNaN(closeAt)&&new Date()>closeAt){'
+    +'form.querySelectorAll(".ff-gate,.ff-gated-content,.ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});'
+    +'var msg=form.querySelector(".ff-msg");if(msg){msg.className="ff-msg info";msg.style.display="";msg.textContent="This form is no longer accepting responses.";}'
+    +'}}}'
+    +'function ffCheckFormPassword(btn){'
+    +'var gate=btn.closest(".ff-gate");var form=btn.closest(".foundry-form");var input=gate.querySelector(".ff-gate-input");var err=gate.querySelector(".ff-gate-err");'
+    +'var pw=input.value;btn.disabled=true;btn.textContent="Checking…";'
+    +'fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"check_form_password",formId:form.getAttribute("data-form-id"),password:pw})})'
+    +'.then(function(res){return res.json();}).then(function(d){'
+    +'if(d.ok){form.dataset.unlockedPassword=pw;gate.style.display="none";var content=form.querySelector(".ff-gated-content");if(content)content.style.display="";}'
+    +'else{err.style.display="";err.textContent=d.error||"Incorrect password.";btn.disabled=false;btn.textContent="Unlock";}'
+    +'}).catch(function(){err.style.display="";err.textContent="Something went wrong. Please try again.";btn.disabled=false;btn.textContent="Unlock";});'
+    +'return false;}'
+    +'document.querySelectorAll(".foundry-form").forEach(function(f){ffEvalCond(f);ffFormInit(f);});'
     // Per-page lead source: hidden "source…" fields resolve to THIS page's slug
     // at view time, so a form shared across 700 pages reports where each lead
     // actually came from. A placement pinned via [form … source_page=x]
@@ -5142,10 +5217,10 @@ function formsRuntimeAssets(){
     +'if(form.querySelector(".g-recaptcha")&&!rcTok){btn.disabled=false;btn.textContent="Submit";msg.className="ff-msg err";msg.style.display="";msg.textContent="Please complete the reCAPTCHA.";return false;}}'
     +'var hcTok=(form.querySelector("[name=h-captcha-response]")||{}).value||"";'
     +'if(form.querySelector(".h-captcha")&&!hcTok){btn.disabled=false;btn.textContent="Submit";msg.className="ff-msg err";msg.style.display="";msg.textContent="Please complete the captcha.";return false;}'
-    +'try{var res;if(hasFile){var fd=new FormData(form);fd.append("action","send_form");fd.append("formId",form.getAttribute("data-form-id"));fd.append("recaptcha",rcTok);fd.append("hcaptcha",hcTok);fd.append("subject",document.title);fd.append("siteUrl",location.href);'
+    +'try{var res;if(hasFile){var fd=new FormData(form);fd.append("action","send_form");fd.append("formId",form.getAttribute("data-form-id"));fd.append("recaptcha",rcTok);fd.append("hcaptcha",hcTok);fd.append("formPassword",form.dataset.unlockedPassword||"");fd.append("subject",document.title);fd.append("siteUrl",location.href);'
     +'var sigs=form.querySelectorAll("canvas.ff-sig");for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,"image/png");});if(blob)fd.append(sc.getAttribute("name")||"signature",blob,"signature.png");}'
     +'res=await fetch(ffApiBase(),{method:"POST",body:fd});}'
-    +'else{res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,hcaptcha:hcTok,subject:document.title,siteUrl:location.href})});}'
+    +'else{res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,hcaptcha:hcTok,formPassword:form.dataset.unlockedPassword||"",subject:document.title,siteUrl:location.href})});}'
     +'var d=await res.json();if(d.error)throw new Error(d.error);'
     +'msg.className="ff-msg ok";msg.style.display="";msg.textContent=form.getAttribute("data-confirm");form.querySelectorAll(".ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});}'
     +'catch(err){msg.className="ff-msg err";msg.style.display="";msg.textContent="Something went wrong: "+err.message;btn.disabled=false;btn.textContent="'+'Submit'+'";}'
@@ -6658,7 +6733,11 @@ canvas.ff-sig{width:100%;max-width:500px;height:150px;border:1px solid #d8d4cc;b
 .ff-prev{background:#888}
 .ff-nav{display:flex;gap:10px;justify-content:space-between}
 .ff-msg{padding:14px;border-radius:8px;margin-bottom:14px;font-size:14px}
-.ff-msg.ok{background:#dcfce7;color:#166534}.ff-msg.err{background:#fee2e2;color:#991b1b}
+.ff-msg.ok{background:#dcfce7;color:#166534}.ff-msg.err{background:#fee2e2;color:#991b1b}.ff-msg.info{background:#eef2ff;color:#3730a3}
+.ff-gate{max-width:320px;margin:0 auto}
+.ff-gate-input{margin-bottom:10px}
+.ff-gate-btn{width:100%;background:var(--ember);color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}
+.ff-gate-err{color:#991b1b;font-size:13px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -6782,7 +6861,11 @@ function ffRenderForm(form){
   var hs=form.settings||{}, ht=(hs.headerTitle||'').toString().trim(), hd=(hs.headerDesc||'').toString().trim();
   var hdr=(ht||hd)?('<div class=\"ff-header\">'+(ht?'<h2 class=\"ff-form-title\">'+esc(ht)+'</h2>':'')+(hd?'<p class=\"ff-form-desc\">'+esc(hd).replace(/\\n/g,'<br>')+'</p>':'')+'</div>'):'';
   var fst=stl+((((form.settings&&form.settings.css)||'').toString().trim())?('<style>'+form.settings.css+'</style>'):'');
-  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us=\"1\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+hcHtml+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
+  var pwHash=(hs.password||'').toString().trim();
+  var gateHtml=pwHash?('<div class=\"ff-gate\"><label class=\"ff-label\">Password Required</label><input type=\"password\" class=\"ff-gate-input\" placeholder=\"Enter password\"><button type=\"button\" class=\"ff-gate-btn\" onclick=\"return ffCheckFormPassword(this)\">Unlock</button><div class=\"ff-gate-err\" style=\"display:none\"></div></div>'):'';
+  var content=hdr+ph+rc+hcHtml+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav;
+  var closeDate=(hs.closeDate||'').toString().trim();
+  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us=\"1\"':'')+(closeDate?' data-close-date=\"'+esc(closeDate)+'\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+gateHtml+(pwHash?('<div class=\"ff-gated-content\" style=\"display:none\">'+content+'</div>'):content)+'</form>';
 }
 function ffCondVal(form,fid){var src=form.querySelector('[data-fid=\"'+fid+'\"]');if(!src)return '';var v;if(src.tagName==='DIV'){var ch=src.querySelector('input:checked');v=ch?ch.value:'';}else v=src.value;return v==null?'':v;}
 function ffEvalCond(form){form.querySelectorAll('[data-cond-rules]').forEach(function(el){var rules;try{rules=JSON.parse(el.getAttribute('data-cond-rules')||'[]');}catch(e){rules=[];}var logic=el.getAttribute('data-cond-logic')||'AND';var results=rules.map(function(r){var cur=ffCondVal(form,r.field);return r.op==='is'?(cur===r.value):r.op==='is not'?(cur!==r.value):r.op==='contains'?(cur.indexOf(r.value)>=0):true;});var show=results.length===0?true:(logic==='OR'?results.some(function(x){return x;}):results.every(function(x){return x;}));el.style.display=show?'':'none';});}
@@ -6795,9 +6878,32 @@ function ffSigStop(){_ffSigActive=null;_ffSigLast=null;}
 document.addEventListener('mousedown',ffSigStart);document.addEventListener('mousemove',ffSigMove);document.addEventListener('mouseup',ffSigStop);
 document.addEventListener('touchstart',ffSigStart,{passive:false});document.addEventListener('touchmove',ffSigMove,{passive:false});document.addEventListener('touchend',ffSigStop);
 document.addEventListener('click',function(e){var b=e.target.closest('.ff-sig-clear');if(!b)return;var c=b.previousElementSibling;if(c&&c.classList.contains('ff-sig')){c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.hasInk='';}});
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]')||!!form.querySelector('canvas.ff-sig');var badSig=null;form.querySelectorAll('canvas.ff-sig[data-required]').forEach(function(c){if(!c.dataset.hasInk)badSig=c;});if(badSig){msg.className='ff-msg err';msg.style.display='';msg.textContent='Please provide a signature.';return false;}var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});delete data['g-recaptcha-response'];delete data['h-captcha-response'];}btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}var hcTok=(form.querySelector('[name=h-captcha-response]')||{}).value||'';if(_hcSiteKey&&!hcTok){btn.disabled=false;btn.textContent='Submit';var m3=form.querySelector('.ff-msg');m3.className='ff-msg err';m3.style.display='';m3.textContent='Please complete the captcha.';return false;}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('hcaptcha',hcTok);fd.append('subject',document.title);fd.append('siteUrl',location.href);var sigs=form.querySelectorAll('canvas.ff-sig');for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,'image/png');});if(blob)fd.append(sc.getAttribute('name')||'signature',blob,'signature.png');}res=await fetch('admin/api.php',{method:'POST',body:fd});}else{res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,hcaptcha:hcTok,subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]')||!!form.querySelector('canvas.ff-sig');var badSig=null;form.querySelectorAll('canvas.ff-sig[data-required]').forEach(function(c){if(!c.dataset.hasInk)badSig=c;});if(badSig){msg.className='ff-msg err';msg.style.display='';msg.textContent='Please provide a signature.';return false;}var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});delete data['g-recaptcha-response'];delete data['h-captcha-response'];}btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}var hcTok=(form.querySelector('[name=h-captcha-response]')||{}).value||'';if(_hcSiteKey&&!hcTok){btn.disabled=false;btn.textContent='Submit';var m3=form.querySelector('.ff-msg');m3.className='ff-msg err';m3.style.display='';m3.textContent='Please complete the captcha.';return false;}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('hcaptcha',hcTok);fd.append('formPassword',form.dataset.unlockedPassword||'');fd.append('subject',document.title);fd.append('siteUrl',location.href);var sigs=form.querySelectorAll('canvas.ff-sig');for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,'image/png');});if(blob)fd.append(sc.getAttribute('name')||'signature',blob,'signature.png');}res=await fetch('admin/api.php',{method:'POST',body:fd});}else{res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,hcaptcha:hcTok,formPassword:form.dataset.unlockedPassword||'',subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,'');if(d.length>11)return v;var p='';if(d.length===11){if(d[0]!=='1')return v;p='1 ';d=d.slice(1);}if(!d.length)return '';if(d.length<4)return p+'('+d;if(d.length<7)return p+'('+d.slice(0,3)+') '+d.slice(3);return p+'('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);}
-function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
+function ffFormInit(form){
+  var fid=form.getAttribute('data-form-id');
+  if(fid){try{var payload=JSON.stringify({action:'form_view',formId:fid});if(navigator.sendBeacon){navigator.sendBeacon('admin/api.php',new Blob([payload],{type:'application/json'}));}else{fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:payload}).catch(function(){});}}catch(e){}}
+  var cd=form.getAttribute('data-close-date');
+  if(cd){
+    var closeAt=new Date(cd+'T23:59:59');
+    if(!isNaN(closeAt)&&new Date()>closeAt){
+      form.querySelectorAll('.ff-gate,.ff-gated-content,.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});
+      var msg=form.querySelector('.ff-msg');
+      if(msg){msg.className='ff-msg info';msg.style.display='';msg.textContent='This form is no longer accepting responses.';}
+    }
+  }
+}
+function ffCheckFormPassword(btn){
+  var gate=btn.closest('.ff-gate');var form=btn.closest('.foundry-form');var input=gate.querySelector('.ff-gate-input');var err=gate.querySelector('.ff-gate-err');
+  var pw=input.value;btn.disabled=true;btn.textContent='Checking…';
+  fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'check_form_password',formId:form.getAttribute('data-form-id'),password:pw})})
+    .then(function(res){return res.json();}).then(function(d){
+      if(d.ok){form.dataset.unlockedPassword=pw;gate.style.display='none';var content=form.querySelector('.ff-gated-content');if(content)content.style.display='';}
+      else{err.style.display='';err.textContent=d.error||'Incorrect password.';btn.disabled=false;btn.textContent='Unlock';}
+    }).catch(function(){err.style.display='';err.textContent='Something went wrong. Please try again.';btn.disabled=false;btn.textContent='Unlock';});
+  return false;
+}
+function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);ffFormInit(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;var _hcSiteKey='';
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
 try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}if(sj&&sj.hcaptcha&&sj.hcaptcha.enabled){_hcSiteKey=sj.hcaptcha.siteKey||'';}}}catch(e){}

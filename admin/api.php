@@ -184,7 +184,10 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //    (session OR constant-time Bearer match) and refuse everything else.
 //    'blog_sync_tick' is the same shape, for the same reason: an external
 //    scheduler needs to reach it with no session at all.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick'];
+//  • 'check_form_password' / 'form_view' are public for the same reason as
+//    'send_form': a site visitor has no token or session. Neither exposes
+//    anything beyond a single form's own pass/fail check or view counter.
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick'];
 $SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
@@ -269,6 +272,9 @@ try {
         case 'upload':      ob_end_clean(); handleUpload();    break;
         case 'delete_file': ob_end_clean(); cmsDeleteFile($body); break;
         case 'send_form':   ob_end_clean(); cmsSendForm($body); break;
+        case 'check_form_password': ob_end_clean(); fourgeApiCheckFormPassword($body); break;
+        case 'form_view':   ob_end_clean(); fourgeApiFormView($body); break;
+        case 'hash_form_password': ob_end_clean(); fourgeApiHashFormPassword($body); break;
         case 'ga_save_credentials': ob_end_clean(); gaSaveCredentials($body); break;
         case 'ga_status':   ob_end_clean(); gaStatus();          break;
         case 'ga_report':   ob_end_clean(); gaReport($body);     break;
@@ -941,15 +947,20 @@ function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl, $form
     return true;
 }
 
-// Generic outbound webhook config for one form — reads data/forms.json (same
-// lookup-by-id as cmsGhlFormMapping) and returns its settings.webhookUrl/
-// webhookSecret, or null if the form has none configured.
-function cmsFormWebhookConfig($formId) {
+// Look up one form's own definition in data/forms.json by id — the shared
+// lookup behind cmsGhlFormMapping, cmsFormWebhookConfig, the form-password
+// check, and the response-limit/close-date check below.
+function cmsFormById($formId) {
     if ($formId === '') return null;
     $forms = json_decode(@file_get_contents(__DIR__ . '/../data/forms.json'), true);
     if (!is_array($forms)) return null;
-    $form = null;
-    foreach ($forms as $f) { if (($f['id'] ?? '') === $formId) { $form = $f; break; } }
+    foreach ($forms as $f) { if (($f['id'] ?? '') === $formId) return $f; }
+    return null;
+}
+// Generic outbound webhook config for one form — its settings.webhookUrl/
+// webhookSecret, or null if the form has none configured.
+function cmsFormWebhookConfig($formId) {
+    $form = cmsFormById($formId);
     if (!$form) return null;
     $url = trim((string)($form['settings']['webhookUrl'] ?? ''));
     if ($url === '') return null;
@@ -983,6 +994,87 @@ function cmsSendWebhook($url, $secret, $payload) {
     return $code >= 200 && $code < 300;
 }
 
+// Returns a user-facing reason this form is closed (past its close date, or
+// at its response cap), or '' if it's open. Checked before reCAPTCHA/hCaptcha
+// in cmsSendForm — no point verifying a captcha for a submission that can't
+// be accepted anyway.
+function cmsFormClosedReason($form) {
+    $s = $form['settings'] ?? [];
+    $closeDate = trim((string)($s['closeDate'] ?? ''));
+    if ($closeDate !== '') {
+        $ts = strtotime($closeDate . ' 23:59:59');
+        if ($ts !== false && time() > $ts) return 'This form is no longer accepting responses.';
+    }
+    $max = (int)($s['maxResponses'] ?? 0);
+    if ($max > 0 && cmsCountEntriesForForm((string)($form['id'] ?? '')) >= $max) {
+        return 'This form has reached its response limit.';
+    }
+    return '';
+}
+function cmsCountEntriesForForm($formId) {
+    $entries = json_decode(@file_get_contents(__DIR__ . '/../data/entries.json'), true);
+    if (!is_array($entries)) return 0;
+    $n = 0;
+    foreach ($entries as $e) { if (($e['formId'] ?? '') === $formId) $n++; }
+    return $n;
+}
+// A submission itself carries the password it was unlocked with (the client
+// only reveals the real form after a successful check_form_password call —
+// see ffCheckFormPassword in admin/index.html), so cmsSendForm can verify it
+// independently. Without this, a password-protected form's real gate would
+// be purely a client-side courtesy: anyone could skip straight to send_form.
+function cmsFormPasswordOk($form, $submitted) {
+    $hash = (string)($form['settings']['password'] ?? '');
+    if ($hash === '') return true;   // not password-protected
+    return $submitted !== '' && password_verify($submitted, $hash);
+}
+// Public: verify a visitor-entered password against a password-protected
+// form's stored hash (bcrypt, same approach as page passwords — see
+// fourgeApiSetPagePassword). A low-stakes gate on who can see/submit a form,
+// not a high-security boundary, so no extra rate-limiting beyond bcrypt's
+// own inherent slowness.
+function fourgeApiCheckFormPassword($body) {
+    $formId = (string)($body['formId'] ?? '');
+    $password = (string)($body['password'] ?? '');
+    $form = cmsFormById($formId);
+    $hash = (string)($form['settings']['password'] ?? '');
+    if ($hash === '') { echo json_encode(['ok' => true]); return; }   // not password-protected — nothing to check
+    if ($password !== '' && password_verify($password, $hash)) {
+        echo json_encode(['ok' => true]);
+    } else {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Incorrect password']);
+    }
+}
+// Public, best-effort view counter feeding the Forms list's analytics — never
+// blocks or errors loudly; a lost increment under concurrent writes is an
+// acceptable tradeoff for not needing file locking on every page view.
+function fourgeApiFormView($body) {
+    $formId = (string)($body['formId'] ?? '');
+    if ($formId === '') { echo json_encode(['ok' => false]); return; }
+    try {
+        $file = __DIR__ . '/../data/form-analytics.json';
+        $data = is_file($file) ? json_decode(file_get_contents($file), true) : [];
+        if (!is_array($data)) $data = [];
+        if (!isset($data[$formId]) || !is_array($data[$formId])) $data[$formId] = ['views' => 0];
+        $data[$formId]['views'] = (int)($data[$formId]['views'] ?? 0) + 1;
+        file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT));
+    } catch (Throwable $e) {}
+    echo json_encode(['ok' => true]);
+}
+// The form builder calls this once when the admin sets/changes a form's
+// password, then saves the returned hash into settings.password itself via
+// the normal saveForm()/write_file flow — so this endpoint only ever hashes,
+// it never touches forms.json (no second write path to conflict with the
+// builder's own full-array save). Requires the same auth the read_file/
+// write_file actions already require (session or the shared API token) —
+// the dispatcher gates that before this function ever runs.
+function fourgeApiHashFormPassword($body) {
+    $password = (string)($body['password'] ?? '');
+    if (strlen($password) < 4) { http_response_code(400); echo json_encode(['error' => 'Password must be at least 4 characters']); return; }
+    echo json_encode(['ok' => true, 'hash' => password_hash($password, PASSWORD_DEFAULT)]);
+}
+
 // Same slug the form renderer uses for input names (admin/index.html slugify()),
 // so submitted keys — slug(label)-<first 4 of field id> — can be matched back to
 // the form's field definitions here on the server.
@@ -997,10 +1089,7 @@ function cmsSlug($s) {
 // field (firstName/email/companyName/…) or a custom field (by id/key). Hidden
 // CRM fields the form was matched with (settings.ghlAuto) are sent as constants.
 function cmsGhlFormMapping($formId, $fields) {
-    $forms = json_decode(@file_get_contents(__DIR__ . '/../data/forms.json'), true);
-    if (!is_array($forms)) return null;
-    $form = null;
-    foreach ($forms as $f) { if (($f['id'] ?? '') === $formId) { $form = $f; break; } }
+    $form = cmsFormById($formId);
     if (!$form) return null;
     return cmsGhlApplyMapping($form, $fields);
 }
@@ -1613,7 +1702,8 @@ function cmsSendForm($body) {
         $siteUrl = (string)($_POST['siteUrl'] ?? '');
         $rcToken = (string)($_POST['recaptcha'] ?? '');
         $hcToken = (string)($_POST['hcaptcha'] ?? '');
-        $metaKeys = ['action', 'formId', 'subject', 'to', 'siteUrl', 'recaptcha', 'hcaptcha'];
+        $formPassword = (string)($_POST['formPassword'] ?? '');
+        $metaKeys = ['action', 'formId', 'subject', 'to', 'siteUrl', 'recaptcha', 'hcaptcha', 'formPassword'];
         $fields = [];
         foreach ($_POST as $k => $v) {
             if (in_array($k, $metaKeys, true)) continue;
@@ -1631,6 +1721,25 @@ function cmsSendForm($body) {
     $formId  = $body['formId']  ?? '';
     $rcToken = $body['recaptcha'] ?? '';
     $hcToken = $body['hcaptcha'] ?? '';
+    $formPassword = $body['formPassword'] ?? '';
+    }
+
+    // Response limit / close date / password protection — checked first, since
+    // there's no point verifying a captcha (below) for a submission that can't
+    // be accepted anyway. $formDef is looked up again later by
+    // cmsFormWebhookConfig()/cmsGhlFormMapping(); that's an accepted small
+    // redundancy rather than threading one more parameter through both.
+    $formDef = cmsFormById($formId);
+    if ($formDef) {
+        $closedReason = cmsFormClosedReason($formDef);
+        if ($closedReason !== '') {
+            http_response_code(403);
+            echo json_encode(['error' => $closedReason]); return;
+        }
+        if (!cmsFormPasswordOk($formDef, $formPassword)) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Incorrect password.']); return;
+        }
     }
 
     // reCAPTCHA (only when a secret is configured in site.json). The check ALWAYS
