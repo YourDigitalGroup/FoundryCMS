@@ -185,7 +185,7 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //    'blog_sync_tick' is the same shape, for the same reason: an external
 //    scheduler needs to reach it with no session at all.
 $PUBLIC_ACTIONS  = ['login', 'send_form', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -243,6 +243,7 @@ try {
         case 'ghl_send':        ob_end_clean(); fourgeApiGhlSend($authUser, $body); break;
         case 'ghl_form_def':    ob_end_clean(); fourgeApiGhlFormDef($authUser, $body); break;
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
+        case 'gh_set_private':  ob_end_clean(); fourgeApiGhSetPrivate($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'ai_endpoint_test': ob_end_clean(); fourgeApiAiEndpointTest($authUser, $body); break;
@@ -1117,6 +1118,25 @@ function fourgeApiGhMirror($me, $body) {
     list($c, $d, $e) = cmsGhApi('PUT', $base, $token, $payload);
     if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
     error_log('Fourge GitHub mirror failed for ' . $path . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
+    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]);
+}
+// A client site's own repo is source control for its business content — no
+// reason for it to be publicly readable. Idempotent: a GET first, so an
+// already-private repo is a silent no-op rather than a redundant PATCH.
+// Admin+ only, same as the content sync this rides alongside (see
+// ghSyncSiteContent()/ghEnsureRepoPrivate() in admin/index.html).
+function fourgeApiGhSetPrivate($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin access required']); return; }
+    list($repo, , $token) = cmsGhMirrorCfg();
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo']); return; }
+    if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token']); return; }
+    $base = 'https://api.github.com/repos/' . $repo;
+    list($gc, $gd) = cmsGhApi('GET', $base, $token);
+    if ($gc === 200 && !empty($gd['private'])) { echo json_encode(['ok' => true, 'already' => true]); return; }
+    if ($gc !== 200) { echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $gc . ' looking up the repo']); return; }
+    list($c, $d, $e) = cmsGhApi('PATCH', $base, $token, ['private' => true]);
+    if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
+    error_log('Fourge GitHub set-private failed for ' . $repo . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
     echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]);
 }
 

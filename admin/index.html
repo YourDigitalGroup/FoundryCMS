@@ -2663,7 +2663,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.117';
+const CMS_VERSION='1.14.118';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3031,6 +3031,12 @@ async function ghMirror(path,content,message,opts){
 // byte-identical, so a repeat run mostly just confirms nothing changed.
 async function ghSyncSiteContent(){
   if(!canCallApi()) return;
+  // doUpdate() now runs automatically on EVERY login (see initUpdateGate), for
+  // any role, while the loader is still up — not just a deliberate admin
+  // action. Admin+ only, so a plain editor's login is never held up by (or
+  // shown a toast about) a GitHub sync they have no context for; the next
+  // admin/superadmin/architect login still picks it up.
+  if(accessLevel(getSessionUser())<2) return;
   const read=async(path)=>{ try{ const d=await apiCall('read_file',{path}); return (d&&d.content!=null)?d.content:null; }catch(e){ return null; } };
 
   const pagesRaw=await read(F_PAGES);
@@ -3075,6 +3081,22 @@ async function ghSyncSiteContent(){
 
   if(notConfigured) return;   // GitHub isn't set up for this site — silent, matches every other optional GitHub feature here
   toast(`GitHub sync: ${pushed} pushed, ${upToDate} already current${failed?`, ${failed} failed`:''}`, failed?'err':'ok');
+}
+// A client site's own repo is source control for its business content — no
+// reason for it to be publicly readable. Idempotent (fourgeApiGhSetPrivate
+// checks first, so an already-private repo is a silent no-op) and safe to
+// call on every admin login. Same Admin+/Architect gate as
+// ghSyncSiteContent(), for the same reason: doUpdate() now runs on every
+// login, for any role, not just a deliberate admin action. Silent on
+// failure — a token without repo-admin rights isn't a broken CMS, and a
+// GitHub-visibility error toast would only confuse a non-technical editor.
+async function ghEnsureRepoPrivate(){
+  if(!canCallApi()) return;
+  if(accessLevel(getSessionUser())<2) return;
+  try{
+    const r=await apiCall('gh_set_private',{});
+    if(r&&r.ok&&!r.already) toast('GitHub repo set to private ✓','ok');
+  }catch(e){ console.warn('Could not set GitHub repo private:',e.message); }
 }
 async function checkGH(){
   const dot=document.getElementById('gh-dot'),lbl=document.getElementById('gh-lbl');
@@ -12540,9 +12562,11 @@ async function doUpdate(st){
     // against the fresh server code; otherwise it waits for the next fresh tab.
     try{ sessionStorage.removeItem('fourge_cu_ok'); }catch(e){}
     // Backfill this site's own pages/posts/events/data into its own GitHub
-    // repo. Best-effort and never blocks the engine update above — a GitHub
-    // hiccup here must not be reported as a failed update.
+    // repo, and make sure that repo is private. Both best-effort and never
+    // block the engine update above — a GitHub hiccup here must not be
+    // reported as a failed update.
     try{ await ghSyncSiteContent(); }catch(e){ console.warn('GitHub content sync skipped:',e.message); }
+    try{ await ghEnsureRepoPrivate(); }catch(e){ console.warn('GitHub repo-privacy check skipped:',e.message); }
     return true;
   }catch(e){ toast('Update failed: '+e.message,'err'); return false; }
 }
