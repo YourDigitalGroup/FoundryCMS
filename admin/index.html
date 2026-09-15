@@ -2663,7 +2663,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.116';
+const CMS_VERSION='1.14.117';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3006,7 +3006,7 @@ async function ghMirror(path,content,message,opts){
   const del=!!(opts&&opts.delete);
   try{
     const r=await apiCall('gh_mirror', del?{path,message,delete:true}:{path,content,message});
-    if(r&&r.ok) return {ok:true,via:'server'};
+    if(r&&r.ok) return {ok:true,via:'server',skipped:!!r.skipped};
     if(r&&r.reason==='github') return {ok:false,via:'server',error:r.error||'GitHub rejected the update'};
     // no_repo / no_token → try the browser PAT below
   }catch(e){ /* older api.php without gh_mirror, or transient error → browser fallback */ }
@@ -3019,6 +3019,62 @@ async function ghMirror(path,content,message,opts){
     }catch(e){ return {ok:false,via:'browser',error:e.message}; }
   }
   return {ok:false,via:null,error:'not_configured'};
+}
+// Push this site's OWN current content into ITS OWN GitHub repo — a separate
+// concern from doUpdate()'s engine-file pull, which reads FROM the template
+// repo. Historically only page saves mirrored to GitHub (see veSavePage);
+// posts/events/site data saved straight to the server only, so an existing
+// site's repo can be missing or badly behind on content a tool that only
+// reads the repo (e.g. Claude, via a GitHub connection) needs to see. Called
+// from doUpdate() on every engine update — cheap once a site is caught up,
+// since fourgeApiGhMirror() skips the write for a file GitHub already has
+// byte-identical, so a repeat run mostly just confirms nothing changed.
+async function ghSyncSiteContent(){
+  if(!canCallApi()) return;
+  const read=async(path)=>{ try{ const d=await apiCall('read_file',{path}); return (d&&d.content!=null)?d.content:null; }catch(e){ return null; } };
+
+  const pagesRaw=await read(F_PAGES);
+  const targets=[
+    {readPath:F_PAGES, ghPath:F_PAGES, label:'pages manifest'},
+    {readPath:F_POSTS, ghPath:F_POSTS, label:'posts manifest'},
+    {readPath:'posts.html', ghPath:'posts.html', label:'blog page'},
+    {readPath:F_EVENTS, ghPath:F_EVENTS, label:'events manifest'},
+    {readPath:F_SITE, ghPath:F_SITE, label:'site settings'},
+    {readPath:F_SEO, ghPath:F_SEO, label:'SEO data'},
+    {readPath:F_FORMS, ghPath:F_FORMS, label:'form definitions'},
+  ];
+  // Read pages.json fresh rather than trusting in-memory _pages, so this is
+  // correct regardless of which tab was open before Update was clicked.
+  if(pagesRaw){
+    let pagesObj={}; try{ pagesObj=JSON.parse(pagesRaw)||{}; }catch(e){ pagesObj={}; }
+    Object.keys(pagesObj).forEach(id=>{
+      const p=pagesObj[id]||{};
+      const file=p.file||(id==='home'?'index.html':capitalize(id)+'.html');
+      targets.push({readPath:p.path||file, ghPath:file, label:'page "'+(p.title||id)+'"'});
+    });
+  }
+
+  let pushed=0, upToDate=0, failed=0, notConfigured=false;
+  const BATCH=5;
+  for(let i=0;i<targets.length && !notConfigured;i+=BATCH){
+    const results=await Promise.all(targets.slice(i,i+BATCH).map(async t=>{
+      const content=await read(t.readPath);
+      if(content==null) return 'missing';   // file doesn't exist on this site — nothing to mirror
+      const r=await ghMirror(t.ghPath,content,'Fourge: sync '+t.label+' to GitHub');
+      if(r.ok) return r.skipped?'uptodate':'pushed';
+      if(r.error==='not_configured') return 'not_configured';
+      return 'failed';
+    }));
+    results.forEach(r=>{
+      if(r==='pushed') pushed++;
+      else if(r==='uptodate') upToDate++;
+      else if(r==='failed') failed++;
+      else if(r==='not_configured') notConfigured=true;
+    });
+  }
+
+  if(notConfigured) return;   // GitHub isn't set up for this site — silent, matches every other optional GitHub feature here
+  toast(`GitHub sync: ${pushed} pushed, ${upToDate} already current${failed?`, ${failed} failed`:''}`, failed?'err':'ok');
 }
 async function checkGH(){
   const dot=document.getElementById('gh-dot'),lbl=document.getElementById('gh-lbl');
@@ -12483,6 +12539,10 @@ async function doUpdate(st){
     // rule). Clear the gate so the post-update reload re-runs the self-heal
     // against the fresh server code; otherwise it waits for the next fresh tab.
     try{ sessionStorage.removeItem('fourge_cu_ok'); }catch(e){}
+    // Backfill this site's own pages/posts/events/data into its own GitHub
+    // repo. Best-effort and never blocks the engine update above — a GitHub
+    // hiccup here must not be reported as a failed update.
+    try{ await ghSyncSiteContent(); }catch(e){ console.warn('GitHub content sync skipped:',e.message); }
     return true;
   }catch(e){ toast('Update failed: '+e.message,'err'); return false; }
 }
