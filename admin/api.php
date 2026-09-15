@@ -1413,14 +1413,133 @@ function cmsSmtpFrom($mgFrom) {
     return [$fromEmail, $fromName];
 }
 
+// data/uploads/ holds files visitors attach to a form submission. Never
+// execute anything in it (a renamed/disguised script must stay inert even if
+// a hosting config ignores php_flag) and never let it be browsed/listed —
+// each file's URL is an unguessable token, not something to enumerate.
+function fourgeWriteUploadsHtaccess() {
+    $dir = PUBLIC_HTML . '/data/uploads';
+    if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+    $htPath   = $dir . '/.htaccess';
+    $existing = is_file($htPath) ? (string)file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Uploads Guard';
+    $end   = '# END Fourge Uploads Guard';
+    $rules = <<<'HT'
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<FilesMatch "\.(php\d?|phtml|phar|cgi|pl|py|sh|exe)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+Options -Indexes
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+// data/entries.json holds every submitted lead (name/email/phone/message, and
+// now file-upload paths) — unlike pages/posts/site.json, no legitimate visitor
+// page ever fetches it, so (like users.json) it has no business being
+// publicly readable. Same managed-marker splice as fourgeWriteAdminHtaccess.
+function fourgeWriteEntriesHtaccess() {
+    $dir = PUBLIC_HTML . '/data';
+    if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+    $htPath   = $dir . '/.htaccess';
+    $existing = is_file($htPath) ? (string)file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Entries Guard';
+    $end   = '# END Fourge Entries Guard';
+    $rules = <<<'HT'
+<FilesMatch "^entries\.json$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+// Extensions allowed through a form's File Upload field — common document/
+// image types a lead-gen form realistically needs (resumes, photos, quotes).
+// Anything else (scripts, executables, disguised extensions) is refused.
+const FOURGE_UPLOAD_ALLOWED_EXT = ['pdf','doc','docx','xls','xlsx','ppt','pptx','png','jpg','jpeg','gif','webp','txt','csv','zip'];
+const FOURGE_UPLOAD_MAX_BYTES = 10485760; // 10MB per file
+// Moves one $_FILES entry into data/uploads/<formId>/, validated and safely
+// renamed (random token + sanitized basename — never the caller's own
+// filename verbatim). Returns a site-relative URL on success, or null on any
+// failure (bad extension, too large, upload error); the caller just omits the
+// field rather than failing the whole submission over one bad attachment.
+function fourgeStoreFormUpload($formId, $file) {
+    if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) return null;
+    if (!is_uploaded_file($file['tmp_name'] ?? '')) return null;
+    $size = (int)($file['size'] ?? 0);
+    if ($size <= 0 || $size > FOURGE_UPLOAD_MAX_BYTES) return null;
+    $orig = (string)($file['name'] ?? 'file');
+    $ext  = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+    if (!in_array($ext, FOURGE_UPLOAD_ALLOWED_EXT, true)) return null;
+    $base = trim((string)preg_replace('~[^A-Za-z0-9_-]+~', '-', pathinfo($orig, PATHINFO_FILENAME)), '-');
+    if ($base === '') $base = 'file';
+    $base = substr($base, 0, 60);
+    $formSlug = trim((string)preg_replace('~[^A-Za-z0-9_-]+~', '-', (string)$formId), '-');
+    if ($formSlug === '') $formSlug = 'form';
+    $dir = PUBLIC_HTML . '/data/uploads/' . $formSlug;
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $name = bin2hex(random_bytes(8)) . '-' . $base . '.' . $ext;
+    if (!move_uploaded_file($file['tmp_name'], $dir . '/' . $name)) return null;
+    return 'data/uploads/' . $formSlug . '/' . $name;
+}
 function cmsSendForm($body) {
-    $mg      = cmsMailgun();
+    $mg = cmsMailgun();
+    // A submission carrying a file upload arrives as multipart/form-data (see
+    // ffSubmit's hasFile branch) instead of JSON, so $body is empty here —
+    // fall back to $_POST/$_FILES, the same way $action already does above
+    // when there's no JSON body to read.
+    if (empty($body) && (!empty($_POST) || !empty($_FILES))) {
+        $formId  = (string)($_POST['formId']  ?? '');
+        $subject = (string)($_POST['subject'] ?? 'New Form Submission');
+        $toEmail = (string)($_POST['to']      ?? $mg['notify']);
+        $siteUrl = (string)($_POST['siteUrl'] ?? '');
+        $rcToken = (string)($_POST['recaptcha'] ?? '');
+        $metaKeys = ['action', 'formId', 'subject', 'to', 'siteUrl', 'recaptcha'];
+        $fields = [];
+        foreach ($_POST as $k => $v) {
+            if (in_array($k, $metaKeys, true)) continue;
+            $fields[$k] = is_array($v) ? implode(', ', $v) : $v;
+        }
+        foreach ($_FILES as $k => $file) {
+            $url = fourgeStoreFormUpload($formId, $file);
+            if ($url) $fields[$k] = $url;
+        }
+    } else {
     $fields  = $body['fields']  ?? [];
     $subject = $body['subject'] ?? 'New Form Submission';
     $toEmail = $body['to']      ?? $mg['notify'];
     $siteUrl = $body['siteUrl'] ?? '';
     $formId  = $body['formId']  ?? '';
     $rcToken = $body['recaptcha'] ?? '';
+    }
 
     // reCAPTCHA (only when a secret is configured in site.json). The check ALWAYS
     // runs so its outcome is recorded for the diagnostic, but a submission is blocked
@@ -3829,6 +3948,11 @@ function fourgeApiInstallCleanUrls($me) {
     // before admin/.htaccess existed have had no protection at all.
     $sec = false;
     try { $sec    = fourgeWriteAdminHtaccess();    } catch (Throwable $e) { $sec = false; }
+    // Same reasoning as admin/.htaccess above: a site that had form entries or
+    // uploads before these guards existed has had no protection at all.
+    $entriesGuard = false; $uploadsGuard = false;
+    try { $entriesGuard = fourgeWriteEntriesHtaccess(); } catch (Throwable $e) { $entriesGuard = false; }
+    try { $uploadsGuard = fourgeWriteUploadsHtaccess(); } catch (Throwable $e) { $uploadsGuard = false; }
     // The four safe security headers, and an llms.txt if the site has none.
     $hdr = false; $llms = false;
     try { $hdr    = fourgeWriteDefaultHeaders();   } catch (Throwable $e) { $hdr = false; }
@@ -3847,7 +3971,8 @@ function fourgeApiInstallCleanUrls($me) {
     try { $blogSync     = fourgeBlogSyncTickIfDue();       } catch (Throwable $e) { $blogSync = null; }
     echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
-        'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync]);
+        'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
+        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');

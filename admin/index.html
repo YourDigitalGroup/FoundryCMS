@@ -4697,7 +4697,7 @@ async function viewEntries(formId){
     const d=e.data||{};
     return '<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc(e.date||'')+'</td>'
       +'<td style="white-space:nowrap">'+recaptchaCellHtml(e.recaptcha)+'</td>'
-      +cols.map(c=>'<td style="font-size:13px">'+esc(d[c]!=null?String(d[c]):'')+'</td>').join('')
+      +cols.map(c=>'<td style="font-size:13px">'+entryCellHtml(d[c])+'</td>').join('')
       +'</tr>';
   }).join('');
   body.innerHTML=''
@@ -4723,6 +4723,27 @@ function recaptchaCellHtml(rc){
   }
   const score=rc.score!=null?Number(rc.score).toFixed(1):null;
   return '<span title="'+esc(rc.reason||'')+'" style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;background:rgba(22,163,74,.1);color:var(--green)">'+(score!=null?score:'✓ passed')+'</span>';
+}
+// An uploaded file's stored path (see fourgeStoreFormUpload in api.php) is
+// absolute to the site root, but this admin page can be co-located with the
+// site or pointed at a remote one via cd_api_url — resolve accordingly.
+function entryFileHref(path){
+  const cfg=(localStorage.getItem('cd_api_url')||'').trim();
+  if(cfg){
+    const siteBase=cfg.replace(/\/admin\/api\.php.*/i,'').replace(/\/$/,'');
+    return (/^https?:\/\//i.test(siteBase)?siteBase:location.origin+siteBase)+'/'+path;
+  }
+  return '../'+path;
+}
+// A submitted value matching our stored upload-path shape renders as a
+// download link; anything else is plain escaped text, as before.
+function entryCellHtml(v){
+  const s=v!=null?String(v):'';
+  if(/^data\/uploads\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,10}$/.test(s)){
+    const name=s.split('/').pop();
+    return '<a href="'+esc(entryFileHref(s))+'" target="_blank" rel="noopener">\u{1F4CE} '+esc(name)+'</a>';
+  }
+  return esc(s);
 }
 // Columns = union of field labels across this form's entries, in first-seen order
 // (each entry's own key order follows the form's field order at submit time).
@@ -4948,12 +4969,16 @@ function formsRuntimeAssets(){
     +'function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,"");if(d.length>11)return v;var p="";if(d.length===11){if(d[0]!=="1")return v;p="1 ";d=d.slice(1);}if(!d.length)return "";if(d.length<4)return p+"("+d;if(d.length<7)return p+"("+d.slice(0,3)+") "+d.slice(3);return p+"("+d.slice(0,3)+") "+d.slice(3,6)+"-"+d.slice(6);}'
     +'document.addEventListener("input",function(e){var t=e.target;if(!t||t.type!=="tel")return;var f=t.closest&&t.closest(".foundry-form");if(f&&f.hasAttribute("data-phone-us"))t.value=ffFmtPhone(t.value);});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
-    +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
+    // A file field must travel as multipart/form-data — JSON.stringify()ing a
+    // File object silently produces "{}", so it never actually uploaded.
+    +'var hasFile=!!form.querySelector("input[type=file]");'
+    +'var data={};if(!hasFile)new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
     +'btn.disabled=true;btn.textContent="Sending…";'   // register the click first — never wait on reCAPTCHA to show feedback
     +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3")||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||"";'
     +'if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});}catch(_e){res("");}}),new Promise(function(res){setTimeout(function(){res("");},4000);})]);}catch(e){rcTok="";}}'   // race a 4s timeout so a bad key can never freeze the form
     +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
-    +'try{var res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});'
+    +'try{var res;if(hasFile){var fd=new FormData(form);fd.append("action","send_form");fd.append("formId",form.getAttribute("data-form-id"));fd.append("recaptcha",rcTok);fd.append("subject",document.title);fd.append("siteUrl",location.href);res=await fetch(ffApiBase(),{method:"POST",body:fd});}'
+    +'else{res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});}'
     +'var d=await res.json();if(d.error)throw new Error(d.error);'
     +'msg.className="ff-msg ok";msg.style.display="";msg.textContent=form.getAttribute("data-confirm");form.querySelectorAll(".ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});}'
     +'catch(err){msg.className="ff-msg err";msg.style.display="";msg.textContent="Something went wrong: "+err.message;btn.disabled=false;btn.textContent="'+'Submit'+'";}'
@@ -6534,7 +6559,7 @@ function ffRenderForm(form){
 }
 function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]');var data={};if(!hasFile)new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('subject',document.title);fd.append('siteUrl',location.href);res=await fetch('admin/api.php',{method:'POST',body:fd});}else{res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,'');if(d.length>11)return v;var p='';if(d.length===11){if(d[0]!=='1')return v;p='1 ';d=d.slice(1);}if(!d.length)return '';if(d.length<4)return p+'('+d;if(d.length<7)return p+'('+d.slice(0,3)+') '+d.slice(3);return p+'('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);}
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
