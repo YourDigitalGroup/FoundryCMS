@@ -1105,7 +1105,14 @@ function fourgeApiGhMirror($me, $body) {
         if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
         echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub delete failed (' . $c . ')' . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]); return;
     }
-    $payload = ['message' => $msg, 'content' => base64_encode((string)($body['content'] ?? '')), 'branch' => $branch];
+    $newContent = (string)($body['content'] ?? '');
+    // The GET above already fetched the current blob — compare it before writing
+    // so a recurring bulk sync (e.g. every engine update) doesn't create a
+    // stream of no-op commits for files that haven't actually changed.
+    if ($sha && $gc === 200 && isset($gd['content']) && base64_decode(str_replace("\n", '', $gd['content'])) === $newContent) {
+        echo json_encode(['ok' => true, 'skipped' => true]); return;
+    }
+    $payload = ['message' => $msg, 'content' => base64_encode($newContent), 'branch' => $branch];
     if ($sha) $payload['sha'] = $sha;
     list($c, $d, $e) = cmsGhApi('PUT', $base, $token, $payload);
     if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
