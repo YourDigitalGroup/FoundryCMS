@@ -13179,6 +13179,16 @@ async function doUpdate(st){
     const html=blobs['admin/index.html'];
     if(html!=null && (html.length<10000 || html.indexOf('CMS_VERSION')<0))
       throw new Error('Downloaded index.html looks invalid — aborting');
+    // The gate compares version.json against the CMS_VERSION baked into the
+    // installed index.html. A release that moved one without the other would put
+    // every site into an endless install → reload → install loop (as 1.14.121 did
+    // on 2026-09-17). Refuse such a release outright: the site stays on its
+    // current build, the loader carries on into the CMS, and the toast says why.
+    if(html!=null){
+      const m=html.match(/const CMS_VERSION='([^']+)'/);
+      if(!m || semverCmp(m[1], remote.version)!==0)
+        throw new Error('Update '+remote.version+' is mislabelled — its index.html says '+(m?m[1]:'nothing')+'. Not installing; the release needs its version numbers aligned.');
+    }
     // 2) Write engine files, index.html last.
     const order=files.slice().sort((a,b)=> a==='admin/index.html'?1 : (b==='admin/index.html'?-1:0));
     for(const f of order){ await apiCall('write_file',{path:f,content:blobs[f]}); }
