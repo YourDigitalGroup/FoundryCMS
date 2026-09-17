@@ -480,12 +480,18 @@ function cmsReadFile($body) {
 
 function cmsWriteFile($body) {
     $relPath = $body['path'] ?? ($_POST['path'] ?? '');
-    $content = $body['content'] ?? '';
     // Content may arrive three ways:
     //  1) multipart file part (content_file) — primary path; sails past WAFs
     //     that block raw HTML/JS in a JSON POST (same channel as image uploads),
-    //  2) base64 in JSON (content_b64) — legacy WAF-bypass,
-    //  3) plain JSON content — legacy.
+    //  2) base64 in JSON (content_b64) — the client's fallback when the file
+    //     part doesn't make it (see apiCall), also a WAF-bypass,
+    //  3) plain JSON content.
+    // $content stays null until one of them actually delivered something: a
+    // request that sent content which never arrived must be an ERROR, never an
+    // empty write. (An upload cut off mid-flight during an engine update once
+    // wrote a 0-byte api.php — a dead API that could no longer update itself.)
+    $content = null;
+    if (is_array($body) && array_key_exists('content', $body) && is_string($body['content'])) $content = $body['content'];
     if (isset($body['content_b64']) && is_string($body['content_b64'])) {
         $decoded = base64_decode($body['content_b64'], true);
         if ($decoded === false) {
@@ -495,9 +501,31 @@ function cmsWriteFile($body) {
         }
         $content = $decoded;
     }
-    if (!empty($_FILES['content_file']['tmp_name']) && is_uploaded_file($_FILES['content_file']['tmp_name'])) {
-        $c = file_get_contents($_FILES['content_file']['tmp_name']);
-        if ($c !== false) $content = $c;
+    $isMultipart = isset($_FILES['content_file']) || stripos((string)($_SERVER['CONTENT_TYPE'] ?? ''), 'multipart/form-data') !== false;
+    if ($isMultipart) {
+        $fp  = $_FILES['content_file'] ?? null;
+        $err = is_array($fp) ? (int)($fp['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
+        if ($err !== UPLOAD_ERR_OK || empty($fp['tmp_name']) || !is_uploaded_file($fp['tmp_name'])) {
+            http_response_code(400);
+            echo json_encode(['error' => 'The file content did not arrive (' . cmsUploadErrText($err) . ') — nothing was written.', 'reason' => 'content_missing']);
+            return;
+        }
+        $c = file_get_contents($fp['tmp_name']);
+        if ($c === false) { http_response_code(400); echo json_encode(['error' => 'The uploaded content could not be read — nothing was written.', 'reason' => 'content_missing']); return; }
+        $content = $c;
+    }
+    if ($content === null) {
+        http_response_code(400);
+        echo json_encode(['error' => 'No content was sent — nothing was written.', 'reason' => 'content_missing']);
+        return;
+    }
+    // The client states how many bytes it sent. Content that PHP received
+    // "successfully" but shorter than that is still a truncated write.
+    $declared = $body['content_length'] ?? ($_POST['content_length'] ?? null);
+    if ($declared !== null && $declared !== '' && (int)$declared !== strlen($content)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'The file content arrived incomplete (' . strlen($content) . ' of ' . (int)$declared . ' bytes) — nothing was written.', 'reason' => 'content_missing']);
+        return;
     }
     $dest    = PUBLIC_HTML . '/' . ltrim($relPath, '/');
     if (gaIsProtectedPath($dest)) {
@@ -559,6 +587,19 @@ function cmsWriteFile($body) {
     echo json_encode(['ok' => true, 'path' => $relPath, 'size' => strlen($content), 'gh' => $gh]);
 }
 
+// Plain words for a PHP upload error code (cmsWriteFile's multipart channel).
+function cmsUploadErrText($code) {
+    switch ((int)$code) {
+        case UPLOAD_ERR_OK:         return 'no error reported';
+        case UPLOAD_ERR_INI_SIZE:
+        case UPLOAD_ERR_FORM_SIZE:  return 'bigger than this server accepts';
+        case UPLOAD_ERR_PARTIAL:    return 'the upload was cut off before it finished';
+        case UPLOAD_ERR_NO_FILE:    return 'no file part was received';
+        case UPLOAD_ERR_NO_TMP_DIR:
+        case UPLOAD_ERR_CANT_WRITE: return 'the server could not store the upload';
+        default:                    return 'upload error ' . (int)$code;
+    }
+}
 // The pre-flight for cmsWriteFile(): '' when the write may proceed, otherwise the
 // reason it must not. Only engine files are judged — an operator's own pages are
 // theirs to write however they like.

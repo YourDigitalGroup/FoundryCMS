@@ -2691,7 +2691,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.127';
+const CMS_VERSION='1.14.128';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -13191,19 +13191,28 @@ async function doUpdate(st){
     }
     // 2) Write engine files, index.html last.
     const order=files.slice().sort((a,b)=> a==='admin/index.html'?1 : (b==='admin/index.html'?-1:0));
-    for(const f of order){ await apiCall('write_file',{path:f,content:blobs[f]}); }
+    // Every engine write must land whole: the server reports the byte count it
+    // stored, and anything short aborts the update before index.html is touched.
+    for(const f of order){
+      const w=await apiCall('write_file',{path:f,content:blobs[f]});
+      const want=new TextEncoder().encode(blobs[f]).length;
+      if(!w || typeof w.size!=='number' || w.size!==want) throw new Error('Short write of '+f+' ('+(w&&w.size)+' of '+want+' bytes) — update aborted');
+    }
     // 3) api.php last, isolated: migrated sites (config.secret.php present) get it;
     //    others are refused server-side and skip silently — never fails the update.
     if(wantApi){
       try{
         const apiContent=await fetchRepoFile(repo,branch,'admin/api.php');
-        if(apiContent && apiContent.indexOf('$PUBLIC_ACTIONS')>=0)   // sanity: looks like our api.php
-          await apiCall('write_file',{path:'admin/api.php',content:apiContent});
+        if(apiContent && apiContent.indexOf('$PUBLIC_ACTIONS')>=0){   // sanity: looks like our api.php
+          const w=await apiCall('write_file',{path:'admin/api.php',content:apiContent});
+          const want=new TextEncoder().encode(apiContent).length;
+          if(!w || typeof w.size!=='number' || w.size!==want) throw new Error('Short write of admin/api.php ('+(w&&w.size)+' of '+want+' bytes)');
+        }
       }catch(e){
         // The server refusing the file is actionable (the release doesn't parse on
         // that host's PHP, or the download was cut short) — say so; a site that
         // simply lacks config.secret.php stays a quiet console note as before.
-        if(/Refusing to install/.test(e.message||'')) toast(e.message,'err');
+        if(/Refusing to install|Short write|did not arrive|arrived incomplete/.test(e.message||'')) toast(e.message,'err');
         else console.warn('api.php not auto-updated (site may not use config.secret.php):',e.message);
       }
     }
@@ -17850,6 +17859,12 @@ function authHeaders(extra){
 }
 // UTF-8-safe base64 (matches the GitHub write encoding).
 function b64EncodeUnicode(str){ return btoa(unescape(encodeURIComponent(String(str)))); }
+// Base64 of raw bytes, in chunks: String.fromCharCode(...bigArray) blows the
+// call stack on a 1 MB page, and btoa() only takes Latin-1 strings.
+function fourgeB64Bytes(bytes){
+  let bin=''; for(let i=0;i<bytes.length;i+=0x8000) bin+=String.fromCharCode.apply(null, bytes.subarray(i,i+0x8000));
+  return btoa(bin);
+}
 async function apiCall(action,body={}){
   // Page saves (write_file) carry a full HTML document. A JSON POST of that
   // gets 404'd by many shared-host WAFs, which flag HTML/JS in the body — but
@@ -17857,14 +17872,38 @@ async function apiCall(action,body={}){
   // works). So send write_file as multipart/form-data with the content as a
   // file part: the exact channel image uploads already use successfully.
   if(action==='write_file' && typeof body.content==='string'){
+    const bytes=new TextEncoder().encode(body.content);
+    const noGh=(body.gh===false||body.gh===0||body.gh==='0');
     const fd=new FormData();
     fd.append('action','write_file');
     fd.append('path', body.path||'');
-    if(body.gh===false||body.gh===0||body.gh==='0') fd.append('gh','0');   // opt out of the server's inline GitHub mirror (see cmsWriteFile)
-    fd.append('content_file', new Blob([body.content],{type:'text/plain'}), 'content.txt');
-    const res=await fetch(getApiBase(),{method:'POST',headers:authHeaders(),body:fd});
-    let d=null; try{ d=await res.json(); }catch(e){ throw new Error('Server returned an invalid response ('+res.status+')'); }
-    if(d&&d.error){ const err=new Error(d.error); err.status=res.status; throw err; }
+    fd.append('content_length', String(bytes.length));   // the server refuses a part that arrives shorter than this
+    if(noGh) fd.append('gh','0');   // opt out of the server's inline GitHub mirror (see cmsWriteFile)
+    fd.append('content_file', new Blob([bytes],{type:'text/plain'}), 'content.txt');
+    let d=null, status=0, transportErr='';
+    try{
+      const res=await fetch(getApiBase(),{method:'POST',headers:authHeaders(),body:fd});
+      status=res.status;
+      try{ d=await res.json(); }catch(e){ transportErr='Server returned an invalid response ('+res.status+')'; }
+    }catch(e){ transportErr=e.message||'Network error'; }
+    // The multipart channel can lose its file part — an upload cut off midway, a
+    // host that strips it — and the server then answers content_missing having
+    // written nothing (an interrupted engine update once left a 0-byte api.php
+    // this way). Retry once as JSON with the bytes base64-encoded: a body that
+    // is either whole or unparseable, never partial.
+    if((d&&d.reason==='content_missing') || (!d&&transportErr)){
+      const headers={'Content-Type':'application/json'};
+      const stok=getToken();                       if(stok) headers['X-Session-Token']=stok;
+      const atok=localStorage.getItem('cd_api_token'); if(atok) headers['X-Api-Token']=atok;
+      const payload={action:'write_file',path:body.path||'',content_b64:fourgeB64Bytes(bytes),content_length:bytes.length};
+      if(noGh) payload.gh=false; if(atok) payload.token=atok;
+      const res2=await fetch(getApiBase(),{method:'POST',headers,body:JSON.stringify(payload)});
+      let d2=null; try{ d2=await res2.json(); }catch(e){ throw new Error(transportErr||('Server returned an invalid response ('+res2.status+')')); }
+      if(d2&&d2.error){ const err=new Error(d2.error); err.status=res2.status; throw err; }
+      return d2;
+    }
+    if(transportErr) throw new Error(transportErr);
+    if(d&&d.error){ const err=new Error(d.error); err.status=status; throw err; }
     return d;
   }
   const headers={'Content-Type':'application/json'};
