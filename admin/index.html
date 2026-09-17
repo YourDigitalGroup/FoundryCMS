@@ -1680,7 +1680,7 @@ textarea.fb-input{resize:vertical}
         </div>
         <div class="tab-panel" id="si-design">
           <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Your two main brand colors. Pick them here and click Apply, and they’ll be used across every page of your site. They start from the colors your site already uses, so you can adjust from there.</div>
-            <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch" data-fc-hex></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch" data-fc-hex></div></div>
+            <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch" data-fc-hex data-set="0" oninput="this.dataset.set='1'"></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch" data-fc-hex data-set="0" oninput="this.dataset.set='1'"></div></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="fd-btn-primary" onclick="brandApplyAll()"><i class="fa-solid fa-check-double"></i> Apply colors to all pages</button>
               <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
@@ -3032,12 +3032,24 @@ async function ghDelete(path,msg){const{repo,branch}=ghCfg();const sha=await ghS
 // token/repo configured. Returns {ok, via:'server'|'browser'|null, error?}.
 async function ghMirror(path,content,message,opts){
   const del=!!(opts&&opts.delete);
-  try{
-    const r=await apiCall('gh_mirror', del?{path,message,delete:true}:{path,content,message});
-    if(r&&r.ok) return {ok:true,via:'server',skipped:!!r.skipped};
-    if(r&&r.reason==='github') return {ok:false,via:'server',error:r.error||'GitHub rejected the update'};
-    // no_repo / no_token → try the browser PAT below
-  }catch(e){ /* older api.php without gh_mirror, or transient error → browser fallback */ }
+  // The server now mirrors inline as part of write_file / upload / delete_file
+  // and reports the outcome as `gh` in that response. A caller holding one
+  // passes it as opts.serverResult, so nothing is pushed twice; an older
+  // api.php without the hook returns no `gh`, and the gh_mirror round-trip
+  // below does the job exactly as before.
+  const sr=opts&&opts.serverResult;
+  let r=(sr&&typeof sr==='object'&&sr.reason!=='opted_out')?sr:null;
+  if(!r){
+    try{ r=await apiCall('gh_mirror', del?{path,message,delete:true}:{path,content,message}); }
+    catch(e){ r=null; /* older api.php without gh_mirror, or transient error → browser fallback */ }
+  }
+  if(r&&r.ok) return {ok:true,via:'server',skipped:!!r.skipped};
+  if(r&&r.reason&&r.reason!=='no_repo'&&r.reason!=='no_token'){
+    // A definite server-side verdict — GitHub rejected it, the file is too big,
+    // or it is deliberately kept out of the repo — the browser PAT can't do better.
+    return {ok:false,via:'server',error:r.error||(r.reason==='excluded'?'this file is kept out of the repo on purpose':r.reason)};
+  }
+  // no_repo / no_token → try the browser PAT below
   const{repo,pat}=ghCfg();
   if(repo&&pat){
     try{
@@ -3062,13 +3074,57 @@ async function ghMirror(path,content,message,opts){
 // call from doUpdate() on every admin login) never interrupts with one.
 async function ghSyncSiteContent(verbose){
   if(!canCallApi()){ if(verbose) toast('Sign in again to sync to GitHub','err'); return; }
-  // doUpdate() now runs automatically on EVERY login (see initUpdateGate), for
-  // any role, while the loader is still up — not just a deliberate admin
-  // action. Admin+ only, so a plain editor's login is never held up by (or
-  // shown a toast about) a GitHub sync they have no context for; the next
-  // admin/superadmin/architect login still picks it up. (The manual button
-  // is only ever shown to Architect sessions, so this never blocks it.)
+  // Runs automatically on login (see ghDailySyncTick / doUpdate), for any role,
+  // while the loader is still up — not just as a deliberate admin action.
+  // Admin+ only, so a plain editor's login is never held up by (or shown a
+  // toast about) a GitHub sync they have no context for; the next
+  // admin/superadmin/architect login still picks it up. (The manual button is
+  // only ever shown to Architect sessions, so this never blocks it.)
   if(accessLevel(getSessionUser())<2){ if(verbose) toast('Admin access required','err'); return; }
+  // The walk itself is server-side (gh_sync_all): api.php lists every file under
+  // the web root that belongs in the repo — pages, data/*.json, images, video,
+  // fonts, documents, .htaccess — compares each to the repo's own blob sha and
+  // pushes only what differs, in time-boxed batches. This loop just keeps
+  // asking for the next batch until the server says there is none.
+  let pushed=0, upToDate=0, failed=0, skipped=0, total=0, errors=[];
+  let offset=0, notConfigured=false, legacy=false;
+  const st=document.getElementById('s-gh-sync-status');
+  for(let guard=0; guard<500; guard++){
+    let r;
+    try{ r=await apiCall('gh_sync_all',{offset}); }
+    catch(e){
+      // An api.php from before gh_sync_all existed (its auto-update is refused
+      // on installs without config.secret.php) still has gh_mirror: fall back
+      // to the per-file client walk so those sites keep syncing.
+      if(offset===0 && /unknown action/i.test(e.message||'')){ legacy=true; break; }
+      failed++; errors.push(e.message); break;
+    }
+    if(!r||!r.ok){
+      if(r&&(r.reason==='no_repo'||r.reason==='no_token')){ notConfigured=true; break; }
+      failed++; if(r&&(r.error||r.reason)) errors.push(r.error||r.reason); break;
+    }
+    total=r.total||0; pushed+=r.pushed||0; upToDate+=r.upToDate||0; failed+=r.failed||0; skipped+=r.skipped||0;
+    if(Array.isArray(r.errors)) errors.push(...r.errors);
+    if(verbose && st && r.next!=null) st.textContent=`Syncing… ${r.done||r.next} of ${total} files checked`;
+    if(r.next==null || r.next<=offset) break;
+    offset=r.next;
+  }
+  if(legacy) return ghSyncSiteContentLegacy(verbose);
+  if(notConfigured){
+    // Silent on the automatic login-triggered path (matches every other
+    // optional GitHub feature); the manual button says so explicitly, since
+    // someone who just clicked "Sync Now" deserves to know why nothing moved.
+    if(verbose) toast("GitHub isn't configured for this site yet — add a token and repo above, then try again.",'err');
+    return {ok:true, notConfigured:true, pushed:0, upToDate:0, failed:0, skipped:0, total:0, errors:[]};
+  }
+  toast(`GitHub sync: ${pushed} pushed, ${upToDate} already current${failed?`, ${failed} failed`:''}`, failed?'err':'ok');
+  return {ok:!failed, notConfigured:false, pushed, upToDate, failed, skipped, total, errors};
+}
+// The pre-gh_sync_all walk, driven from the browser: read each known text file
+// through read_file and push it through gh_mirror. Kept only as the fallback
+// above — it can't see media or other binary files, which is why the server
+// now does the walking.
+async function ghSyncSiteContentLegacy(verbose){
   const read=async(path)=>{ try{ const d=await apiCall('read_file',{path}); return (d&&d.content!=null)?d.content:null; }catch(e){ return null; } };
 
   const pagesRaw=await read(F_PAGES);
@@ -3144,6 +3200,29 @@ async function ghEnsureRepoPrivate(verbose){
     return {ok:false, error:e.message};
   }
 }
+// Once a day, on the first Admin+/Architect login, push the site's content to
+// its GitHub repo and make sure the repo is private — regardless of whether an
+// engine update is pending. These two steps used to run only inside doUpdate(),
+// which initUpdateGate() skips whenever the engine is already current, so on an
+// up-to-date site they never ran at all and the repo could sit public and
+// behind indefinitely. Editors are never held up: both functions' own gates
+// return before any network call for them. The date stamp is written BEFORE
+// the run, so a slow or failing sync can't retrigger on every page load; the
+// manual "Sync Site to GitHub Now" button ignores it.
+const GH_DAILY_KEY='fourge_gh_daily';
+function ghStampDailySync(){ try{ localStorage.setItem(GH_DAILY_KEY, new Date().toISOString().slice(0,10)); }catch(e){} }
+async function ghDailySyncTick(){
+  try{
+    if(!canCallApi() || accessLevel(getSessionUser())<2) return {ran:false, reason:'gate'};
+    const today=new Date().toISOString().slice(0,10);
+    let last=''; try{ last=localStorage.getItem(GH_DAILY_KEY)||''; }catch(e){}
+    if(last===today) return {ran:false, reason:'done_today'};
+    ghStampDailySync();
+    const sync=await ghSyncSiteContent();
+    const priv=await ghEnsureRepoPrivate();
+    return {ran:true, sync, priv};
+  }catch(e){ console.warn('Daily GitHub sync failed:',e.message); return {ran:false, reason:'error', error:e.message}; }
+}
 // The manual "Sync Site to GitHub Now" button (Settings → GitHub Integration):
 // runs the same two steps the automatic login flow does, but right now,
 // regardless of whether an engine update is pending — and with a persistent
@@ -3158,7 +3237,10 @@ async function ghSyncNow(){
     const priv=await ghEnsureRepoPrivate(true);
     if(st){
       if(sync&&sync.notConfigured) st.textContent="GitHub isn't configured for this site — add a token and repo above first.";
-      else if(sync) st.textContent=`${sync.pushed} pushed, ${sync.upToDate} already current${sync.failed?`, ${sync.failed} failed`:''}. Repo: ${priv&&priv.ok?(priv.already?'already private':'set to private ✓'):'could not confirm private — see above'}.`;
+      else if(sync){
+        const firstErr=(sync.errors&&sync.errors.length)?(' First problem: '+sync.errors[0]):'';
+        st.textContent=`${sync.total?sync.total+' files checked — ':''}${sync.pushed} pushed, ${sync.upToDate} already current${sync.failed?`, ${sync.failed} failed`:''}${sync.skipped?`, ${sync.skipped} skipped (too big or unreadable)`:''}. Repo: ${priv&&priv.ok?(priv.already?'already private':'set to private ✓'):('could not confirm private — '+((priv&&(priv.error||priv.reason))||'see above'))}.${firstErr}`;
+      }
       else st.textContent='Could not run — see the notification above.';
     }
   }finally{
@@ -3478,6 +3560,10 @@ async function initApp(){
   // gated rather than a one-time flag, so it re-fires for each release that
   // actually changes that runtime — see eventsRuntimeSweepIfStale().
   try{ eventsRuntimeSweepIfStale().catch(()=>{}); }catch(e){}
+  // First Admin+ login of the day: mirror the site's content to its GitHub repo
+  // and make sure that repo is private — no longer tied to an engine update
+  // happening to install (see ghDailySyncTick).
+  try{ ghDailySyncTick().catch(()=>{}); }catch(e){}
 }
 
 // Runs at the tail of post-login init while the loader is still up.
@@ -9322,8 +9408,8 @@ async function placePostListOnPage(pid){
     else if(/<\/body>/i.test(html))   html=html.replace(/<\/body>/i,m=>sec+m);
     else html+=sec;
     html=veFinalizePageHtml(html);   // posts runtime + favicon + forms pipeline in one pass
-    await apiCall('write_file',{path:fp,content:html});
-    try{ ghMirror(fp,html,'Fourge: add post list to '+fp); }catch(e){}
+    const wd=await apiCall('write_file',{path:fp,content:html});
+    try{ ghMirror(fp,html,'Fourge: add post list to '+fp,{serverResult:wd&&wd.gh}); }catch(e){}
     const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
     toast('Post list added to “'+decodeHtml(pg.title||pid)+'” — it now shows every published post, newest first ✓','ok');
   }catch(e){ toast('Could not add: '+e.message,'err'); }
@@ -10006,10 +10092,10 @@ async function seoStampAllPages(){
   return {done,failed,guarded};
 }
 async function saveSEO(){
-  const json=JSON.stringify(_seo,null,2); let ok=false;
-  if(canCallApi()){ try{ await apiCall('write_file',{path:'data/seo.json',content:json}); ok=true; }catch(e){} }
-  const{repo,pat}=ghCfg();
-  if(repo&&pat){ try{ const sha=await ghSHA(F_SEO); await ghWrite(F_SEO,json,sha,'Fourge: SEO update'); ok=true; }catch(e){} }
+  const json=JSON.stringify(_seo,null,2); let ok=false, wd=null;
+  if(canCallApi()){ try{ wd=await apiCall('write_file',{path:'data/seo.json',content:json}); ok=true; }catch(e){} }
+  // The server mirrored inline (`gh`); the browser PAT is only ever the fallback.
+  try{ const g=await ghMirror(F_SEO,json,'Fourge: SEO update',{serverResult:wd&&wd.gh}); ok=ok||g.ok; }catch(e){}
   if(!ok){ toast('Save failed — configure Server API or GitHub','err'); return; }
   _seoLoaded=true;
   const r=await seoStampAllPages();
@@ -10475,10 +10561,20 @@ async function seoWriteRobots(notify){
 }
 
 // ── SITE INFO ─────────────────────────────────
+// The Site Foundry inputs are static markup holding placeholders (the brand
+// swatches default to Fourge's own navy and orange). They only reflect the real
+// site once loadSiteInfo() has run — and that only happens when the panel is
+// opened. saveSiteInfo() is ALSO reached from panels that never open Site
+// Foundry (reCAPTCHA/hCaptcha/GHL settings, login-screen meta, editor
+// permissions), so it has to know whether those inputs hold the site's data or
+// still the placeholders. This flag is that knowledge; the brand swatches carry
+// the same data-set="1" gate every other color picker in the admin uses.
+let _siteInfoLoaded=false;
 async function loadSiteInfo(){
   if(!Object.keys(_site).length)try{const r=await fetch('../data/site.json?t='+Date.now());if(r.ok)_site=await r.json();}catch{}
   const fields=[['si-name','name'],['si-tagline','tagline'],['si-website','website'],['si-notify','notifyEmail'],['si-phone','phone'],['si-email','email'],['si-street','address.street'],['si-city','address.city'],['si-state','address.state'],['si-zip','address.zip'],['si-facebook','social.facebook'],['si-instagram','social.instagram'],['si-linkedin','social.linkedin'],['si-youtube','social.youtube']];
   fields.forEach(([id,path])=>{const el=document.getElementById(id);if(!el)return;const keys=path.split('.');let val=_site;keys.forEach(k=>val=val?.[k]);el.value=val||'';});
+  _siteInfoLoaded=true;
   faviconRender();
   siRenderTypography(_site.typography||{});    // site-wide fonts
   siRenderHeadings(_site.headingStyles||{});   // site-wide heading controls
@@ -10504,8 +10600,10 @@ async function designAutofill(){
     fillIf('si-linkedin',  grabSoc(/href=["'](https?:\/\/(?:www\.)?linkedin\.com\/[^"']+)/i));
     fillIf('si-youtube',   grabSoc(/href=["'](https?:\/\/(?:www\.)?youtube\.com\/[^"']+)/i));
   }
-  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP){ fcSet(pe,brandP); fcSyncHex(pe); }
-  const se=document.getElementById('si-brand-secondary'); if(se&&brandS){ fcSet(se,brandS); fcSyncHex(se); }
+  // data-set="1" marks a swatch as holding a real value (loaded here, or later
+  // changed by hand); saveSiteInfo() ignores a swatch that never got there.
+  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP){ fcSet(pe,brandP); fcSyncHex(pe); pe.dataset.set='1'; }
+  const se=document.getElementById('si-brand-secondary'); if(se&&brandS){ fcSet(se,brandS); fcSyncHex(se); se.dataset.set='1'; }
 }
 // Regex strip-and-splice, not a DOMParser round-trip: this now runs on EVERY
 // page save (see veFinalizePageHtml), and re-serialising a client's
@@ -10531,6 +10629,9 @@ async function brandApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
   const primary=fcVal('si-brand-primary');
   const secondary=fcVal('si-brand-secondary');
+  // An explicit "apply what I see": from here on saveSiteInfo() treats both
+  // swatches as deliberately chosen, exactly as a manual change would.
+  ['si-brand-primary','si-brand-secondary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.dataset.set='1'; });
   if(!_site.brand) _site.brand={}; _site.brand.primary=primary; _site.brand.secondary=secondary;
   try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
   if(!Object.keys(_pages).length) await loadPages();
@@ -11458,10 +11559,25 @@ async function goliveScan(apply){
 // ── PLUGINS ───────────────────────────────────
 async function saveSiteInfo(){
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
-  _site.name=get('si-name');_site.tagline=get('si-tagline');_site.website=get('si-website');_site.phone=get('si-phone');_site.email=get('si-email');
-  if(!_site.address)_site.address={};_site.address.street=get('si-street');_site.address.city=get('si-city');_site.address.state=get('si-state');_site.address.zip=get('si-zip');
-  if(!_site.social)_site.social={};_site.social.facebook=get('si-facebook');_site.social.instagram=get('si-instagram');_site.social.linkedin=get('si-linkedin');_site.social.youtube=get('si-youtube');
-  if(!_site.brand)_site.brand={};_site.brand.primary=fcVal('si-brand-primary');_site.brand.secondary=fcVal('si-brand-secondary');
+  // Only read the Site Foundry text inputs once loadSiteInfo() has filled them
+  // from the real site. Until then they are empty placeholders, and copying them
+  // in wiped the site's name, contact and social details — which is exactly what
+  // a reCAPTCHA or permissions save did in a session that never opened Site
+  // Foundry.
+  if(_siteInfoLoaded){
+    _site.name=get('si-name');_site.tagline=get('si-tagline');_site.website=get('si-website');_site.phone=get('si-phone');_site.email=get('si-email');
+    if(!_site.address)_site.address={};_site.address.street=get('si-street');_site.address.city=get('si-city');_site.address.state=get('si-state');_site.address.zip=get('si-zip');
+    if(!_site.social)_site.social={};_site.social.facebook=get('si-facebook');_site.social.instagram=get('si-instagram');_site.social.linkedin=get('si-linkedin');_site.social.youtube=get('si-youtube');
+  }
+  // Brand colors: a swatch counts only once it holds a real value — loaded from
+  // the site by designAutofill() or changed by hand (data-set="1"). An untouched
+  // swatch still shows its markup default, Fourge's own orange for the secondary,
+  // and that must never be mistaken for the client's brand: every page save
+  // (veFinalizePageHtml) stamps whatever is in _site.brand onto the page.
+  if(!_site.brand)_site.brand={};
+  const bp=document.getElementById('si-brand-primary'), bs=document.getElementById('si-brand-secondary');
+  if(bp&&bp.dataset.set==='1') _site.brand.primary=fcVal(bp);
+  if(bs&&bs.dataset.set==='1') _site.brand.secondary=fcVal(bs);
   // Site-wide heading styles — only touch them if the controls are actually on screen.
   if(document.getElementById('sh-h1-size')){ const hs=siReadHeadings(); if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles; }
   // Site-wide fonts — same guard: only when the Design tab has been rendered.
@@ -11472,19 +11588,21 @@ async function saveSiteInfo(){
   const json=JSON.stringify(_site,null,2);
   let savedLocal=false, savedGH=false;
 
-  // 1. Save to server via api.php (works without GitHub)
+  // 1. Save to server via api.php (works without GitHub). The server mirrors
+  //    the file to GitHub inline and reports how that went (`gh`).
   const{url,token}=getApiCfg();
+  let wd=null;
   if(url&&token){
-    try{ await apiCall('write_file',{path:'data/site.json',content:json}); savedLocal=true; }
+    try{ wd=await apiCall('write_file',{path:'data/site.json',content:json}); savedLocal=true; }
     catch(e){ console.warn('Local save failed:',e.message); }
   }
 
-  // 2. Push to GitHub if configured
-  const{repo,pat}=ghCfg();
-  if(repo&&pat){
-    try{ const sha=await ghSHA(F_SITE); await ghWrite(F_SITE,json,sha,'Fourge: site config update'); savedGH=true; }
-    catch(e){ console.warn('GitHub save failed:',e.message); }
-  }
+  // 2. GitHub: the server's own result when it has one, the browser PAT otherwise.
+  try{
+    const g=await ghMirror(F_SITE,json,'Fourge: site config update',{serverResult:wd&&wd.gh});
+    savedGH=g.ok;
+    if(!g.ok&&g.error&&g.error!=='not_configured') console.warn('GitHub save failed:',g.error);
+  }catch(e){ console.warn('GitHub save failed:',e.message); }
 
   if(savedLocal&&savedGH) toast('Saved to server + GitHub ✓','ok');
   else if(savedLocal)     toast('Saved to server ✓ (GitHub not configured)','ok');
@@ -11551,10 +11669,9 @@ async function gaRefreshCredStatus(){
 async function gaPersistSite(){
   const json=JSON.stringify(_site,null,2);
   const{url,token}=getApiCfg();
-  let saved=false;
-  if(url&&token){ try{ await apiCall('write_file',{path:'data/site.json',content:json}); saved=true; }catch(e){} }
-  const{repo,pat}=ghCfg();
-  if(repo&&pat){ try{ const sha=await ghSHA(F_SITE); await ghWrite(F_SITE,json,sha,'Fourge: analytics settings'); saved=true; }catch(e){} }
+  let saved=false, wd=null;
+  if(url&&token){ try{ wd=await apiCall('write_file',{path:'data/site.json',content:json}); saved=true; }catch(e){} }
+  try{ const g=await ghMirror(F_SITE,json,'Fourge: analytics settings',{serverResult:wd&&wd.gh}); saved=saved||g.ok; }catch(e){}
   if(!saved) throw new Error('Configure Server API or GitHub in Settings');
 }
 
@@ -13033,6 +13150,7 @@ async function doUpdate(st){
     // reported as a failed update.
     try{ await ghSyncSiteContent(); }catch(e){ console.warn('GitHub content sync skipped:',e.message); }
     try{ await ghEnsureRepoPrivate(); }catch(e){ console.warn('GitHub repo-privacy check skipped:',e.message); }
+    ghStampDailySync();   // that was today's sync — the login tick needn't repeat it
     return true;
   }catch(e){ toast('Update failed: '+e.message,'err'); return false; }
 }
@@ -14015,9 +14133,9 @@ async function customCssApplyAll(){
   toast(done?('Custom CSS applied to '+done+' page(s) ✓'):'Every page was already up to date','ok');
 }
 async function savePagesJson(){
-  const json=JSON.stringify(_pages,null,2); let ok=false;
-  if(canCallApi()){ try{ await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
-  try{ const g=await ghMirror(F_PAGES,json,'Fourge: page settings'); ok=ok||g.ok; }catch(e){}
+  const json=JSON.stringify(_pages,null,2); let ok=false, wd=null;
+  if(canCallApi()){ try{ wd=await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
+  try{ const g=await ghMirror(F_PAGES,json,'Fourge: page settings',{serverResult:wd&&wd.gh}); ok=ok||g.ok; }catch(e){}
   if(ok) savePagesBackup();   // keep the known-good snapshot in sync with this change
   return ok;
 }
@@ -16496,14 +16614,10 @@ async function veSaveTemplateToAll(zone){
   if(updated>0) toast(updated+' page(s) updated with new '+zone+(failed?' ('+failed+' skipped)':''),'ok');
   else toast('No pages updated — no '+zone+' section found in your page files','err');
 
-  // Also update _veHtml cache and GitHub
-  const{repo,pat}=ghCfg();
-  if(repo&&pat&&updated>0){
-    try{
-      const sha=await ghSHA(F_PAGES);
-      await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),sha,'Fourge: template update '+zone);
-    }catch{}
-  }
+  // Every page file written above was mirrored to GitHub by the server as it was
+  // saved (see cmsWriteFile), and _pages itself didn't change — so there is
+  // nothing left to push. (This used to re-push an unchanged pages.json from the
+  // browser: a redundant commit at best.)
 }
 
 
@@ -17380,9 +17494,12 @@ async function logRevision(pg, filePath, html){
     if(revs.length>100){ dropped=revs.slice(100); revs=revs.slice(0,100); }
     const revIndex=JSON.stringify(revs,null,2);
     // Server copy (primary source for the Revisions list / view / restore).
-    await apiCall('write_file',{path:'data/revisions.json',content:revIndex});
-    await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html});
-    dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html'}).catch(()=>{}); });
+    // gh:false — these writes opt out of the server's inline mirror so the page
+    // save doesn't wait on GitHub for them; the snapshots are mirrored below,
+    // asynchronously, exactly as before.
+    await apiCall('write_file',{path:'data/revisions.json',content:revIndex,gh:false});
+    await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html,gh:false});
+    dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html',gh:false}).catch(()=>{}); });
     // GitHub mirror (durable version history in the repo). Server-side push, so
     // it runs for EVERY user — not just Architect sessions holding the PAT.
     // Non-blocking so a GitHub hiccup or rate-limit can never fail the page save.
@@ -17429,11 +17546,11 @@ async function veSavePage(){
 
     // 1. Save to server
     const{url,token}=getApiCfg();
-    let savedServer=false, serverErr='';
+    let savedServer=false, serverErr='', serverGh=null;
     if(url&&token){
       try{
-        await apiCall('write_file',{path:filePath,content:html});
-        savedServer=true;
+        const wd=await apiCall('write_file',{path:filePath,content:html});
+        savedServer=true; serverGh=wd&&wd.gh;   // the server mirrored inline — use its verdict, don't push twice
       }catch(e){ serverErr=e.message; console.warn('Server save failed:',e.message); }
     } else {
       serverErr='Server API not configured (Settings → Server API)';
@@ -17443,7 +17560,7 @@ async function veSavePage(){
     //    browser PAT as fallback; a real failure is SHOWN, not just logged.
     let savedGH=false, ghErr='';
     try{
-      const g=await ghMirror(pg.file,html,'Fourge: visual edit "'+pg.title+'"');
+      const g=await ghMirror(pg.file,html,'Fourge: visual edit "'+pg.title+'"',{serverResult:serverGh});
       savedGH=g.ok;
       if(!g.ok && g.error && g.error!=='not_configured'){ ghErr=g.error; console.warn('GitHub save failed:',g.error); }
     }catch(e){ console.warn('GitHub save failed:',e.message); }
@@ -17560,10 +17677,24 @@ async function createNewPage(){
   _veHtml[id]=html;_veOrigHtml[id]='';
   try{
     const{url,token}=getApiCfg();
-    if(url&&token) await apiCall('write_file',{path:file,content:html}).catch(()=>{});
-    const r=await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),_pagesSHA,'Fourge: add page "'+title+'"');
-    _pagesSHA=r.content?.sha||_pagesSHA;
-    try{const{content:sc,sha:ss}=await ghRead(F_SITE);const sd=JSON.parse(sc);if(!sd.nav)sd.nav=[];if(!sd.nav.find(n=>n.id===id)){sd.nav.push({id,label:title,file});await ghWrite(F_SITE,JSON.stringify(sd,null,2),ss,'Fourge: add "'+title+'" to nav');}}catch{}
+    if(url&&token){
+      // Server mode: the page file, pages.json and the nav entry all go through
+      // api.php, which mirrors each of them to GitHub itself. (This path used to
+      // push pages.json straight from the browser only — so the server's
+      // pages.json never learned about the new page, and for any session
+      // without the Architect PAT the push threw, rolling the page back in
+      // memory even though its file had already been written.)
+      await apiCall('write_file',{path:file,content:html});
+      if(!(await savePagesJson())) throw new Error('Could not save pages.json');
+      try{
+        if(!_site.nav) _site.nav=[];
+        if(!_site.nav.find(n=>n.id===id)){ _site.nav.push({id,label:title,file}); await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+      }catch(e){ console.warn('Nav update failed:',e.message); }
+    } else {
+      const r=await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),_pagesSHA,'Fourge: add page "'+title+'"');
+      _pagesSHA=r.content?.sha||_pagesSHA;
+      try{const{content:sc,sha:ss}=await ghRead(F_SITE);const sd=JSON.parse(sc);if(!sd.nav)sd.nav=[];if(!sd.nav.find(n=>n.id===id)){sd.nav.push({id,label:title,file});await ghWrite(F_SITE,JSON.stringify(sd,null,2),ss,'Fourge: add "'+title+'" to nav');}}catch{}
+    }
     closeM('m-newpage');_curPage=id;renderVePageList();veLoadPage(id);toast('Page created!','ok');
   }catch(e){delete _pages[id];delete _veHtml[id];toast('Failed: '+e.message,'err');}
 }
@@ -17661,6 +17792,7 @@ async function apiCall(action,body={}){
     const fd=new FormData();
     fd.append('action','write_file');
     fd.append('path', body.path||'');
+    if(body.gh===false||body.gh===0||body.gh==='0') fd.append('gh','0');   // opt out of the server's inline GitHub mirror (see cmsWriteFile)
     fd.append('content_file', new Blob([body.content],{type:'text/plain'}), 'content.txt');
     const res=await fetch(getApiBase(),{method:'POST',headers:authHeaders(),body:fd});
     let d=null; try{ d=await res.json(); }catch(e){ throw new Error('Server returned an invalid response ('+res.status+')'); }
@@ -18188,18 +18320,24 @@ async function importFromServerRun(forceOverride){
   savePagesBackup();   // capture imported pages now, so a later failed scan can't drop them
   const pagesJson = JSON.stringify(pagesData, null, 2);
 
-  // Save to server first (always works, no GitHub needed)
+  // Save to server first (always works, no GitHub needed). The server mirrors
+  // pages.json to GitHub inline and reports how that went (`gh`).
   const{url:apiUrl,token:apiToken}=getApiCfg();
+  let savedServer=false, serverGh=null;
   if(apiUrl&&apiToken){
     try{
-      await apiCall('write_file',{path:'data/pages.json',content:pagesJson});
-      ll('<span class="l-ok">✓</span> pages.json saved to server');
+      const wd=await apiCall('write_file',{path:'data/pages.json',content:pagesJson});
+      savedServer=true; serverGh=wd&&wd.gh;
+      ll('<span class="l-ok">✓</span> pages.json saved to server'+(serverGh&&serverGh.ok?' + mirrored to GitHub':''));
     }catch(e){ ll(`<span class="l-warn">⚠</span> Server pages.json: ${esc(e.message)}`); }
   }
 
-  // Also push to GitHub if configured
+  // GitHub from the browser only when the server didn't already do it (no
+  // Server API at all, or the server has no repo/token configured).
   const{repo:ghRepo,pat:ghPat}=ghCfg();
-  if(ghRepo&&ghPat){
+  if(serverGh&&serverGh.ok){
+    // already mirrored above
+  } else if(ghRepo&&ghPat){
     try{
       const r = await ghWrite(F_PAGES, pagesJson, pagesSHA, 'Fourge: import ' + imported + ' page(s)');
       _pagesSHA = r.content?.sha || pagesSHA;
@@ -18209,12 +18347,26 @@ async function importFromServerRun(forceOverride){
     ll('<span class="l-info">ℹ</span> GitHub not configured — pages saved to server only');
   }
 
-  // Step 7: Save site.json nav
-  if(newNav.length && siteSHA){
-    try{
-      await ghWrite(F_SITE, JSON.stringify(siteData, null, 2), siteSHA, 'Fourge: add ' + newNav.length + ' page(s) to nav');
-      ll(`<span class="l-ok">✓</span> site.json nav updated`);
-    }catch(e){ ll(`<span class="l-warn">⚠</span> site.json nav: ${esc(e.message)}`); }
+  // Step 7: Save site.json nav. In server mode the server's own site.json is
+  // the source of truth (siteData above came from GitHub and is a bare default
+  // when the browser has no PAT), and that write is mirrored by the server;
+  // otherwise push through the browser PAT as before.
+  if(newNav.length){
+    if(savedServer){
+      try{
+        const d=await apiCall('read_file',{path:F_SITE}); const sd=JSON.parse(d.content||'{}')||{};
+        if(!Array.isArray(sd.nav)) sd.nav=[];
+        newNav.forEach(n=>{ if(!sd.nav.find(x=>x.id===n.id)) sd.nav.push(n); });
+        await apiCall('write_file',{path:F_SITE,content:JSON.stringify(sd,null,2)});
+        _site.nav=sd.nav;
+        ll(`<span class="l-ok">✓</span> site.json nav updated`);
+      }catch(e){ ll(`<span class="l-warn">⚠</span> site.json nav: ${esc(e.message)}`); }
+    } else if(siteSHA){
+      try{
+        await ghWrite(F_SITE, JSON.stringify(siteData, null, 2), siteSHA, 'Fourge: add ' + newNav.length + ' page(s) to nav');
+        ll(`<span class="l-ok">✓</span> site.json nav updated`);
+      }catch(e){ ll(`<span class="l-warn">⚠</span> site.json nav: ${esc(e.message)}`); }
+    }
   }
 
   // ── Import media files ──────────────────────────────────────────
@@ -18254,7 +18406,8 @@ async function importFromServerRun(forceOverride){
         // Save to server first (no GitHub needed)
         try{ await apiCall('write_file',{path:'data/media.json',content:JSON.stringify(mediaData,null,2)}); }catch(e){ ll('<span class="l-warn">⚠</span> Server media.json: '+esc(e.message)); }
         // Also push to GitHub if configured
-        try{ await ghWrite('data/media.json', JSON.stringify(mediaData, null, 2), mediaSHA, 'Fourge: import ' + added + ' media file(s)'); }catch{}
+        // The server write above already mirrored it; the browser PAT is only for a site with no Server API at all.
+        if(!canCallApi()){ try{ await ghWrite('data/media.json', JSON.stringify(mediaData, null, 2), mediaSHA, 'Fourge: import ' + added + ' media file(s)'); }catch{} }
         ll(`<span class="l-ok">✓</span> ${added} media file(s) added to library (${mediaFiles.length} found, ${mediaFiles.length - added} already existed)`);
         _media = mediaData;
       } else {

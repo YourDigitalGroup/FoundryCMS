@@ -188,7 +188,7 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //    'send_form': a site visitor has no token or session. Neither exposes
 //    anything beyond a single form's own pass/fail check or view counter.
 $PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -247,6 +247,7 @@ try {
         case 'ghl_form_def':    ob_end_clean(); fourgeApiGhlFormDef($authUser, $body); break;
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'gh_set_private':  ob_end_clean(); fourgeApiGhSetPrivate($authUser, $body); break;
+        case 'gh_sync_all':     ob_end_clean(); fourgeApiGhSyncAll($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'ai_endpoint_test': ob_end_clean(); fourgeApiAiEndpointTest($authUser, $body); break;
@@ -511,7 +512,16 @@ function cmsWriteFile($body) {
         echo json_encode(['error' => 'Could not write: ' . htmlspecialchars($relPath)]);
         return;
     }
-    echo json_encode(['ok' => true, 'path' => $relPath, 'size' => strlen($content)]);
+    // Mirror the saved bytes to the site's GitHub repo right here, and report the
+    // outcome as `gh` so the client can say "Saved to server + GitHub" truthfully
+    // instead of pushing a second time itself. gh=0 opts a write out: the revision
+    // snapshots use it, since they mirror themselves asynchronously and a page
+    // save should not wait on them. A mirror problem never fails the save.
+    $ghOpt = $body['gh'] ?? ($_POST['gh'] ?? null);
+    $gh = ($ghOpt === '0' || $ghOpt === 0 || $ghOpt === false)
+        ? ['ok' => false, 'reason' => 'opted_out']
+        : cmsGhAfterWrite(cmsGhRelPath($dest), $content);
+    echo json_encode(['ok' => true, 'path' => $relPath, 'size' => strlen($content), 'gh' => $gh]);
 }
 
 // ── UPLOAD FILES ──────────────────────────────────────────────────────────────
@@ -587,7 +597,13 @@ function handleUpload() {
         }
         $dest = $destDir . '/' . $safe;
         if (move_uploaded_file($tmp, $dest)) {
-            $results[] = ['name'=>$safe,'success'=>true,'path'=>$toRel . $safe];
+            $res = ['name'=>$safe,'success'=>true,'path'=>$toRel . $safe];
+            // Same inline GitHub mirror as cmsWriteFile(), binary-safe — so images,
+            // videos, fonts and documents reach the repo too, not just text files.
+            $ghOpt = $_POST['gh'] ?? null;
+            $res['gh'] = ($ghOpt === '0') ? ['ok' => false, 'reason' => 'opted_out']
+                                          : cmsGhAfterWrite(cmsGhRelPath($dest), (string)@file_get_contents($dest));
+            $results[] = $res;
         } else {
             $results[] = ['name'=>$safe,'success'=>false,'error'=>'Could not save'];
         }
@@ -603,8 +619,13 @@ function cmsDeleteFile($body) {
     if (!$safe || strpos($safe, PUBLIC_HTML) !== 0 || !is_file($safe)) {
         http_response_code(404); echo json_encode(['error' => 'File not found']); return;
     }
+    $rel = cmsGhRelPath($safe);
     unlink($safe);
-    echo json_encode(['ok' => true]);
+    // Keep the repo in step: a file removed here is removed there (gh=0 opts out,
+    // as for cmsWriteFile). Reported, never fatal.
+    $ghOpt = $body['gh'] ?? null;
+    $gh = ($ghOpt === '0' || $ghOpt === 0 || $ghOpt === false) ? ['ok' => false, 'reason' => 'opted_out'] : cmsGhAfterDelete($rel);
+    echo json_encode(['ok' => true, 'gh' => $gh]);
 }
 
 // ── MAILGUN FORM ──────────────────────────────────────────────────────────────
@@ -1247,14 +1268,18 @@ function cmsGhMirrorCfg() {
     return [$repo, $branch, $token];
 }
 // One GitHub REST call. Returns [httpCode, decodedJson|null, curlError].
-function cmsGhApi($method, $url, $token, $payload = null) {
+// $timeout grows with the payload (a 20 MB image is a ~27 MB base64 body, and
+// a shared host can take a while to push that); the connect phase is always
+// capped so an unreachable GitHub costs a save seconds, not the full budget.
+function cmsGhApi($method, $url, $token, $payload = null, $timeout = 25) {
     $ch = curl_init($url);
     $opts = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CUSTOMREQUEST  => $method,
         CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $token, 'Accept: application/vnd.github+json', 'User-Agent: FourgeCMS', 'X-GitHub-Api-Version: 2022-11-28'],
         CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_TIMEOUT        => 25,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT        => max(5, (int)$timeout),
     ];
     if ($payload !== null) $opts[CURLOPT_POSTFIELDS] = json_encode($payload);
     curl_setopt_array($ch, $opts);
@@ -1262,42 +1287,195 @@ function cmsGhApi($method, $url, $token, $payload = null) {
     curl_close($ch);
     return [$code, $res ? json_decode($res, true) : null, $err];
 }
+
+// ── What belongs in the site's repo ──────────────────────────────────
+// Everything under the web root that IS the site — pages, data/*.json, images,
+// video, fonts, documents, .htaccess files — minus what must never land in a
+// repo:
+//  • .git internals, and the CMS engine itself (admin/): api.php can carry
+//    inline secrets on installs without config.secret.php, and the engine is
+//    updated from the FoundryCMS template repo by the updater anyway, so a copy
+//    in the site's own repo would only ever be a stale fork;
+//  • credentials and PII: users.json (password hashes), entries.json and
+//    data/uploads/ (form submissions and their attachments — once in git
+//    history they are there forever), .htpasswd, the databases (and their
+//    WAL/SHM siblings), any dot-file or dot-folder other than .htaccess and
+//    .well-known (.env, .ga-token.json, .DS_Store, .github …);
+//  • pure churn: the form-analytics counter, the reCAPTCHA debug log, logs,
+//    backups and temp files.
+const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
+function cmsGhSkipDir($relDir) {
+    $relDir = trim(str_replace('\\', '/', (string)$relDir), '/');
+    if ($relDir === '') return false;
+    foreach (FOURGE_GH_SKIP_DIRS as $d) { if (strcasecmp($relDir, $d) === 0) return true; }
+    $seg = basename($relDir);
+    return $seg === '' || $seg === '.' || $seg === '..' || ($seg[0] === '.' && $seg !== '.well-known');
+}
+function cmsGhShouldMirror($rel) {
+    $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+    if ($rel === '' || strpos($rel, "\0") !== false || substr($rel, -1) === '/') return false;
+    $parts = explode('/', $rel);
+    $base  = array_pop($parts);
+    $dir   = '';
+    foreach ($parts as $seg) {
+        $dir = ($dir === '' ? $seg : $dir . '/' . $seg);
+        if ($seg === '' || $seg === '.' || $seg === '..' || cmsGhSkipDir($dir)) return false;
+    }
+    $lb = strtolower($base);
+    if ($lb === '' || $lb === '.' || $lb === '..') return false;
+    if ($lb[0] === '.' && $lb !== '.htaccess') return false;
+    if (preg_match('~\.(db|sqlite|sqlite3|db-wal|db-shm|sqlite-wal|sqlite-shm|sqlite3-wal|sqlite3-shm|log|bak|tmp|swp)$~', $lb)) return false;
+    if (in_array($lb, ['error_log', 'php_errorlog', 'thumbs.db', 'config.secret.php', 'ga-service-account.json'], true)) return false;
+    if (preg_match('~^data/(users|entries|form-analytics|recaptcha-debug)\.json$~i', $rel)) return false;
+    return true;
+}
+// A file's path relative to the web root, forward-slashed — the path it has in the repo.
+function cmsGhRelPath($absPath) {
+    $abs = realpath($absPath) ?: (string)$absPath;
+    if (strpos($abs, PUBLIC_HTML) === 0) $abs = substr($abs, strlen(PUBLIC_HTML));
+    return ltrim(str_replace('\\', '/', $abs), '/');
+}
+// Biggest file the mirror will push. GitHub's Contents API stops at 100 MB, but
+// a PHP request has to hold the file, its base64 form and the JSON body at once,
+// so this also bows to memory_limit. 20 MB covers every image, PDF and short
+// clip the media library realistically stores; anything bigger stays server-only
+// and is reported as skipped rather than failing the save.
+const FOURGE_GH_MAX_BYTES = 20971520;
+function cmsGhMaxBytes() {
+    $ml = trim((string)ini_get('memory_limit'));
+    if ($ml === '' || $ml === '-1') return FOURGE_GH_MAX_BYTES;
+    $n = (float)$ml; $u = strtolower(substr($ml, -1));
+    if ($u === 'g') $n *= 1073741824; elseif ($u === 'm') $n *= 1048576; elseif ($u === 'k') $n *= 1024;
+    $room = (int)(($n - memory_get_usage(true)) / 4);
+    return max(1048576, min(FOURGE_GH_MAX_BYTES, $room));
+}
+// Local git blob id of a byte string — the very sha GitHub reports for a file,
+// so "does the repo already hold exactly these bytes?" needs no download.
+function cmsGhBlobSha($bytes) { return sha1('blob ' . strlen($bytes) . "\0" . $bytes); }
+function cmsGhContentsUrl($repo, $rel) {
+    $enc = ($rel === '') ? '' : '/' . implode('/', array_map('rawurlencode', explode('/', $rel)));
+    return 'https://api.github.com/repos/' . $repo . '/contents' . $enc;
+}
+function cmsGhFail($what, $c, $d, $e) {
+    return ['ok' => false, 'reason' => 'github', 'error' => $what . ' ' . (int)$c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))];
+}
+// The repo's blob sha for a path: a sha string, '' when the file isn't in the
+// repo, or false when GitHub couldn't be asked. The per-file lookup stops at
+// 1 MB (GitHub answers 403 "too large"); the parent folder's listing carries
+// every entry's sha whatever its size, so that is the fallback.
+function cmsGhRemoteSha($repo, $branch, $token, $rel) {
+    list($c, $d) = cmsGhApi('GET', cmsGhContentsUrl($repo, $rel) . '?ref=' . rawurlencode($branch), $token);
+    if ($c === 200 && isset($d['sha'])) return (string)$d['sha'];
+    if ($c === 404) return '';
+    if ($c === 403) {
+        $dir = dirname($rel); if ($dir === '.' || $dir === '/') $dir = '';
+        list($lc, $ld) = cmsGhApi('GET', cmsGhContentsUrl($repo, $dir) . '?ref=' . rawurlencode($branch), $token);
+        if ($lc === 200 && is_array($ld)) {
+            foreach ($ld as $ent) { if (is_array($ent) && ($ent['path'] ?? '') === $rel) return (string)($ent['sha'] ?? ''); }
+            return '';
+        }
+        if ($lc === 404) return '';
+    }
+    return false;
+}
+// Every blob in the branch as path => sha, from one call — or null when GitHub
+// couldn't give a complete listing (callers then look files up one at a time).
+// A repo with no commits yet has no tree (404/409): nothing is there, which is
+// an honest empty map.
+function cmsGhFetchTree($repo, $branch, $token) {
+    list($c, $d) = cmsGhApi('GET', 'https://api.github.com/repos/' . $repo . '/git/trees/' . rawurlencode($branch) . '?recursive=1', $token, null, 40);
+    if ($c === 404 || $c === 409) return [];
+    if ($c !== 200 || !is_array($d) || !empty($d['truncated']) || !isset($d['tree']) || !is_array($d['tree'])) return null;
+    $map = [];
+    foreach ($d['tree'] as $ent) { if (($ent['type'] ?? '') === 'blob' && isset($ent['path'], $ent['sha'])) $map[$ent['path']] = (string)$ent['sha']; }
+    return $map;
+}
+// Mirror one file's bytes into the repo — text or binary alike. Same result
+// shape the gh_mirror action has always returned: ['ok'=>true],
+// ['ok'=>true,'skipped'=>true] (the repo already holds these exact bytes) or
+// ['ok'=>false,'reason'=>…,'error'=>…]. $cfg lets a bulk run reuse one
+// cmsGhMirrorCfg() lookup; $remoteSha (a blob sha, or '' for "known absent")
+// lets it reuse one tree listing instead of a GET per file.
+function cmsGhMirrorBytes($rel, $bytes, $msg = '', $cfg = null, $remoteSha = null) {
+    $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+    $bytes = (string)$bytes;
+    if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'bad_path', 'error' => 'That file can’t be mirrored.'];
+    $max = cmsGhMaxBytes();
+    if (strlen($bytes) > $max) return ['ok' => false, 'reason' => 'too_big', 'error' => 'Too big to mirror (' . round(strlen($bytes) / 1048576, 1) . ' MB — the limit is ' . round($max / 1048576) . ' MB)'];
+    list($repo, $branch, $token) = is_array($cfg) ? $cfg : cmsGhMirrorCfg();
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) return ['ok' => false, 'reason' => 'no_repo'];
+    if ($token === '') return ['ok' => false, 'reason' => 'no_token'];
+    $msg = trim((string)$msg); if ($msg === '') $msg = 'Fourge: update ' . $rel;
+    if (!is_string($remoteSha)) {
+        $remoteSha = cmsGhRemoteSha($repo, $branch, $token, $rel);
+        if ($remoteSha === false) return ['ok' => false, 'reason' => 'github', 'error' => 'GitHub could not be reached to check ' . $rel];
+    }
+    $local = cmsGhBlobSha($bytes);
+    if ($remoteSha !== '' && $remoteSha === $local) return ['ok' => true, 'skipped' => true];
+    $url = cmsGhContentsUrl($repo, $rel);
+    $payload = ['message' => $msg, 'content' => base64_encode($bytes), 'branch' => $branch];
+    if ($remoteSha !== '') $payload['sha'] = $remoteSha;
+    $timeout = 25 + (int)ceil(strlen($bytes) / 262144);   // +1 s per 256 KB
+    list($c, $d, $e) = cmsGhApi('PUT', $url, $token, $payload, $timeout);
+    if ($c === 409 || $c === 422) {
+        // The sha we held was stale (someone pushed in between), or a tree
+        // listing said "absent" and the file is there after all: look it up
+        // fresh and try once more.
+        $fresh = cmsGhRemoteSha($repo, $branch, $token, $rel);
+        if (is_string($fresh) && $fresh !== $remoteSha) {
+            if ($fresh !== '' && $fresh === $local) return ['ok' => true, 'skipped' => true];
+            if ($fresh === '') unset($payload['sha']); else $payload['sha'] = $fresh;
+            list($c, $d, $e) = cmsGhApi('PUT', $url, $token, $payload, $timeout);
+        }
+    }
+    if ($c >= 200 && $c < 300) return ['ok' => true];
+    error_log('Fourge GitHub mirror failed for ' . $rel . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
+    return cmsGhFail('GitHub returned', $c, $d, $e);
+}
+function cmsGhDeletePath($rel, $msg = '', $cfg = null) {
+    $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+    if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'bad_path', 'error' => 'That file can’t be mirrored.'];
+    list($repo, $branch, $token) = is_array($cfg) ? $cfg : cmsGhMirrorCfg();
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) return ['ok' => false, 'reason' => 'no_repo'];
+    if ($token === '') return ['ok' => false, 'reason' => 'no_token'];
+    $msg = trim((string)$msg); if ($msg === '') $msg = 'Fourge: delete ' . $rel;
+    $sha = cmsGhRemoteSha($repo, $branch, $token, $rel);
+    if ($sha === false) return ['ok' => false, 'reason' => 'github', 'error' => 'GitHub could not be reached to check ' . $rel];
+    if ($sha === '') return ['ok' => true, 'skipped' => 'absent'];   // nothing to prune
+    list($c, $d, $e) = cmsGhApi('DELETE', cmsGhContentsUrl($repo, $rel), $token, ['message' => $msg, 'sha' => $sha, 'branch' => $branch]);
+    if ($c >= 200 && $c < 300) return ['ok' => true];
+    error_log('Fourge GitHub delete failed for ' . $rel . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
+    return cmsGhFail('GitHub delete failed', $c, $d, $e);
+}
+// The write_file / upload / delete_file hooks. GitHub trouble must never touch
+// a save that has already succeeded on disk: every outcome comes back as data
+// in the response's `gh` field, and a path the repo must not hold reports
+// 'excluded' (so the engine updater writing admin/ is a quiet no-op here).
+function cmsGhAfterWrite($rel, $bytes) {
+    try {
+        $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+        if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'excluded'];
+        return cmsGhMirrorBytes($rel, $bytes, 'Fourge: update ' . $rel);
+    } catch (Throwable $e) { return ['ok' => false, 'reason' => 'error', 'error' => $e->getMessage()]; }
+}
+function cmsGhAfterDelete($rel) {
+    try {
+        $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+        if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'excluded'];
+        return cmsGhDeletePath($rel, 'Fourge: delete ' . $rel);
+    } catch (Throwable $e) { return ['ok' => false, 'reason' => 'error', 'error' => $e->getMessage()]; }
+}
 function fourgeApiGhMirror($me, $body) {
-    // Any signed-in user: mirroring rides along with saving. Path guards keep it
-    // to real site files (no traversal, never the secrets file or .git internals).
+    // Any signed-in user: mirroring rides along with saving. cmsGhShouldMirror()
+    // keeps it to real site files — no traversal, and never .git internals, the
+    // engine, credentials or form PII (see the policy above).
     $path = str_replace('\\', '/', (string)($body['path'] ?? ''));
     $del  = !empty($body['delete']);
-    $msg  = trim((string)($body['message'] ?? '')); if ($msg === '') $msg = 'Fourge: update ' . $path;
-    if ($path === '' || strpos($path, "\0") !== false || $path[0] === '/'
-        || preg_match('~(^|/)\.\.(/|$)~', $path) || preg_match('~(^|/)\.git(/|$)~i', $path)
-        || stripos($path, 'admin/config.secret') === 0) {
+    $msg  = trim((string)($body['message'] ?? ''));
+    if ($path === '' || $path[0] === '/' || !cmsGhShouldMirror($path)) {
         http_response_code(400); echo json_encode(['ok' => false, 'reason' => 'bad_path', 'error' => 'That file can’t be mirrored.']); return;
     }
-    list($repo, $branch, $token) = cmsGhMirrorCfg();
-    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo']); return; }
-    if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token']); return; }
-    $base = 'https://api.github.com/repos/' . $repo . '/contents/' . implode('/', array_map('rawurlencode', explode('/', $path)));
-    list($gc, $gd) = cmsGhApi('GET', $base . '?ref=' . rawurlencode($branch), $token);
-    $sha = ($gc === 200 && isset($gd['sha'])) ? $gd['sha'] : null;
-    if ($del) {
-        if (!$sha) { echo json_encode(['ok' => true, 'skipped' => 'absent']); return; }   // nothing to prune
-        list($c, $d, $e) = cmsGhApi('DELETE', $base, $token, ['message' => $msg, 'sha' => $sha, 'branch' => $branch]);
-        if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
-        echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub delete failed (' . $c . ')' . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]); return;
-    }
-    $newContent = (string)($body['content'] ?? '');
-    // The GET above already fetched the current blob — compare it before writing
-    // so a recurring bulk sync (e.g. every engine update) doesn't create a
-    // stream of no-op commits for files that haven't actually changed.
-    if ($sha && $gc === 200 && isset($gd['content']) && base64_decode(str_replace("\n", '', $gd['content'])) === $newContent) {
-        echo json_encode(['ok' => true, 'skipped' => true]); return;
-    }
-    $payload = ['message' => $msg, 'content' => base64_encode($newContent), 'branch' => $branch];
-    if ($sha) $payload['sha'] = $sha;
-    list($c, $d, $e) = cmsGhApi('PUT', $base, $token, $payload);
-    if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
-    error_log('Fourge GitHub mirror failed for ' . $path . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
-    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]);
+    echo json_encode($del ? cmsGhDeletePath($path, $msg) : cmsGhMirrorBytes($path, (string)($body['content'] ?? ''), $msg));
 }
 // A client site's own repo is source control for its business content — no
 // reason for it to be publicly readable. Idempotent: a GET first, so an
@@ -1312,11 +1490,75 @@ function fourgeApiGhSetPrivate($me, $body) {
     $base = 'https://api.github.com/repos/' . $repo;
     list($gc, $gd) = cmsGhApi('GET', $base, $token);
     if ($gc === 200 && !empty($gd['private'])) { echo json_encode(['ok' => true, 'already' => true]); return; }
-    if ($gc !== 200) { echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $gc . ' looking up the repo']); return; }
+    if ($gc !== 200) {
+        // 404 here is almost never "no such repo": GitHub answers 404 for a
+        // private repo the token can't see, so say what to check.
+        $hint = ($gc === 404) ? ' — check the repo name (owner/name) in Settings, and that this token was granted access to that repository' : '';
+        echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $gc . ' looking up the repo' . $hint]); return;
+    }
     list($c, $d, $e) = cmsGhApi('PATCH', $base, $token, ['private' => true]);
     if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
     error_log('Fourge GitHub set-private failed for ' . $repo . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
-    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]);
+    // Pushing files needs only "Contents: write"; flipping visibility needs repo
+    // administration rights, which most tokens made for mirroring don't carry.
+    $hint = ($c === 403 || $c === 404) ? ' The token needs repository administration rights to change visibility: "Administration: Read and write" on a fine-grained token, or the full "repo" scope on a classic one.' : '';
+    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : '')) . $hint]);
+}
+// Every file under the web root that belongs in the repo, as sorted relative
+// paths — the same policy cmsGhShouldMirror() applies to single writes, with
+// whole folders pruned early so .git/ and admin/ are never even walked.
+// Symlinks are skipped: a link out of the web root must not pull outside files in.
+function cmsGhListSiteFiles() {
+    $root = PUBLIC_HTML; $out = [];
+    $walk = function ($dir, $relDir) use (&$walk, &$out) {
+        $items = @scandir($dir); if (!$items) return;
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') continue;
+            $full = $dir . '/' . $item; $rel = ($relDir === '' ? $item : $relDir . '/' . $item);
+            if (is_link($full)) continue;
+            if (is_dir($full)) { if (!cmsGhSkipDir($rel)) $walk($full, $rel); continue; }
+            if (is_file($full) && cmsGhShouldMirror($rel)) $out[] = $rel;
+        }
+    };
+    $walk($root, '');
+    sort($out, SORT_STRING);
+    return $out;
+}
+// Push EVERY site file to the repo, from the server, in time-boxed batches: the
+// client calls with {offset} and keeps calling while `next` isn't null. One
+// recursive tree listing per call gives every remote sha at once, so a file the
+// repo already holds byte-for-byte costs nothing — a repeat run over a caught-up
+// site is a few GETs and no commits. Admin+ only, like gh_set_private.
+// Response: {ok,total,done,next,pushed,upToDate,failed,skipped,errors}.
+function fourgeApiGhSyncAll($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin access required']); return; }
+    $cfg = cmsGhMirrorCfg(); list($repo, $branch, $token) = $cfg;
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo']); return; }
+    if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token']); return; }
+    @set_time_limit(90);
+    $files  = cmsGhListSiteFiles(); $total = count($files);
+    $offset = max(0, (int)($body['offset'] ?? 0));
+    $limit  = min(100, max(1, (int)($body['batch'] ?? 50)));
+    $budget = 18.0; $t0 = microtime(true);
+    $tree   = ($offset < $total) ? cmsGhFetchTree($repo, $branch, $token) : [];
+    $max    = cmsGhMaxBytes();
+    $pushed = 0; $upToDate = 0; $failed = 0; $skipped = 0; $errors = []; $i = $offset;
+    for (; $i < $total && $i < $offset + $limit; $i++) {
+        if ($i > $offset && (microtime(true) - $t0) > $budget) break;   // the client continues from `next`
+        $rel  = $files[$i];
+        $size = @filesize(PUBLIC_HTML . '/' . $rel);
+        if ($size === false) { $skipped++; continue; }
+        if ($size > $max) { $skipped++; if (count($errors) < 12) $errors[] = $rel . ': too big to mirror (' . round($size / 1048576, 1) . ' MB)'; continue; }
+        $bytes = @file_get_contents(PUBLIC_HTML . '/' . $rel);
+        if ($bytes === false) { $skipped++; continue; }
+        $remote = ($tree === null) ? null : ($tree[$rel] ?? '');
+        $r = cmsGhMirrorBytes($rel, $bytes, 'Fourge: sync ' . $rel . ' to GitHub', $cfg, $remote);
+        unset($bytes);
+        if (!empty($r['ok'])) { if (!empty($r['skipped'])) $upToDate++; else $pushed++; }
+        else { $failed++; if (count($errors) < 12) $errors[] = $rel . ': ' . ($r['error'] ?? $r['reason'] ?? 'failed'); }
+    }
+    echo json_encode(['ok' => true, 'total' => $total, 'done' => $i, 'next' => ($i < $total ? $i : null),
+                      'pushed' => $pushed, 'upToDate' => $upToDate, 'failed' => $failed, 'skipped' => $skipped, 'errors' => $errors]);
 }
 
 // Validate token + location with a lightweight read. Returns [bool ok, string message].
