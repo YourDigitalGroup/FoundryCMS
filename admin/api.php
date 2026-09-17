@@ -325,7 +325,9 @@ function cmsListPages() {
         return strcmp($a['path'], $b['path']);
     });
 
-    echo json_encode(['pages' => $pages, 'root' => $root]);
+    // postsHtml: whether the generated blog page exists — the Posts tab shows
+    // "Publish Blog Page" as the fix when synced posts have nowhere to display.
+    echo json_encode(['pages' => $pages, 'root' => $root, 'postsHtml' => is_file($root . '/posts.html')]);
 }
 
 function scanHtml($root, $dir, $skipFiles, &$pages, $depth = 0) {
@@ -378,6 +380,9 @@ function scanHtml($root, $dir, $skipFiles, &$pages, $depth = 0) {
             'modified' => date('Y-m-d H:i', filemtime($fullPath)),
             'is_cms'   => $isCMS,
             'snippet'  => $snippet,
+            // Does this page carry the live post list ([data-fourge-posts])? Lets the
+            // admin say WHERE synced/published posts actually appear on the site.
+            'has_post_list' => strpos($content, 'data-fourge-posts') !== false,
         ];
     }
 }
