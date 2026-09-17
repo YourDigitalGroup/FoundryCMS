@@ -2691,7 +2691,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.128';
+const CMS_VERSION='1.14.129';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -5991,6 +5991,38 @@ function blogSyncRender(){
   if(!card) return;
   card.innerHTML=blogSyncAddonHtml();
   blogSyncTokenRefresh();
+  blogSyncDisplayRefresh();
+}
+// Where do posts actually display on this site? The sync can be perfectly
+// healthy — every post copied, "Up to date" — while nothing on the site shows
+// them: a hand-built Blog page with no post list and no published posts.html.
+// Say so, with the fix one click away, instead of letting "synced" read as "done".
+function blogSyncShownHtml(){
+  const bs=(_site&&_site.blogSync)||{};
+  if(_postsHtmlExists===null || _postListPageIds===null){
+    return canCallApi() ? '<span style="opacity:.75">Checking where posts are shown on this site…</span>' : '';
+  }
+  const listPages=[..._postListPageIds].map(id=>({id,pg:_pages[id]})).filter(x=>x.pg);
+  const where=[];
+  if(_postsHtmlExists) where.push('the built-in blog page <a href="../posts.html" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">posts.html</a>');
+  for(const x of listPages){ const label=x.pg.title?decodeHtml(x.pg.title):(x.pg.path||x.pg.file||x.id); where.push('“'+esc(label)+'” (post list)'); }
+  if(where.length){
+    let out='<span style="color:#1E8A5B;font-weight:600">Shown on</span> '+where.join(' · ')+'.';
+    // Only the generated page shows them while visitors use the site's own Blog page: say how to get them there too.
+    if(_postsHtmlExists && !listPages.length) out+=' <span style="opacity:.85">Not on your own Blog page yet — use “Add post list to a page” above to list them there as well.</span>';
+    return out;
+  }
+  const warn=bs.enabled?'<span style="color:#b45309;font-weight:700">Synced posts are not shown anywhere on this site yet.</span> “Up to date” only means they were copied — a hand-built Blog page does not list them by itself.':'<span style="font-weight:600">Posts are not shown anywhere on this site yet.</span>';
+  return '<div id="s-blogsync-nowhere">'+warn+'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    +'<button type="button" class="fd-btn-secondary" onclick="openPostListPlacer()">Add the post list to your Blog page</button>'
+    +'<button type="button" class="fd-btn-ghost" onclick="publishBlogPage()">Publish the built-in blog page</button>'
+    +'</div>';
+}
+async function blogSyncDisplayRefresh(){
+  if(!document.getElementById('s-blogsync-shown')) return;
+  if(canCallApi()){ try{ await loadPages(); }catch(e){} }   // fresh scan: pages gain/lose the list in the editor too
+  const el=document.getElementById('s-blogsync-shown'); if(el) el.innerHTML=blogSyncShownHtml();
 }
 function blogSyncAddonHtml(){
   const bs=(_site&&_site.blogSync)||{};
@@ -6032,6 +6064,7 @@ function blogSyncAddonHtml(){
         <button class="fd-btn-ghost" onclick="blogSyncCheckNow()">Check now</button>
       </div>
       <div id="s-blogsync-status" style="font-size:12px;color:var(--muted);margin-top:10px">${lastHtml}</div>
+      <div id="s-blogsync-shown" style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6">${blogSyncShownHtml()}</div>
       ${adminSection}
     </div>
   </div>`;
@@ -6710,15 +6743,23 @@ async function publishBlogPage(){
   const{url,token}=getApiCfg();
   if(!url||!token){ toast('Configure Server API in Settings first','err'); return; }
   try{
-    await ensurePostsHtml();
+    const ok=await ensurePostsHtml();
+    if(!ok) throw new Error(_ensurePostsHtmlErr||'posts.html could not be written');
+    _postsHtmlExists=true;
     toast('Blog page published to posts.html ✓','ok');
+    blogSyncDisplayRefresh();
   }catch(e){ toast('Failed: '+e.message,'err'); }
 }
+// Writes the generated blog page. Resolves true when it landed, false when the
+// write failed (the reason is kept in _ensurePostsHtmlErr) — callers that
+// promise the user a page must check, not assume.
+let _ensurePostsHtmlErr='';
 async function ensurePostsHtml(){
   const{url,token}=getApiCfg();
-  if(!url||!token) return; // server required for file write
+  if(!url||!token) return false; // server required for file write
   const html=buildPostsHtml();
-  try{ await apiCall('write_file',{path:'posts.html',content:html}); }catch(e){ console.warn('posts.html write failed',e); }
+  try{ await apiCall('write_file',{path:'posts.html',content:html}); _ensurePostsHtmlErr=''; _postsHtmlExists=true; return true; }
+  catch(e){ _ensurePostsHtmlErr=e&&e.message||String(e); console.warn('posts.html write failed',e); return false; }
 }
 
 function buildPostsHtml(){
@@ -9424,7 +9465,8 @@ async function openPostListPlacer(){
     m.addEventListener('click',e=>{ if(e.target===m) m.style.display='none'; });
     document.body.appendChild(m);
   }
-  const pages=getPageList();
+  // posts.html IS the blog — never offer to put a second list on it.
+  const pages=getPageList().filter(pg=>String(pg.file||pg.path||'').split('/').pop().toLowerCase()!=='posts.html');
   m.innerHTML='<div class="ve-img-picker-box" style="width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column">'
     +'<div class="ve-img-picker-head"><h3>Add the post list to a page</h3><button class="ve-img-picker-close" onclick="document.getElementById(\'postlist-placer\').style.display=\'none\'">&times;</button></div>'
     +'<div style="padding:16px;overflow-y:auto">'
@@ -9434,7 +9476,7 @@ async function openPostListPlacer(){
     +'<div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.5">Great for white-label sites that should auto-publish the flagship blog. The source site must run engine v1.14.75+ and have been signed into once (that enables cross-site reading of its posts). Cards link to the article on the source site.</div></div>'
     +(pages.length?pages.map(pg=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
       +'<div style="min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(decodeHtml(pg.label||pg.id))+'</div>'
-      +'<button class="fd-btn-primary" style="flex-shrink:0;font-size:12.5px;padding:7px 12px" onclick="placePostListOnPage(\''+esc(pg.id)+'\')">Add here →</button>'
+      +((_postListPageIds&&_postListPageIds.has(pg.id))?'<span style="flex-shrink:0;font-size:12px;font-weight:600;color:#1E8A5B">Shows the post list ✓</span>':'<button class="fd-btn-primary" style="flex-shrink:0;font-size:12.5px;padding:7px 12px" onclick="placePostListOnPage(\''+esc(pg.id)+'\')">Add here →</button>')
       +'</div>').join(''):'<div class="empty" style="padding:20px"><h3>No pages found</h3></div>')
     +'</div></div>';
   m.style.display='flex';
@@ -9454,6 +9496,18 @@ async function placePostListOnPage(pid){
       const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
       return;
     }
+    // Each card links to posts.html?p=<slug> for this site's own posts. On a site
+    // that never published the built-in blog page every card would 404 — so
+    // publish it first when it is missing. Only when it is confirmed missing:
+    // an existing (maybe customised) posts.html is never overwritten here.
+    let publishedBlogPage=false;
+    if(!src){
+      let exists=_postsHtmlExists===true;
+      if(!exists){
+        try{ await apiCall('read_file',{path:'posts.html'}); exists=true; }
+        catch(e){ if(e&&e.status===404){ if(!await ensurePostsHtml()) throw new Error('the blog page (posts.html) could not be published: '+_ensurePostsHtmlErr); publishedBlogPage=true; exists=true; } else throw new Error('could not check for posts.html: '+(e&&e.message||e)); }
+      }
+    }
     const sec='\n<section class="fourge-posts-wrap" style="max-width:1180px;margin:0 auto;padding:40px 24px">'+postListSnippet(src)+'</section>\n';
     if(/<\/main>/i.test(html))        html=html.replace(/<\/main>/i,m=>sec+m);
     else if(/<footer\b/i.test(html))  html=html.replace(/<footer\b/i,m=>sec+m);
@@ -9463,7 +9517,9 @@ async function placePostListOnPage(pid){
     const wd=await apiCall('write_file',{path:fp,content:html});
     try{ ghMirror(fp,html,'Fourge: add post list to '+fp,{serverResult:wd&&wd.gh}); }catch(e){}
     const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
-    toast('Post list added to “'+decodeHtml(pg.title||pid)+'” — it now shows every published post, newest first ✓','ok');
+    if(_postListPageIds) _postListPageIds.add(pid);
+    toast('Post list added to “'+decodeHtml(pg.title||pid)+'” — it now shows every published post, newest first'+(publishedBlogPage?'. The built-in blog page (posts.html) was published too, so each card opens the full post':'')+' ✓','ok');
+    blogSyncDisplayRefresh();
   }catch(e){ toast('Could not add: '+e.message,'err'); }
 }
 
@@ -13332,6 +13388,10 @@ const BLOCK_TYPES=[
 // PAGES STATE
 // ═══════════════════════════════════════════════════════════════
 let _pages={}, _pagesSHA='', _curPage='home';
+// Where posts actually display on the site, learned from the list_pages scan:
+// whether the generated blog page (posts.html) exists, and the ids of pages
+// carrying a live post list ([data-fourge-posts]). null = not scanned yet.
+let _postsHtmlExists=null, _postListPageIds=null;
 let _veHtml={}, _veOrigHtml={};
 // Page id → the HTML as it exists in the FILE on the server (read on load, updated
 // on save). veStripRuntimeDom compares the live document against it: a custom
@@ -13387,8 +13447,15 @@ async function loadPages(){
   // 2. Authoritative server-side scan of the pages that actually exist
   let scanned=[], scanOk=false;
   if(canCallApi()){
-    try{ const d=await apiCall('list_pages'); if(d&&Array.isArray(d.pages)){ scanned=d.pages; scanOk=true; } }
+    try{ const d=await apiCall('list_pages'); if(d&&Array.isArray(d.pages)){ scanned=d.pages; scanOk=true; if(typeof d.postsHtml==='boolean') _postsHtmlExists=d.postsHtml; } }
     catch(e){ console.warn('list_pages failed:',e.message); }
+  }
+  // Which scanned files carry the live post list — keyed by path and by file so
+  // the flag reaches saved (pages.json) entries and scanned-only ones alike.
+  const postListAt=new Map();
+  for(const sp of scanned){
+    if(!sp || typeof sp.has_post_list!=='boolean') continue;
+    [sp.path, sp.file].forEach(v=>{ if(v && !postListAt.has(String(v).toLowerCase())) postListAt.set(String(v).toLowerCase(), sp.has_post_list); });
   }
 
   // 3. Merge: saved entries keep their blocks/CSS; files not yet edited get a
@@ -13478,6 +13545,11 @@ async function loadPages(){
   }
 
   _pages=merged;
+  if(scanOk){
+    const ids=new Set();
+    for(const id in merged){ const m=merged[id]; if(!m) continue; const k=String(m.path||m.file||'').toLowerCase(); if(k && postListAt.get(k)) ids.add(id); }
+    _postListPageIds=ids;
+  }
   if(savedOk && scanOk && Object.keys(merged).length) savePagesBackup();
 }
 
