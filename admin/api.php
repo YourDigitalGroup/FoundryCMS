@@ -2469,9 +2469,18 @@ function fourgeBlogSyncDownloadMedia($absUrl) {
 // download fails the reference is left as the ABSOLUTE source URL, so the
 // post still renders (hotlinked) rather than breaking. Pure given $localize;
 // unit-testable with a stub. Returns [post, localizedCount].
-function fourgeBlogSyncLocalizePostMedia($post, $sourceUrl, $localize) {
+//
+// $isBackfill flips how a root-relative path is read. During an initial sync
+// the post just arrived from the remote feed, so '/media/x.jpg' is rooted on
+// the SOURCE site and must be resolved+downloaded. During a backfill the post
+// already lives in this site's posts.json, so a path under the local library
+// prefix is already localized — re-resolving it against the source would
+// re-download it under a new name, or worse, rewrite it back to a source
+// hotlink when the source 404s it.
+function fourgeBlogSyncLocalizePostMedia($post, $sourceUrl, $localize, $isBackfill = false) {
     $count = 0;
-    $swap = function ($val) use ($sourceUrl, $localize, &$count) {
+    $swap = function ($val) use ($sourceUrl, $localize, $isBackfill, &$count) {
+        if ($isBackfill && strpos((string)$val, '/images/blog-sync/') === 0) return $val;
         $abs = fourgeBlogSyncMediaSourceUrl($val, $sourceUrl);
         if ($abs === null) return $val;                    // foreign/empty — leave alone
         $local = $localize($abs);
@@ -2554,6 +2563,32 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $fetchMedia = null)
 // Combines fetch+apply and persists site.json. Silent, cheap no-op when Blog
 // Sync isn't enabled or has no source configured — safe to call from both the
 // explicit tick endpoint and the opportunistic login rider below.
+// Backfill: posts synced BEFORE media localization existed (1.14.120) sit in
+// posts.json with their media still hotlinking the source domain, and the
+// normal sync never revisits them (syncedIds skips anything already copied).
+// Walk the local feed and localize any remaining source-host media in synced
+// posts. Idempotent and cheap on every tick: already-local paths resolve to
+// no-ops, and the deterministic filenames mean a re-run downloads nothing
+// that's already on disk. Pure given $fetchMedia; unit-testable with a stub.
+function fourgeBlogSyncBackfillLocalMedia($sourceUrl, $fetchMedia) {
+    $sourceUrl = rtrim(trim((string)$sourceUrl), '/');
+    if ($sourceUrl === '' || !is_callable($fetchMedia)) return 0;
+    $posts = cmsPkgReadJson('posts.json', []);
+    if (!is_array($posts) || !$posts) return 0;
+    $srcBare = preg_replace('~^www\.~', '', strtolower((string)parse_url($sourceUrl, PHP_URL_HOST)));
+    if ($srcBare === '') return 0;
+    $localized = 0; $dirty = false;
+    foreach ($posts as &$p) {
+        if (!is_array($p) || empty($p['syncedFrom'])) continue;   // local posts are the operator's own business
+        $pBare = preg_replace('~^www\.~', '', strtolower((string)parse_url((string)$p['syncedFrom'], PHP_URL_HOST)));
+        if ($pBare !== $srcBare) continue;                        // synced from some other source — not this sync's media
+        list($np, $n) = fourgeBlogSyncLocalizePostMedia($p, $sourceUrl, $fetchMedia, true);
+        if ($n > 0) { $p = $np; $localized += $n; $dirty = true; }
+    }
+    unset($p);
+    if ($dirty) cmsPkgWriteJson('posts.json', $posts);
+    return $localized;
+}
 function fourgeBlogSyncDoSync($site) {
     $blogSync = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
     if (empty($blogSync['enabled'])) return ['ok' => true, 'added' => 0, 'skipped' => 'Blog Sync is not enabled.'];
@@ -2563,8 +2598,13 @@ function fourgeBlogSyncDoSync($site) {
     $remote = fourgeBlogSyncFetchRemotePosts($sourceUrl);
     $result = fourgeBlogSyncApplyRemotePosts($site, $remote, 'fourgeBlogSyncDownloadMedia');
     $site['blogSync'] = $result['blogSync'];
+    $backfilled = fourgeBlogSyncBackfillLocalMedia($sourceUrl, 'fourgeBlogSyncDownloadMedia');
+    if ($backfilled > 0) {
+        $site['blogSync']['lastResult'] = rtrim((string)$site['blogSync']['lastResult'], '.')
+            . ' — localized ' . $backfilled . ' media file' . ($backfilled === 1 ? '' : 's') . ' in previously synced posts';
+    }
     cmsPkgWriteJson('site.json', $site);
-    return ['ok' => $remote !== null, 'added' => $result['added'], 'lastResult' => $result['blogSync']['lastResult']];
+    return ['ok' => $remote !== null, 'added' => $result['added'], 'lastResult' => $site['blogSync']['lastResult']];
 }
 // Opportunistic rider on the login self-heal chain (fourgeApiInstallCleanUrls):
 // gives sites that are actively logged into a reasonably fresh sync with zero
