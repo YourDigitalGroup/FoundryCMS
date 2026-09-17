@@ -3560,6 +3560,9 @@ async function initApp(){
   // gated rather than a one-time flag, so it re-fires for each release that
   // actually changes that runtime — see eventsRuntimeSweepIfStale().
   try{ eventsRuntimeSweepIfStale().catch(()=>{}); }catch(e){}
+  // Same idea for the blog runtimes (posts.html + post lists on pages) — see
+  // postsRuntimeSweepIfStale().
+  try{ postsRuntimeSweepIfStale().catch(()=>{}); }catch(e){}
   // First Admin+ login of the day: mirror the site's content to its GitHub repo
   // and make sure that repo is private — no longer tied to an engine update
   // happening to install (see ghDailySyncTick).
@@ -5998,6 +6001,7 @@ function blogSyncAddonHtml(){
   const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#5B21B6"></rect><path d="M6 8h12M6 12h12M6 16h8" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>';
   let lastHtml='';
   if(bs.lastCheckedAt) lastHtml='Last checked '+esc(new Date(bs.lastCheckedAt).toLocaleString())+(bs.lastResult?' — '+esc(bs.lastResult):'');
+  if(bs.resolvedBase && src && String(bs.resolvedBase).replace(/\/+$/,'')!==String(src).replace(/\/+$/,'')) lastHtml+=(lastHtml?'<br>':'')+'Reads '+esc(bs.resolvedBase)+'/data/posts.json — the source redirects there.';
   const adminSection = rank<2 ? '' : `<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
         <div style="font-size:12px;font-weight:700;margin-bottom:6px">External scheduler (optional)</div>
         <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">For a true every-10-minute cadence even on a site nobody logs into, point your own crontab or a free service like cron-job.org at this address, with the key below as a Bearer token.</div>
@@ -6013,7 +6017,7 @@ function blogSyncAddonHtml(){
       <span class="pl-logo">${logo}</span>
       <div style="flex:1;min-width:0">
         <div class="pl-n" style="display:flex;align-items:center;gap:8px">Blog Sync <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
-        <div class="pl-s" style="margin-top:3px">Automatically copy every new post from a source site's blog into this site's own blog. Checked whenever someone signs in here (if 10+ minutes have passed), or on demand below.</div>
+        <div class="pl-s" style="margin-top:3px">Automatically copy every new post from a source site's blog into this site's own blog. Checked whenever someone views this site's blog or signs in here (at most once every 10 minutes), or on demand below.</div>
       </div>
     </div>
     <div class="pl-addon-body">
@@ -7001,6 +7005,18 @@ function renderShortcodes(html){
     return form?ffRenderForm(form):'';
   });
 }
+// Blog Sync: ask the server to pull any new posts from the partner blog — a cheap
+// no-op unless the sync is enabled and 10+ minutes have passed since the last
+// check. When posts did arrive, the archive re-renders once so this very visitor
+// sees them; the single-post view just lets the next page load pick them up.
+var _blogSyncPoked=false;
+function pokeBlogSync(rerender){
+  if(_blogSyncPoked) return; _blogSyncPoked=true;
+  try{
+    fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'blog_sync_poke'}),keepalive:true})
+      .then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0&&rerender) loadBlog(); }).catch(function(){});
+  }catch(e){}
+}
 async function loadBlog(){
   var root=document.getElementById('blog-root');
   await loadForms();
@@ -7048,8 +7064,9 @@ async function loadBlog(){
       +'<div class="content">'+body+'</div>'
       +'</article>';
     ffInitForms();
+    pokeBlogSync(false);
   }else{
-    if(!posts.length){root.innerHTML='<div class="archive-head"><h1>Blog</h1></div><div class="empty-state"><p>No posts published yet. Check back soon!</p></div>';return;}
+    if(!posts.length){root.innerHTML='<div class="archive-head"><h1>Blog</h1></div><div class="empty-state"><p>No posts published yet. Check back soon!</p></div>';pokeBlogSync(true);return;}
     posts.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
     var cards=posts.map(function(p){
       return '<a class="post-card" href="posts.html?p='+encodeURIComponent(p.slug)+'">'
@@ -7060,6 +7077,7 @@ async function loadBlog(){
         +'</div></a>';
     }).join('');
     root.innerHTML='<div class="archive-head"><h1>Blog</h1><p>News and articles from ${siteName}</p></div><div class="post-grid">'+cards+'</div>';
+    pokeBlogSync(true);
   }
 }
 loadBlog();
@@ -7137,6 +7155,12 @@ function postsRuntimeAssets(){
     +'    var bs=groups[src];\n'
     +'    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);\n'
     +'  }\n'
+    // Blog Sync: ask the server to pull any new posts from the partner blog — a
+    // cheap no-op unless the sync is enabled and 10+ minutes have passed. When
+    // posts did arrive, the list repaints once so this very visitor sees them.
+    +'  if(groups[""]&&!window.__fourgePostsPoked){ window.__fourgePostsPoked=true;\n'
+    +'    try{ fetch("/admin/api.php",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"blog_sync_poke"}),keepalive:true}).then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0) run(); }).catch(function(){}); }catch(e){}\n'
+    +'  }\n'
     +'}\n'
     +'window.fourgePostsRefresh=run;\n'
     +'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();\n'
@@ -7158,6 +7182,34 @@ function ensurePostsRuntime(html){
   html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
   html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
   return html;
+}
+
+// Version-gated, like eventsRuntimeSweepIfStale(): when the blog runtimes gain
+// something every page already out there must have (here, the Blog Sync poke
+// that keeps a partner site's archive current between logins), re-stamp them
+// once — posts.html only while it is still the generated shell (never a custom
+// page someone renamed to posts.html), plus any page carrying a
+// [data-fourge-posts] list. Bump the version to sweep again after a later change.
+const POSTS_RUNTIME_SWEEP_VERSION=1;
+async function postsRuntimeSweepIfStale(){
+  if(!canCallApi() || (_site&&_site.postsRuntimeSweptVersion===POSTS_RUNTIME_SWEEP_VERSION)) return;
+  try{
+    const d=await apiCall('read_file',{path:'posts.html'});
+    const html=d.content||'';
+    if(/id="blog-root"/.test(html) && /function loadBlog\(\)/.test(html) && !/blog_sync_poke/.test(html)) await ensurePostsHtml();
+  }catch(e){ /* no posts.html on this site — nothing to refresh */ }
+  if(!Object.keys(_pages).length) await loadPages();
+  for(const pg of getPageList()){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp});
+      const html=d.content||''; if(!html || !/data-fourge-posts\b/.test(html)) continue;
+      const out=ensurePostsRuntime(html);
+      if(out!==html) await apiCall('write_file',{path:fp,content:out});
+    }catch(e){}
+  }
+  _site.postsRuntimeSweptVersion=POSTS_RUNTIME_SWEEP_VERSION;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
 }
 
 // ══════════════════════════════════════════════════════════════════

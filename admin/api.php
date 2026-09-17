@@ -187,7 +187,7 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //  • 'check_form_password' / 'form_view' are public for the same reason as
 //    'send_form': a site visitor has no token or session. Neither exposes
 //    anything beyond a single form's own pass/fail check or view counter.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick'];
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke'];
 $SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
@@ -262,6 +262,7 @@ try {
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
         case 'seo_pkg_publish_all': ob_end_clean(); fourgeApiSeoPkgPublishAll($authUser, $body); break;
         case 'blog_sync_tick':  ob_end_clean(); fourgeApiBlogSyncTick($authUser, $body); break;
+        case 'blog_sync_poke':  ob_end_clean(); fourgeApiBlogSyncPoke(); break;
         case 'blog_sync_admin': ob_end_clean(); fourgeApiBlogSyncAdmin($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
@@ -2935,54 +2936,137 @@ function fourgeBlogSyncAuthorized($me, $body) {
     if ($stored === '') return false;
     return hash_equals($stored, $tok);
 }
-// Network half: fetch the source site's posts.json and keep only what its own
-// blog runtime would treat as live right now (published, or scheduled with a
-// publishAt that has already passed) — the exact same rule loadBlog() uses.
-function fourgeBlogSyncFetchRemotePosts($sourceUrl) {
+// Same site? The source is configured as an origin (https://44idigital.com), and
+// many sites 301 their apex to www. (or back). Following that one hop is the
+// difference between a working sync and "could not reach the source blog" — but a
+// redirect to any OTHER host is refused: the SSRF guard only vetted the configured
+// one, and a look-alike suffix (44idigital.com.evil.example) is not the same site.
+function fourgeBlogSyncSameSite($hostA, $hostB) {
+    $a = strtolower(preg_replace('~^www\.~i', '', trim((string)$hostA)));
+    $b = strtolower(preg_replace('~^www\.~i', '', trim((string)$hostB)));
+    return $a !== '' && $a === $b;
+}
+// Network half: fetch <source>/data/posts.json, following up to 4 same-site https
+// redirects (apex ↔ www), and keep only what the source's own blog runtime would
+// show right now (published, or scheduled with a publishAt that has passed — the
+// exact rule loadBlog() uses). Returns
+//   ['ok'=>true,  'posts'=>[…], 'base'=>'https://www.example.com']   the origin that actually served the list
+//   ['ok'=>false, 'error'=>'why, in plain words', 'base'=>…]          for lastResult / "Check now"
+function fourgeBlogSyncFetchRemote($sourceUrl) {
     $sourceUrl = rtrim(trim((string)$sourceUrl), '/');
-    if ($sourceUrl === '' || !fourgeTlpUrlOk($sourceUrl)) return null;
-    $ch = curl_init($sourceUrl . '/data/posts.json');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_FOLLOWLOCATION => false,   // a redirect could aim this at a different host
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
-        CURLOPT_USERAGENT => 'FourgeCMS Blog Sync',
-    ]);
-    $raw  = curl_exec($ch);
-    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if ($code !== 200 || $raw === false) return null;
-    $posts = json_decode((string)$raw, true);
-    if (!is_array($posts)) return null;
-
-    $now = time();
-    $live = [];
-    foreach ($posts as $p) {
-        if (!is_array($p) || empty($p['id'])) continue;
-        if (!empty($p['published'])) { $live[] = $p; continue; }
-        $publishAt = $p['publishAt'] ?? null;
-        if ($publishAt) {
-            $t = strtotime((string)$publishAt);
-            if ($t !== false && $t <= $now) $live[] = $p;
+    $p = @parse_url($sourceUrl);
+    if ($sourceUrl === '' || !$p || empty($p['host'])) return ['ok' => false, 'error' => 'no source address is configured', 'base' => ''];
+    if (($p['scheme'] ?? '') !== 'https') return ['ok' => false, 'error' => 'the source address must start with https://', 'base' => $sourceUrl];
+    if (!fourgeTlpUrlOk($sourceUrl)) return ['ok' => false, 'error' => 'the source address is not one this server is allowed to fetch', 'base' => $sourceUrl];
+    $origHost = (string)$p['host'];
+    $base = $sourceUrl;
+    $url  = $sourceUrl . '/data/posts.json';
+    for ($hop = 0; $hop <= 4; $hop++) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_FOLLOWLOCATION => false,   // every hop is vetted by hand below
+            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+            CURLOPT_USERAGENT => 'FourgeCMS Blog Sync',
+        ]);
+        $raw  = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $loc  = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+        $err  = (string)curl_error($ch);
+        curl_close($ch);
+        if ($code >= 300 && $code < 400) {
+            if ($loc === '') return ['ok' => false, 'error' => 'the source redirected (HTTP ' . $code . ') without saying where', 'base' => $base];
+            $lp = @parse_url($loc);
+            if ($lp && empty($lp['host'])) {   // a relative Location — resolve against the address just fetched
+                $cur = @parse_url($url);
+                $loc = ($cur['scheme'] ?? 'https') . '://' . ($cur['host'] ?? $origHost) . (isset($cur['port']) ? ':' . $cur['port'] : '') . (substr($loc, 0, 1) === '/' ? $loc : '/' . $loc);
+                $lp  = @parse_url($loc);
+            }
+            if (!$lp || empty($lp['host'])) return ['ok' => false, 'error' => 'the source redirected to an address that could not be understood (' . $loc . ')', 'base' => $base];
+            if (($lp['scheme'] ?? '') !== 'https') return ['ok' => false, 'error' => 'the source redirected to a non-https address (' . $loc . ')', 'base' => $base];
+            if (!fourgeBlogSyncSameSite($origHost, $lp['host'])) return ['ok' => false, 'error' => 'the source redirected to a different site (https://' . $lp['host'] . ') — if that is the right address, use it as the source', 'base' => $base];
+            if (!fourgeTlpUrlOk($loc)) return ['ok' => false, 'error' => 'the source redirected to an address this server is not allowed to fetch', 'base' => $base];
+            $url  = $loc;
+            $base = 'https://' . $lp['host'] . (isset($lp['port']) ? ':' . $lp['port'] : '');
+            continue;
+        }
+        if ($code === 200 && $raw !== false) {
+            $data = json_decode((string)$raw, true);
+            if (is_array($data) && isset($data['posts']) && is_array($data['posts'])) $data = $data['posts'];   // a {posts:[…]} wrapper is fine too
+            $isList = is_array($data) && ($data === [] || array_keys($data) === range(0, count($data) - 1));
+            if (!$isList) return ['ok' => false, 'error' => $base . '/data/posts.json is not a list of posts', 'base' => $base];
+            $now = time(); $live = [];
+            foreach ($data as $post) {
+                if (!is_array($post) || empty($post['id'])) continue;
+                if (!empty($post['published'])) { $live[] = $post; continue; }
+                $publishAt = $post['publishAt'] ?? null;
+                if ($publishAt) {
+                    $t = strtotime((string)$publishAt);
+                    if ($t !== false && $t <= $now) $live[] = $post;
+                }
+            }
+            return ['ok' => true, 'posts' => $live, 'base' => $base];
+        }
+        if ($code === 0) return ['ok' => false, 'error' => 'could not connect to ' . $base . ($err !== '' ? ' (' . $err . ')' : ''), 'base' => $base];
+        return ['ok' => false, 'error' => 'HTTP ' . $code . ' for ' . $base . '/data/posts.json' . ($code === 404 ? ' — is the source a Fourge site with a blog?' : ''), 'base' => $base];
+    }
+    return ['ok' => false, 'error' => 'the source redirected too many times', 'base' => $base];
+}
+// The older shape (the live post list, or null): kept for callers and tests.
+function fourgeBlogSyncFetchRemotePosts($sourceUrl) {
+    $r = fourgeBlogSyncFetchRemote($sourceUrl);
+    return !empty($r['ok']) ? $r['posts'] : null;
+}
+// Media on the source is usually stored as a relative path (assets/blog/x.jpg —
+// 40 of 44idigital's 49 posts). Copied to another domain that would 404, so every
+// relative URL is rewritten against the source: the featured image, image/video
+// block URLs, and src/href attributes inside HTML-carrying blocks.
+function fourgeBlogSyncAbsUrl($u, $base) {
+    $u = (string)$u; $base = rtrim((string)$base, '/');
+    if ($u === '' || $base === '') return $u;
+    if (preg_match('~^(?:[a-z][a-z0-9+.-]*:|//|#)~i', $u)) return $u;   // absolute, protocol-relative, data:/mailto:/tel:, fragment
+    return $base . (substr($u, 0, 1) === '/' ? '' : '/') . $u;
+}
+function fourgeBlogSyncAbsolutize($post, $base) {
+    $base = rtrim((string)$base, '/');
+    if (!is_array($post) || $base === '') return $post;
+    if (!empty($post['featured']) && is_string($post['featured'])) $post['featured'] = fourgeBlogSyncAbsUrl($post['featured'], $base);
+    if (!empty($post['blocks']) && is_array($post['blocks'])) {
+        foreach ($post['blocks'] as $i => $b) {
+            if (!is_array($b)) continue;
+            $type = (string)($b['type'] ?? '');
+            if (($type === 'image' || $type === 'video') && !empty($b['url']) && is_string($b['url'])) $b['url'] = fourgeBlogSyncAbsUrl($b['url'], $base);
+            if (!empty($b['poster']) && is_string($b['poster'])) $b['poster'] = fourgeBlogSyncAbsUrl($b['poster'], $base);
+            if (!empty($b['html']) && is_string($b['html']) && strpos($b['html'], '<') !== false) {
+                $b['html'] = preg_replace_callback('~\b(src|href)=(["\'])([^"\']*)\2~i', function ($m) use ($base) {
+                    return $m[1] . '=' . $m[2] . fourgeBlogSyncAbsUrl($m[3], $base) . $m[2];
+                }, $b['html']);
+            }
+            $post['blocks'][$i] = $b;
         }
     }
-    return $live;
+    return $post;
 }
 // Pure half: given the site record and an already-fetched+filtered remote
 // post list, decide what's new, copy it into local posts.json, and return
 // updated blogSync bookkeeping for the caller to persist into site.json.
 // No network access — fully unit-testable with a stubbed $remotePosts array.
-function fourgeBlogSyncApplyRemotePosts($site, $remotePosts) {
+// $base is the origin the list was really served from (after redirects) —
+// canonical links and media point there; $error is the fetch's plain-words
+// reason when $remotePosts is null, so "Check now" says what actually went wrong.
+function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $base = '', $error = '') {
     $blogSync  = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
     $syncedIds = is_array($blogSync['syncedIds'] ?? null) ? $blogSync['syncedIds'] : [];
     $syncedSet = array_flip(array_map('strval', $syncedIds));
     $sourceUrl = rtrim(trim((string)($blogSync['sourceUrl'] ?? '')), '/');
+    $srcBase   = rtrim(trim((string)$base), '/'); if ($srcBase === '') $srcBase = $sourceUrl;
 
     if (!is_array($remotePosts)) {
         $blogSync['lastCheckedAt'] = gmdate('c');
-        $blogSync['lastResult']    = 'Could not reach the source blog — check the source address.';
+        $blogSync['lastResult']    = 'Could not reach the source blog — ' . (trim((string)$error) !== '' ? trim((string)$error) : 'check the source address.');
         return ['blogSync' => $blogSync, 'added' => 0];
     }
+    if ($srcBase !== '') $blogSync['resolvedBase'] = $srcBase;
 
     $posts = cmsPkgReadJson('posts.json', []);
     if (!is_array($posts)) $posts = [];
@@ -2995,14 +3079,14 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts) {
         $rid = (string)($rp['id'] ?? '');
         if ($rid === '' || isset($syncedSet[$rid])) continue;
 
-        $post  = $rp;                      // whole-object copy — see note above
+        $post  = fourgeBlogSyncAbsolutize($rp, $srcBase);   // whole-object copy — see note above — with media made absolute
         $newId = fourgeBlogSyncUid();
         $slug  = (string)($rp['slug'] ?? $newId);
         if (isset($existingSlugs[$slug])) $slug = $slug . '-' . substr($newId, 0, 4);
 
         $post['id']             = $newId;
         $post['slug']           = $slug;
-        $post['canonicalUrl']   = $sourceUrl !== '' ? ($sourceUrl . '/posts.html?p=' . rawurlencode((string)($rp['slug'] ?? ''))) : null;
+        $post['canonicalUrl']   = $srcBase !== '' ? ($srcBase . '/posts.html?p=' . rawurlencode((string)($rp['slug'] ?? ''))) : null;
         $post['syncedFrom']     = $sourceUrl;
         $post['syncedSourceId'] = $rid;
 
@@ -3024,23 +3108,46 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts) {
 // Combines fetch+apply and persists site.json. Silent, cheap no-op when Blog
 // Sync isn't enabled or has no source configured — safe to call from both the
 // explicit tick endpoint and the opportunistic login rider below.
+// One sync at a time. Two blog visitors arriving together right as the cooldown
+// lapses would otherwise both fetch and both append the same new post.
+// Returns a lock handle, false when another sync holds it, null if no lock file
+// could be made (then the sync simply runs unlocked, as it always did).
+function fourgeBlogSyncLock() {
+    $dir = PUBLIC_HTML . '/data';
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $fh = @fopen($dir . '/.blog-sync.lock', 'c');
+    if (!$fh) return null;
+    if (!flock($fh, LOCK_EX | LOCK_NB)) { fclose($fh); return false; }
+    return $fh;
+}
 function fourgeBlogSyncDoSync($site) {
     $blogSync = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
     if (empty($blogSync['enabled'])) return ['ok' => true, 'added' => 0, 'skipped' => 'Blog Sync is not enabled.'];
     $sourceUrl = trim((string)($blogSync['sourceUrl'] ?? ''));
     if ($sourceUrl === '') return ['ok' => true, 'added' => 0, 'skipped' => 'No source URL configured.'];
 
-    $remote = fourgeBlogSyncFetchRemotePosts($sourceUrl);
-    $result = fourgeBlogSyncApplyRemotePosts($site, $remote);
-    $site['blogSync'] = $result['blogSync'];
-    cmsPkgWriteJson('site.json', $site);
-    return ['ok' => $remote !== null, 'added' => $result['added'], 'lastResult' => $result['blogSync']['lastResult']];
+    $lock = fourgeBlogSyncLock();
+    if ($lock === false) return ['ok' => true, 'added' => 0, 'skipped' => 'A sync is already running.'];
+    try {
+        $remote = fourgeBlogSyncFetchRemote($sourceUrl);
+        $result = fourgeBlogSyncApplyRemotePosts($site, !empty($remote['ok']) ? $remote['posts'] : null, (string)($remote['base'] ?? ''), (string)($remote['error'] ?? ''));
+        // Persist into a FRESH read of site.json: the record handed in was read a
+        // moment ago, and another save (a settings change, a page's nav update)
+        // may have landed since — only the blogSync bookkeeping is ours to write.
+        $persist = cmsPkgReadJson('site.json', null);
+        if (!is_array($persist)) $persist = is_array($site) ? $site : [];
+        $persist['blogSync'] = $result['blogSync'];
+        cmsPkgWriteJson('site.json', $persist);
+        return ['ok' => !empty($remote['ok']), 'added' => $result['added'], 'lastResult' => $result['blogSync']['lastResult']];
+    } finally {
+        if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
+    }
 }
-// Opportunistic rider on the login self-heal chain (fourgeApiInstallCleanUrls):
-// gives sites that are actively logged into a reasonably fresh sync with zero
-// setup. A site nobody logs into for weeks still needs a real external
-// scheduler hitting blog_sync_tick for a guaranteed ~10-minute cadence —
-// Fourge itself has no cron of its own to fall back on.
+// The cooldown-gated check. Reached from the login self-heal chain
+// (fourgeApiInstallCleanUrls) and from the public blog_sync_poke that the blog
+// pages fire on every view — so a site stays within ~10 minutes of its source
+// for as long as anyone at all reads its blog, with zero setup. A site nobody
+// visits or logs into can still point an external scheduler at blog_sync_tick.
 function fourgeBlogSyncTickIfDue() {
     $site = cmsPkgReadJson('site.json', []);
     if (!is_array($site)) return null;
@@ -3056,6 +3163,17 @@ function fourgeApiBlogSyncTick($me, $body) {
     if (!is_array($site)) $site = [];
     $result = fourgeBlogSyncDoSync($site);
     echo json_encode($result + ['checked_at' => date('c')]);
+}
+// Public, unauthenticated and deliberately boring: it can only run the sync the
+// admin already configured, and only once TickIfDue's 10-minute cooldown has
+// passed — so the blog pages firing it on every view keep a partner site current
+// within ~10 minutes of a publish, with no cron, and nobody can make it do more
+// than one source fetch per ten minutes. Says nothing but whether posts arrived
+// (the page re-renders its list when they did).
+function fourgeApiBlogSyncPoke() {
+    $r = null;
+    try { $r = fourgeBlogSyncTickIfDue(); } catch (Throwable $e) { $r = null; }
+    echo json_encode(['ok' => true, 'checked' => $r !== null, 'added' => (int)($r['added'] ?? 0)]);
 }
 function fourgeApiBlogSyncAdmin($me, $body) {
     if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
