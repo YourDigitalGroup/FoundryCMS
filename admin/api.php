@@ -62,6 +62,20 @@ if (empty($__secret['smtp_host']) && empty($__secret['mg_api_key'])) {
 define('API_TOKEN',    (string)($__secret['api_token'] ?? 'CHANGE_ME')); // optional now (login uses sessions); kept for legacy/external callers
 define('PUBLIC_HTML',  realpath(dirname(__DIR__)));
 
+// ── Not hoisted ──────────────────────────────────────────────────────────────
+// PHP defines a top-level `const` only when execution reaches its line. The
+// request dispatcher below runs handlers long before the bottom of this file, so
+// every constant a handler may touch has to be declared up here — declared next
+// to the function that uses it, it is "Undefined constant" at request time (which
+// is exactly how form file uploads and the GitHub mirror hooks failed).
+// Form uploads (fourgeStoreFormUpload): accepted types and per-file size cap.
+const FOURGE_UPLOAD_ALLOWED_EXT = ['pdf','doc','docx','xls','xlsx','ppt','pptx','png','jpg','jpeg','gif','webp','txt','csv','zip'];
+const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
+// GitHub mirror (cmsGhShouldMirror / cmsGhMaxBytes): folders never mirrored, and
+// the largest file the mirror will push — see the policy comment by those functions.
+const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
+const FOURGE_GH_MAX_BYTES = 20971520;
+
 // Mailgun (forms)
 define('MG_DOMAIN',    (string)($__secret['mg_domain']    ?? 'mg.example.com'));
 define('MG_API_KEY',   (string)($__secret['mg_api_key']   ?? ''));
@@ -508,10 +522,30 @@ function cmsWriteFile($body) {
         return;
     }
     if (!is_dir($dir)) mkdir($dir, 0755, true);
-    if (file_put_contents($dest, $content) === false) {
+    // Engine files get a pre-flight before anything touches disk: a PHP file must
+    // parse on THIS server's PHP (a truncated download, or syntax this host's PHP
+    // version doesn't know, would otherwise replace a working api.php with one
+    // that answers every request with an error page — and a CMS whose API is dead
+    // can't even update itself back), and the admin page must at least be whole.
+    $guard = cmsWriteFilePreflight($dest, $content);
+    if ($guard !== '') { http_response_code(409); echo json_encode(['error' => $guard]); return; }
+    // Atomic write: the whole file lands under a temp name first and is renamed
+    // over the old one only once every byte made it. A short write (a disk quota
+    // hit mid-file) can therefore never leave a half-written page or api.php.
+    $tmp = $dest . '.tmp-' . bin2hex(random_bytes(4));
+    $n = @file_put_contents($tmp, $content);
+    if ($n === false || $n !== strlen($content)) {
+        @unlink($tmp);
         http_response_code(500);
-        echo json_encode(['error' => 'Could not write: ' . htmlspecialchars($relPath)]);
+        echo json_encode(['error' => 'Could not write ' . htmlspecialchars($relPath) . ($n === false ? ' (folder not writable?)' : ' — only ' . (int)$n . ' of ' . strlen($content) . ' bytes fit (disk quota?)') . '. The existing file was left untouched.']);
         return;
+    }
+    if (!@rename($tmp, $dest)) {
+        // A host where rename-over can't replace the file (rare): fall back to a
+        // direct write, but only now that the full content is known to fit.
+        $ok = @file_put_contents($dest, $content) === strlen($content);
+        @unlink($tmp);
+        if (!$ok) { http_response_code(500); echo json_encode(['error' => 'Could not write: ' . htmlspecialchars($relPath)]); return; }
     }
     // Mirror the saved bytes to the site's GitHub repo right here, and report the
     // outcome as `gh` so the client can say "Saved to server + GitHub" truthfully
@@ -523,6 +557,26 @@ function cmsWriteFile($body) {
         ? ['ok' => false, 'reason' => 'opted_out']
         : cmsGhAfterWrite(cmsGhRelPath($dest), $content);
     echo json_encode(['ok' => true, 'path' => $relPath, 'size' => strlen($content), 'gh' => $gh]);
+}
+
+// The pre-flight for cmsWriteFile(): '' when the write may proceed, otherwise the
+// reason it must not. Only engine files are judged — an operator's own pages are
+// theirs to write however they like.
+function cmsWriteFilePreflight($dest, $content) {
+    $rel  = cmsGhRelPath($dest);
+    $base = strtolower(basename($rel));
+    if (strpos($rel, 'admin/') === 0 && substr($base, -4) === '.php') {
+        if (strlen($content) < 1000) return 'Refusing to install ' . $rel . ': the file is only ' . strlen($content) . ' bytes — the download looks incomplete. The current file was left untouched.';
+        try { token_get_all($content, TOKEN_PARSE); }
+        catch (\Throwable $e) {
+            return 'Refusing to install ' . $rel . ': it does not parse on this server\'s PHP ' . PHP_VERSION . ' (line ' . $e->getLine() . ': ' . $e->getMessage() . '). The current file was left untouched.';
+        }
+    }
+    if ($rel === 'admin/index.html') {
+        if (strlen($content) < 10000 || !preg_match('~</html>\s*$~i', $content) || strpos($content, "const CMS_VERSION='") === false)
+            return 'Refusing to install admin/index.html: the download looks incomplete (no closing </html> or no version constant). The current file was left untouched.';
+    }
+    return '';
 }
 
 // ── UPLOAD FILES ──────────────────────────────────────────────────────────────
@@ -1304,7 +1358,6 @@ function cmsGhApi($method, $url, $token, $payload = null, $timeout = 25) {
 //    .well-known (.env, .ga-token.json, .DS_Store, .github …);
 //  • pure churn: the form-analytics counter, the reCAPTCHA debug log, logs,
 //    backups and temp files.
-const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 function cmsGhSkipDir($relDir) {
     $relDir = trim(str_replace('\\', '/', (string)$relDir), '/');
     if ($relDir === '') return false;
@@ -1341,7 +1394,6 @@ function cmsGhRelPath($absPath) {
 // so this also bows to memory_limit. 20 MB covers every image, PDF and short
 // clip the media library realistically stores; anything bigger stays server-only
 // and is reported as skipped rather than failing the save.
-const FOURGE_GH_MAX_BYTES = 20971520;
 function cmsGhMaxBytes() {
     $ml = trim((string)ini_get('memory_limit'));
     if ($ml === '' || $ml === '-1') return FOURGE_GH_MAX_BYTES;
@@ -1906,8 +1958,6 @@ HT;
 // Extensions allowed through a form's File Upload field — common document/
 // image types a lead-gen form realistically needs (resumes, photos, quotes).
 // Anything else (scripts, executables, disguised extensions) is refused.
-const FOURGE_UPLOAD_ALLOWED_EXT = ['pdf','doc','docx','xls','xlsx','ppt','pptx','png','jpg','jpeg','gif','webp','txt','csv','zip'];
-const FOURGE_UPLOAD_MAX_BYTES = 10485760; // 10MB per file
 // Moves one $_FILES entry into data/uploads/<formId>/, validated and safely
 // renamed (random token + sanitized basename — never the caller's own
 // filename verbatim). Returns a site-relative URL on success, or null on any
