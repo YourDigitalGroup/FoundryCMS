@@ -2304,6 +2304,18 @@ HT;
 // object and only overriding what MUST be site-local (id, slug, plus the
 // bookkeeping fields below) keeps them intact for any partner theme that
 // wants to render them.
+//
+// MEDIA IS LOCALIZED, not hotlinked: a synced post's featured image and its
+// image/video block files are downloaded from the source site into this
+// site's own media library (images/blog-sync/, which the Media panel already
+// lists) and the post is rewritten to those local paths. Hotlinking would
+// leave every partner page's images pointing at the source domain — wrong
+// branding story, broken pages the day the source reorganizes its files, and
+// a per-pageview dependency on someone else's server. Only files ON the sync
+// source's own host are fetched (same trust boundary as posts.json itself;
+// a third-party CDN URL inside a post is left alone), redirects are never
+// followed (same rule as the feed fetch), and a failed download degrades to
+// the absolute source URL so the post still renders.
 function fourgeWriteBlogSyncApiHtaccess() {
     $htPath   = PUBLIC_HTML . '/.htaccess';
     $existing = is_file($htPath) ? file_get_contents($htPath) : '';
@@ -2383,11 +2395,109 @@ function fourgeBlogSyncFetchRemotePosts($sourceUrl) {
     }
     return $live;
 }
+// ── media localization ──────────────────────────────────────────────────────
+// Resolve a post-media reference to the absolute source-site URL it should be
+// downloaded from — or null when it is not ours to localize (empty, data:,
+// or hosted somewhere other than the sync source). Pure; unit-testable.
+function fourgeBlogSyncMediaSourceUrl($raw, $sourceUrl) {
+    $raw = trim((string)$raw);
+    $sourceUrl = rtrim(trim((string)$sourceUrl), '/');
+    if ($raw === '' || $sourceUrl === '' || strpos($raw, 'data:') === 0) return null;
+    $srcHost = strtolower((string)parse_url($sourceUrl, PHP_URL_HOST));
+    if ($srcHost === '') return null;
+    $bare = preg_replace('~^www\.~', '', $srcHost);
+    if (preg_match('~^https?://~i', $raw) || strpos($raw, '//') === 0) {
+        $abs  = (strpos($raw, '//') === 0) ? 'https:' . $raw : $raw;
+        $host = strtolower((string)parse_url($abs, PHP_URL_HOST));
+        // Same-site check tolerates the www/bare spelling difference, but the
+        // DOWNLOAD always uses the operator-validated $sourceUrl origin — the
+        // fetch below never follows redirects, and a bare-domain URL on a
+        // www-canonical site (or vice versa) would 301 and yield nothing.
+        if ($host === '' || preg_replace('~^www\.~', '', $host) !== $bare) return null;
+        $path = (string)parse_url($abs, PHP_URL_PATH);
+        if ($path === '' || $path === '/') return null;
+        return $sourceUrl . $path;
+    }
+    return $sourceUrl . '/' . ltrim($raw, '/');
+}
+// Deterministic local filename for a source URL: re-syncing (or two posts
+// sharing one image) reuses the already-downloaded file instead of stacking
+// copies. Pure; unit-testable.
+function fourgeBlogSyncMediaLocalPath($absUrl) {
+    $path = (string)parse_url((string)$absUrl, PHP_URL_PATH);
+    $base = strtolower(basename($path));
+    if (!preg_match('~^(?<name>.+)\.(?<ext>jpe?g|png|webp|gif|svg|ico|avif|mp4|m4v|mov|webm|ogv|ogg|mp3|wav|m4a)$~', $base, $m)) return null;
+    $name = preg_replace('~[^a-z0-9._-]+~', '-', $m['name']);
+    $name = trim(preg_replace('~-{2,}~', '-', $name), '-.');
+    if ($name === '') $name = 'media';
+    return 'images/blog-sync/' . substr(sha1((string)$absUrl), 0, 10) . '-' . $name . '.' . $m['ext'];
+}
+// Network half: download one media file from the sync source into the local
+// media library. Returns the root-relative local path ('/images/blog-sync/…')
+// or null. Never follows redirects (same rule as the posts.json fetch), caps
+// the size, and refuses bodies that are obviously not media (an HTML error
+// page saved as .jpg would otherwise poison the library).
+function fourgeBlogSyncDownloadMedia($absUrl) {
+    $rel = fourgeBlogSyncMediaLocalPath($absUrl);
+    if ($rel === null) return null;
+    $dest = PUBLIC_HTML . '/' . $rel;
+    if (is_file($dest) && filesize($dest) > 0) return '/' . $rel;   // already localized
+    $ch = curl_init($absUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_MAXFILESIZE    => 52428800,   // 50 MB — bigger than any sane blog asset
+        CURLOPT_USERAGENT      => 'FourgeCMS Blog Sync',
+    ]);
+    $body = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $type = strtolower((string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE));
+    curl_close($ch);
+    if ($code !== 200 || !is_string($body) || $body === '' || strlen($body) > 52428800) return null;
+    $lead = ltrim(substr($body, 0, 64));
+    $isSvg = substr($rel, -4) === '.svg';
+    if (!$isSvg && ($lead === '' || $lead[0] === '<')) return null;              // HTML/XML masquerading as media
+    if ($type !== '' && !preg_match('~^(image|video|audio)/|octet-stream~', $type) && !($isSvg && strpos($type, 'svg') !== false)) return null;
+    $dir = dirname($dest);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return null;
+    if (@file_put_contents($dest, $body) === false) return null;
+    return '/' . $rel;
+}
+// Rewrite one post's media references through $localize(absoluteSourceUrl) →
+// local path|null. Applied to the featured image and to image/video block
+// files; embed blocks are external by nature and are never touched. When a
+// download fails the reference is left as the ABSOLUTE source URL, so the
+// post still renders (hotlinked) rather than breaking. Pure given $localize;
+// unit-testable with a stub. Returns [post, localizedCount].
+function fourgeBlogSyncLocalizePostMedia($post, $sourceUrl, $localize) {
+    $count = 0;
+    $swap = function ($val) use ($sourceUrl, $localize, &$count) {
+        $abs = fourgeBlogSyncMediaSourceUrl($val, $sourceUrl);
+        if ($abs === null) return $val;                    // foreign/empty — leave alone
+        $local = $localize($abs);
+        if ($local !== null && $local !== '') { $count++; return $local; }
+        return $abs;                                       // degrade to absolute hotlink
+    };
+    if (!empty($post['featured']) && is_string($post['featured'])) $post['featured'] = $swap($post['featured']);
+    if (!empty($post['blocks']) && is_array($post['blocks'])) {
+        foreach ($post['blocks'] as &$b) {
+            if (!is_array($b) || ($b['type'] ?? '') === 'embed') continue;
+            foreach (['url', 'poster'] as $k) {
+                if (!empty($b[$k]) && is_string($b[$k])) $b[$k] = $swap($b[$k]);
+            }
+        }
+        unset($b);
+    }
+    return [$post, $count];
+}
 // Pure half: given the site record and an already-fetched+filtered remote
 // post list, decide what's new, copy it into local posts.json, and return
 // updated blogSync bookkeeping for the caller to persist into site.json.
-// No network access — fully unit-testable with a stubbed $remotePosts array.
-function fourgeBlogSyncApplyRemotePosts($site, $remotePosts) {
+// No network access of its own — media downloads go through the injected
+// $fetchMedia(absUrl) → local-path|null callable (null = don't localize,
+// keep source URLs), so the merge/dedupe/rewrite logic stays fully
+// unit-testable with a stubbed $remotePosts array and a stubbed downloader.
+function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $fetchMedia = null) {
     $blogSync  = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
     $syncedIds = is_array($blogSync['syncedIds'] ?? null) ? $blogSync['syncedIds'] : [];
     $syncedSet = array_flip(array_map('strval', $syncedIds));
@@ -2404,13 +2514,17 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts) {
     $existingSlugs = [];
     foreach ($posts as $p) { if (is_array($p) && !empty($p['slug'])) $existingSlugs[$p['slug']] = true; }
 
-    $added = 0;
+    $added = 0; $mediaLocalized = 0;
     foreach ($remotePosts as $rp) {
         if (!is_array($rp)) continue;
         $rid = (string)($rp['id'] ?? '');
         if ($rid === '' || isset($syncedSet[$rid])) continue;
 
         $post  = $rp;                      // whole-object copy — see note above
+        if (is_callable($fetchMedia)) {
+            list($post, $n) = fourgeBlogSyncLocalizePostMedia($post, $sourceUrl, $fetchMedia);
+            $mediaLocalized += $n;
+        }
         $newId = fourgeBlogSyncUid();
         $slug  = (string)($rp['slug'] ?? $newId);
         if (isset($existingSlugs[$slug])) $slug = $slug . '-' . substr($newId, 0, 4);
@@ -2432,7 +2546,8 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts) {
     $blogSync['syncedIds']     = array_values(array_keys($syncedSet));
     $blogSync['lastCheckedAt'] = gmdate('c');
     $blogSync['lastResult']    = $added > 0
-        ? ($added . ' new post' . ($added === 1 ? '' : 's') . ' synced')
+        ? ($added . ' new post' . ($added === 1 ? '' : 's') . ' synced'
+           . ($mediaLocalized > 0 ? ' (' . $mediaLocalized . ' media file' . ($mediaLocalized === 1 ? '' : 's') . ' copied to the media library)' : ''))
         : 'Up to date — no new posts';
     return ['blogSync' => $blogSync, 'added' => $added];
 }
@@ -2446,7 +2561,7 @@ function fourgeBlogSyncDoSync($site) {
     if ($sourceUrl === '') return ['ok' => true, 'added' => 0, 'skipped' => 'No source URL configured.'];
 
     $remote = fourgeBlogSyncFetchRemotePosts($sourceUrl);
-    $result = fourgeBlogSyncApplyRemotePosts($site, $remote);
+    $result = fourgeBlogSyncApplyRemotePosts($site, $remote, 'fourgeBlogSyncDownloadMedia');
     $site['blogSync'] = $result['blogSync'];
     cmsPkgWriteJson('site.json', $site);
     return ['ok' => $remote !== null, 'added' => $result['added'], 'lastResult' => $result['blogSync']['lastResult']];
