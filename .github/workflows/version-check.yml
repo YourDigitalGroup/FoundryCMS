@@ -1,0 +1,35 @@
+# A release is only a release when BOTH numbers move together. The login
+# updater compares admin/version.json's "version" with the CMS_VERSION constant
+# baked into admin/index.html; if they differ, every client site installs the
+# update, reloads, still reads the old constant, and installs again — forever
+# (this happened with 1.14.121 / 1.14.119 on 2026-09-17). The updater now
+# refuses such a release at install time as a safety net; this check stops it
+# from ever being merged in the first place.
+name: Version consistency
+
+on:
+  pull_request:
+    paths:
+      - 'admin/version.json'
+      - 'admin/index.html'
+  push:
+    branches: [main]
+    paths:
+      - 'admin/version.json'
+      - 'admin/index.html'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: version.json must match CMS_VERSION in index.html
+        run: |
+          set -e
+          V=$(python3 -c "import json;print(json.load(open('admin/version.json'))['version'])")
+          C=$(grep -oE "^const CMS_VERSION='[^']+';" admin/index.html | sed -E "s/^const CMS_VERSION='([^']+)';/\1/")
+          echo "version.json: $V"
+          echo "CMS_VERSION:  $C"
+          if [ -z "$C" ]; then echo "::error::admin/index.html has no CMS_VERSION constant"; exit 1; fi
+          if [ "$V" != "$C" ]; then echo "::error::admin/version.json says $V but admin/index.html says $C — every site would loop installing this release. Bump both."; exit 1; fi
+          echo "OK — both say $V"

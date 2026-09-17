@@ -808,6 +808,11 @@ textarea.fb-input{resize:vertical}
 .fb-cond-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--muted);margin-top:8px}
 .fb-cond-sel,.fb-cond-val{font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)}
 .fb-cond-val{flex:1;min-width:80px}
+.fb-cond-logic{font-size:12px;color:var(--muted);margin-top:8px}
+.fb-cond-rm{background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 4px}
+.fb-cond-rm:hover{color:#dc2626}
+.fb-cond-add{margin-top:8px;font-size:12px;padding:5px 10px;border:1px dashed var(--border);border-radius:6px;background:none;color:var(--muted);cursor:pointer}
+.fb-cond-add:hover{color:var(--text);border-color:var(--text)}
 .fb-pagebreak-note,.fb-html-note{font-size:12px;color:var(--muted);font-style:italic}
 /* Entries */
 .ent-card{border:1px solid var(--border);border-radius:11px;padding:16px;margin-bottom:12px;background:var(--surface)}
@@ -1562,6 +1567,23 @@ textarea.fb-input{resize:vertical}
               <label class="pe-field-label">Advanced — extra CSS (targets <code>.foundry-form</code>)</label>
               <textarea id="fb-css" rows="6" spellcheck="false" style="width:100%;font-family:var(--font-mono);font-size:12px" placeholder="/* e.g. */&#10;.foundry-form .ff-submit{background:#111;border-radius:999px}&#10;.foundry-form input{border-color:#c8531e}"></textarea>
             </div>
+            <div class="pe-side-card">
+              <div class="pe-side-title">Outbound Webhook</div>
+              <label class="pe-field-label">Send each submission as JSON to this URL (optional) — e.g. Zapier, Make, Slack, or your own endpoint</label>
+              <input type="text" id="fb-webhook-url" placeholder="https://hooks.zapier.com/…" style="width:100%;margin-bottom:12px">
+              <label class="pe-field-label">Signing secret (optional)</label>
+              <input type="password" id="fb-webhook-secret" placeholder="Used to verify the request really came from this form" style="width:100%">
+            </div>
+            <div class="pe-side-card">
+              <div class="pe-side-title">Protections</div>
+              <label class="pe-field-label">Password (optional)</label>
+              <input type="password" id="fb-password" placeholder="Leave blank for no password" style="width:100%;margin-bottom:6px">
+              <label class="fb-check" id="fb-password-clear-row" style="display:none;margin-bottom:12px"><input type="checkbox" id="fb-password-clear"> Remove password protection</label>
+              <label class="pe-field-label">Response limit (optional)</label>
+              <input type="number" id="fb-max-responses" min="1" placeholder="e.g. 100" style="width:100%;margin-bottom:12px">
+              <label class="pe-field-label">Close date (optional)</label>
+              <input type="date" id="fb-close-date" style="width:100%">
+            </div>
             <div class="pe-side-card" id="fb-ghl-card" style="display:none">
               <div class="pe-side-title">Lead Generation — match a CRM form</div>
               <label class="pe-field-label">Paste the CRM form's share link and map this form's fields onto its real fields — so submissions feed your automations with the exact fields they use, not just a note.</label>
@@ -1658,7 +1680,7 @@ textarea.fb-input{resize:vertical}
         </div>
         <div class="tab-panel" id="si-design">
           <div class="si-sec"><h2>Brand Colors</h2><div class="desc">Your two main brand colors. Pick them here and click Apply, and they’ll be used across every page of your site. They start from the colors your site already uses, so you can adjust from there.</div>
-            <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch" data-fc-hex></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch" data-fc-hex></div></div>
+            <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:8px"><div class="fg" style="margin:0"><label>Primary</label><input type="color" id="si-brand-primary" value="#052942" class="brand-swatch" data-fc-hex data-set="0" oninput="this.dataset.set='1'"></div><div class="fg" style="margin:0"><label>Secondary</label><input type="color" id="si-brand-secondary" value="#C8531E" class="brand-swatch" data-fc-hex data-set="0" oninput="this.dataset.set='1'"></div></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
               <button type="button" class="fd-btn-primary" onclick="brandApplyAll()"><i class="fa-solid fa-check-double"></i> Apply colors to all pages</button>
               <span id="si-brand-status" style="font-size:12px;color:var(--muted)"></span>
@@ -2669,7 +2691,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.121';
+const CMS_VERSION='1.14.126';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3010,12 +3032,24 @@ async function ghDelete(path,msg){const{repo,branch}=ghCfg();const sha=await ghS
 // token/repo configured. Returns {ok, via:'server'|'browser'|null, error?}.
 async function ghMirror(path,content,message,opts){
   const del=!!(opts&&opts.delete);
-  try{
-    const r=await apiCall('gh_mirror', del?{path,message,delete:true}:{path,content,message});
-    if(r&&r.ok) return {ok:true,via:'server',skipped:!!r.skipped};
-    if(r&&r.reason==='github') return {ok:false,via:'server',error:r.error||'GitHub rejected the update'};
-    // no_repo / no_token → try the browser PAT below
-  }catch(e){ /* older api.php without gh_mirror, or transient error → browser fallback */ }
+  // The server now mirrors inline as part of write_file / upload / delete_file
+  // and reports the outcome as `gh` in that response. A caller holding one
+  // passes it as opts.serverResult, so nothing is pushed twice; an older
+  // api.php without the hook returns no `gh`, and the gh_mirror round-trip
+  // below does the job exactly as before.
+  const sr=opts&&opts.serverResult;
+  let r=(sr&&typeof sr==='object'&&sr.reason!=='opted_out')?sr:null;
+  if(!r){
+    try{ r=await apiCall('gh_mirror', del?{path,message,delete:true}:{path,content,message}); }
+    catch(e){ r=null; /* older api.php without gh_mirror, or transient error → browser fallback */ }
+  }
+  if(r&&r.ok) return {ok:true,via:'server',skipped:!!r.skipped};
+  if(r&&r.reason&&r.reason!=='no_repo'&&r.reason!=='no_token'){
+    // A definite server-side verdict — GitHub rejected it, the file is too big,
+    // or it is deliberately kept out of the repo — the browser PAT can't do better.
+    return {ok:false,via:'server',error:r.error||(r.reason==='excluded'?'this file is kept out of the repo on purpose':r.reason)};
+  }
+  // no_repo / no_token → try the browser PAT below
   const{repo,pat}=ghCfg();
   if(repo&&pat){
     try{
@@ -3040,13 +3074,57 @@ async function ghMirror(path,content,message,opts){
 // call from doUpdate() on every admin login) never interrupts with one.
 async function ghSyncSiteContent(verbose){
   if(!canCallApi()){ if(verbose) toast('Sign in again to sync to GitHub','err'); return; }
-  // doUpdate() now runs automatically on EVERY login (see initUpdateGate), for
-  // any role, while the loader is still up — not just a deliberate admin
-  // action. Admin+ only, so a plain editor's login is never held up by (or
-  // shown a toast about) a GitHub sync they have no context for; the next
-  // admin/superadmin/architect login still picks it up. (The manual button
-  // is only ever shown to Architect sessions, so this never blocks it.)
+  // Runs automatically on login (see ghDailySyncTick / doUpdate), for any role,
+  // while the loader is still up — not just as a deliberate admin action.
+  // Admin+ only, so a plain editor's login is never held up by (or shown a
+  // toast about) a GitHub sync they have no context for; the next
+  // admin/superadmin/architect login still picks it up. (The manual button is
+  // only ever shown to Architect sessions, so this never blocks it.)
   if(accessLevel(getSessionUser())<2){ if(verbose) toast('Admin access required','err'); return; }
+  // The walk itself is server-side (gh_sync_all): api.php lists every file under
+  // the web root that belongs in the repo — pages, data/*.json, images, video,
+  // fonts, documents, .htaccess — compares each to the repo's own blob sha and
+  // pushes only what differs, in time-boxed batches. This loop just keeps
+  // asking for the next batch until the server says there is none.
+  let pushed=0, upToDate=0, failed=0, skipped=0, total=0, errors=[];
+  let offset=0, notConfigured=false, legacy=false;
+  const st=document.getElementById('s-gh-sync-status');
+  for(let guard=0; guard<500; guard++){
+    let r;
+    try{ r=await apiCall('gh_sync_all',{offset}); }
+    catch(e){
+      // An api.php from before gh_sync_all existed (its auto-update is refused
+      // on installs without config.secret.php) still has gh_mirror: fall back
+      // to the per-file client walk so those sites keep syncing.
+      if(offset===0 && /unknown action/i.test(e.message||'')){ legacy=true; break; }
+      failed++; errors.push(e.message); break;
+    }
+    if(!r||!r.ok){
+      if(r&&(r.reason==='no_repo'||r.reason==='no_token')){ notConfigured=true; break; }
+      failed++; if(r&&(r.error||r.reason)) errors.push(r.error||r.reason); break;
+    }
+    total=r.total||0; pushed+=r.pushed||0; upToDate+=r.upToDate||0; failed+=r.failed||0; skipped+=r.skipped||0;
+    if(Array.isArray(r.errors)) errors.push(...r.errors);
+    if(verbose && st && r.next!=null) st.textContent=`Syncing… ${r.done||r.next} of ${total} files checked`;
+    if(r.next==null || r.next<=offset) break;
+    offset=r.next;
+  }
+  if(legacy) return ghSyncSiteContentLegacy(verbose);
+  if(notConfigured){
+    // Silent on the automatic login-triggered path (matches every other
+    // optional GitHub feature); the manual button says so explicitly, since
+    // someone who just clicked "Sync Now" deserves to know why nothing moved.
+    if(verbose) toast("GitHub isn't configured for this site yet — add a token and repo above, then try again.",'err');
+    return {ok:true, notConfigured:true, pushed:0, upToDate:0, failed:0, skipped:0, total:0, errors:[]};
+  }
+  toast(`GitHub sync: ${pushed} pushed, ${upToDate} already current${failed?`, ${failed} failed`:''}`, failed?'err':'ok');
+  return {ok:!failed, notConfigured:false, pushed, upToDate, failed, skipped, total, errors};
+}
+// The pre-gh_sync_all walk, driven from the browser: read each known text file
+// through read_file and push it through gh_mirror. Kept only as the fallback
+// above — it can't see media or other binary files, which is why the server
+// now does the walking.
+async function ghSyncSiteContentLegacy(verbose){
   const read=async(path)=>{ try{ const d=await apiCall('read_file',{path}); return (d&&d.content!=null)?d.content:null; }catch(e){ return null; } };
 
   const pagesRaw=await read(F_PAGES);
@@ -3122,6 +3200,29 @@ async function ghEnsureRepoPrivate(verbose){
     return {ok:false, error:e.message};
   }
 }
+// Once a day, on the first Admin+/Architect login, push the site's content to
+// its GitHub repo and make sure the repo is private — regardless of whether an
+// engine update is pending. These two steps used to run only inside doUpdate(),
+// which initUpdateGate() skips whenever the engine is already current, so on an
+// up-to-date site they never ran at all and the repo could sit public and
+// behind indefinitely. Editors are never held up: both functions' own gates
+// return before any network call for them. The date stamp is written BEFORE
+// the run, so a slow or failing sync can't retrigger on every page load; the
+// manual "Sync Site to GitHub Now" button ignores it.
+const GH_DAILY_KEY='fourge_gh_daily';
+function ghStampDailySync(){ try{ localStorage.setItem(GH_DAILY_KEY, new Date().toISOString().slice(0,10)); }catch(e){} }
+async function ghDailySyncTick(){
+  try{
+    if(!canCallApi() || accessLevel(getSessionUser())<2) return {ran:false, reason:'gate'};
+    const today=new Date().toISOString().slice(0,10);
+    let last=''; try{ last=localStorage.getItem(GH_DAILY_KEY)||''; }catch(e){}
+    if(last===today) return {ran:false, reason:'done_today'};
+    ghStampDailySync();
+    const sync=await ghSyncSiteContent();
+    const priv=await ghEnsureRepoPrivate();
+    return {ran:true, sync, priv};
+  }catch(e){ console.warn('Daily GitHub sync failed:',e.message); return {ran:false, reason:'error', error:e.message}; }
+}
 // The manual "Sync Site to GitHub Now" button (Settings → GitHub Integration):
 // runs the same two steps the automatic login flow does, but right now,
 // regardless of whether an engine update is pending — and with a persistent
@@ -3136,7 +3237,10 @@ async function ghSyncNow(){
     const priv=await ghEnsureRepoPrivate(true);
     if(st){
       if(sync&&sync.notConfigured) st.textContent="GitHub isn't configured for this site — add a token and repo above first.";
-      else if(sync) st.textContent=`${sync.pushed} pushed, ${sync.upToDate} already current${sync.failed?`, ${sync.failed} failed`:''}. Repo: ${priv&&priv.ok?(priv.already?'already private':'set to private ✓'):'could not confirm private — see above'}.`;
+      else if(sync){
+        const firstErr=(sync.errors&&sync.errors.length)?(' First problem: '+sync.errors[0]):'';
+        st.textContent=`${sync.total?sync.total+' files checked — ':''}${sync.pushed} pushed, ${sync.upToDate} already current${sync.failed?`, ${sync.failed} failed`:''}${sync.skipped?`, ${sync.skipped} skipped (too big or unreadable)`:''}. Repo: ${priv&&priv.ok?(priv.already?'already private':'set to private ✓'):('could not confirm private — '+((priv&&(priv.error||priv.reason))||'see above'))}.${firstErr}`;
+      }
       else st.textContent='Could not run — see the notification above.';
     }
   }finally{
@@ -3456,6 +3560,13 @@ async function initApp(){
   // gated rather than a one-time flag, so it re-fires for each release that
   // actually changes that runtime — see eventsRuntimeSweepIfStale().
   try{ eventsRuntimeSweepIfStale().catch(()=>{}); }catch(e){}
+  // Same idea for the blog runtimes (posts.html + post lists on pages) — see
+  // postsRuntimeSweepIfStale().
+  try{ postsRuntimeSweepIfStale().catch(()=>{}); }catch(e){}
+  // First Admin+ login of the day: mirror the site's content to its GitHub repo
+  // and make sure that repo is private — no longer tied to an engine update
+  // happening to install (see ghDailySyncTick).
+  try{ ghDailySyncTick().catch(()=>{}); }catch(e){}
 }
 
 // Runs at the tail of post-login init while the loader is still up.
@@ -3570,6 +3681,10 @@ const FIELD_TYPES=[
   {t:'address',  label:'Address',          cat:'advanced'},
   {t:'website',  label:'Website / URL',    cat:'advanced'},
   {t:'file',     label:'File Upload',      cat:'advanced'},
+  {t:'rating',   label:'Rating',           cat:'advanced'},
+  {t:'scale',    label:'Scale',            cat:'advanced'},
+  {t:'slider',   label:'Slider',           cat:'advanced'},
+  {t:'signature',label:'Signature',        cat:'advanced'},
   {t:'hidden',   label:'Hidden Field',     cat:'advanced'},
   {t:'heading',  label:'Heading',          cat:'layout'},
   {t:'paragraph',label:'Text',             cat:'layout'},
@@ -3586,8 +3701,20 @@ async function saveFormsJson(){
   await ghWrite(F_FORMS,json,sha,'CMS: forms update');
 }
 
+let _formAnalytics={};
+// Best-effort — a form that predates this feature, or a fresh site with no
+// views yet, just has no key here; renderFormsList() treats that as 0 views.
+async function loadFormAnalytics(){
+  try{
+    const{url,token}=getApiCfg();
+    if(url&&token){ const d=await apiCall('read_file',{path:'data/form-analytics.json'}); if(d.content){_formAnalytics=JSON.parse(d.content);return;} }
+  }catch{}
+  try{ const r=await fetch('../data/form-analytics.json?t='+Date.now()); if(r.ok){_formAnalytics=await r.json();return;} }catch{}
+  _formAnalytics={};
+}
 async function initForms(){
   await loadEntries();   // load submissions first so the forms list shows accurate entry counts
+  await loadFormAnalytics();
   try{
     const{url,token}=getApiCfg();
     if(url&&token){
@@ -3615,11 +3742,14 @@ function renderFormsList(){
   }
   let rows=_forms.map((f,i)=>{
       const entCount=_entries.filter(e=>e.formId===f.id).length;
+      const views=(_formAnalytics[f.id]&&_formAnalytics[f.id].views)||0;
+      const rate=views>0?Math.round(entCount/views*100):null;
       return '<tr style="cursor:pointer" onclick="editForm('+i+')">'
         +'<td style="font-size:13px;font-weight:600">'+esc(decodeHtml(f.title||'Untitled'))+'</td>'
         +'<td style="font-size:12px;color:var(--muted)">'+(f.fields?f.fields.length:0)+'</td>'
         +'<td><code style="font-family:var(--font-mono);font-size:11px;background:var(--surface-3);padding:2px 6px;border-radius:4px;cursor:pointer" onclick="event.stopPropagation();copyShortcode(\''+f.id+'\')">[form id='+f.id+']</code></td>'
         +'<td style="font-size:12px"><a href="#" onclick="event.stopPropagation();viewEntries(\''+f.id+'\');return false" style="color:var(--ember);font-weight:600">'+entCount+'</a></td>'
+        +'<td style="font-size:12px;color:var(--muted)">'+views+(rate!=null?' <span style="font-size:11px">('+rate+'% completion)</span>':'')+'</td>'
         +'<td style="text-align:right"><button class="btn btn-o btn-xs" onclick="event.stopPropagation();editForm('+i+')">Edit</button></td>'
         +'</tr>';
     }).join('');
@@ -3631,10 +3761,11 @@ function renderFormsList(){
         +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td style="font-size:12px"><a href="#" onclick="viewOrphanEntries('+oi+');return false" style="color:var(--ember);font-weight:600">'+orphanCounts[id]+'</a></td>'
+        +'<td style="font-size:12px;color:var(--muted)">—</td>'
         +'<td></td>'
         +'</tr>'
     ).join('');
-  body.innerHTML='<table class="dt"><thead><tr><th>Form</th><th>Fields</th><th>Shortcode</th><th>Entries</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  body.innerHTML='<table class="dt"><thead><tr><th>Form</th><th>Fields</th><th>Shortcode</th><th>Entries</th><th>Views</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function copyShortcode(id){
@@ -3669,6 +3800,15 @@ function showFormBuilder(f){
   set('fb-css',_curFormMeta.css);
   set('fb-header-title',_curFormMeta.headerTitle);
   set('fb-header-desc',_curFormMeta.headerDesc);
+  set('fb-webhook-url',_curFormMeta.webhookUrl);
+  const whSec=document.getElementById('fb-webhook-secret');
+  if(whSec){ whSec.value=''; whSec.placeholder=_curFormMeta.webhookSecret?'Secret saved — leave blank to keep it':'Used to verify the request really came from this form'; }
+  set('fb-max-responses',_curFormMeta.maxResponses||'');
+  set('fb-close-date',_curFormMeta.closeDate);
+  const pwField=document.getElementById('fb-password');
+  if(pwField){ pwField.value=''; pwField.placeholder=_curFormMeta.password?'Password set — leave blank to keep it':'Leave blank for no password'; }
+  const pwClearBox=document.getElementById('fb-password-clear'); if(pwClearBox) pwClearBox.checked=false;
+  const pwClearRow=document.getElementById('fb-password-clear-row'); if(pwClearRow) pwClearRow.style.display=_curFormMeta.password?'':'none';
   const style=_curFormMeta.style||{};
   // rgba-aware: fcSet loads the hex into the swatch and the alpha into the slider.
   const setColor=(id,val,def)=>{const el=document.getElementById(id);if(!el)return; if(val){fcSet(el,val);el.dataset.set='1';}else{fcSet(el,def);el.dataset.set='0';}};
@@ -3829,6 +3969,9 @@ function renderFieldPalette(){
 function addField(type){
   const f={id:uid(),type,label:defaultLabel(type),required:false};
   if(['select','radio','checkbox'].includes(type)) f.choices=['First Choice','Second Choice','Third Choice'];
+  if(type==='rating') f.max=5;
+  if(type==='scale'){ f.min=1; f.max=5; }
+  if(type==='slider'){ f.min=0; f.max=100; f.step=1; }
   if(type==='html') f.content='<p>Custom HTML here</p>';
   if(type==='paragraph') f.content='Add your text here.';
   if(type==='heading') f.label='Section Heading';
@@ -3839,7 +3982,7 @@ function addField(type){
 }
 
 function defaultLabel(type){
-  const m={text:'Untitled',textarea:'Message',email:'Email',phone:'Phone',number:'Number',select:'Dropdown',radio:'Pick One',checkbox:'Select All That Apply',date:'Date',name:'Name',address:'Address',website:'Website',file:'Upload File',hidden:'Hidden',html:'HTML',heading:'Heading',paragraph:'Text',section:'Section Break',pagebreak:'Page Break'};
+  const m={text:'Untitled',textarea:'Message',email:'Email',phone:'Phone',number:'Number',select:'Dropdown',radio:'Pick One',checkbox:'Select All That Apply',date:'Date',name:'Name',address:'Address',website:'Website',file:'Upload File',rating:'Rating',scale:'Scale',slider:'Slider',signature:'Signature',hidden:'Hidden',html:'HTML',heading:'Heading',paragraph:'Text',section:'Section Break',pagebreak:'Page Break'};
   return m[type]||'Field';
 }
 
@@ -3888,6 +4031,27 @@ function renderFieldCard(f,i){
   // Choices
   if(['select','radio','checkbox'].includes(f.type)){
     body+='<label class="fb-fl">Choices (one per line)</label><textarea class="fb-input" oninput="updateField('+i+',\'choicesText\',this.value)" rows="3">'+esc((f.choices||[]).join('\n'))+'</textarea>';
+  }
+  if(f.type==='rating'){
+    body+='<label class="fb-fl">Number of stars</label><input type="number" min="3" max="10" value="'+(f.max!=null?f.max:5)+'" oninput="updateField('+i+',\'max\',parseInt(this.value)||5)" class="fb-input">';
+  }
+  if(f.type==='scale'){
+    body+='<div style="display:flex;gap:10px">'
+      +'<div style="flex:1"><label class="fb-fl">Min</label><input type="number" value="'+(f.min!=null?f.min:1)+'" oninput="updateField('+i+',\'min\',parseInt(this.value)||0)" class="fb-input"></div>'
+      +'<div style="flex:1"><label class="fb-fl">Max</label><input type="number" value="'+(f.max!=null?f.max:5)+'" oninput="updateField('+i+',\'max\',parseInt(this.value)||0)" class="fb-input"></div>'
+      +'</div>'
+      +'<label class="fb-fl">Low-end label (optional)</label><input type="text" value="'+esc(f.minLabel||'')+'" placeholder="e.g. Not likely" oninput="updateField('+i+',\'minLabel\',this.value)" class="fb-input">'
+      +'<label class="fb-fl">High-end label (optional)</label><input type="text" value="'+esc(f.maxLabel||'')+'" placeholder="e.g. Very likely" oninput="updateField('+i+',\'maxLabel\',this.value)" class="fb-input">';
+  }
+  if(f.type==='slider'){
+    body+='<div style="display:flex;gap:10px">'
+      +'<div style="flex:1"><label class="fb-fl">Min</label><input type="number" value="'+(f.min!=null?f.min:0)+'" oninput="updateField('+i+',\'min\',parseInt(this.value)||0)" class="fb-input"></div>'
+      +'<div style="flex:1"><label class="fb-fl">Max</label><input type="number" value="'+(f.max!=null?f.max:100)+'" oninput="updateField('+i+',\'max\',parseInt(this.value)||0)" class="fb-input"></div>'
+      +'<div style="flex:1"><label class="fb-fl">Step</label><input type="number" min="1" value="'+(f.step!=null?f.step:1)+'" oninput="updateField('+i+',\'step\',parseInt(this.value)||1)" class="fb-input"></div>'
+      +'</div>';
+  }
+  if(f.type==='signature'){
+    body+='<div class="fb-pagebreak-note">Visitors sign with mouse or touch. Saved as an image, the same way File Upload stores a file.</div>';
   }
   // Required toggle (not for layout fields)
   if(!['section','pagebreak','html','hidden','heading','paragraph'].includes(f.type)){
@@ -3947,22 +4111,40 @@ function fbDrop(e,i){
 }
 function fbDragEnd(){ _fbDragIdx=null; document.querySelectorAll('.fb-field.fb-over,.fb-field.fb-dragging').forEach(el=>el.classList.remove('fb-over','fb-dragging')); }
 
+// Normalizes any stored f.cond shape into {logic, rules[]}. Handles the
+// pre-upgrade single-rule shape ({enabled,field,op,value}) by wrapping it as
+// a one-item AND group, so old forms keep behaving exactly as saved without
+// a data migration.
+function condNormalize(cond){
+  if(!cond) return {logic:'AND',rules:[]};
+  if(Array.isArray(cond.rules)) return {logic:cond.logic==='OR'?'OR':'AND',rules:cond.rules};
+  if(cond.field) return {logic:'AND',rules:[{field:cond.field,op:cond.op||'is',value:cond.value||''}]};
+  return {logic:'AND',rules:[]};
+}
 function renderConditionalUI(f,i){
   const enabled=!!(f.cond&&f.cond.enabled);
   // Build options from OTHER fields that have choices or are simple inputs
   const others=_formFields.filter((x,xi)=>xi!==i&&!['section','pagebreak','html'].includes(x.type));
   let html='<div class="fb-cond"><label class="fb-check"><input type="checkbox" '+(enabled?'checked':'')+' onchange="toggleCond('+i+',this.checked)"> Conditional logic</label>';
   if(enabled){
-    const cond=f.cond||{};
-    html+='<div class="fb-cond-row">Show this field if '
-      +'<select onchange="updateCond('+i+',\'field\',this.value)" class="fb-cond-sel">'
-      +'<option value="">— field —</option>'
-      +others.map(o=>'<option value="'+o.id+'"'+(cond.field===o.id?' selected':'')+'>'+esc(o.label||o.type)+'</option>').join('')
-      +'</select>'
-      +'<select onchange="updateCond('+i+',\'op\',this.value)" class="fb-cond-sel">'
-      +['is','is not','contains'].map(op=>'<option value="'+op+'"'+(cond.op===op?' selected':'')+'>'+op+'</option>').join('')
-      +'</select>'
-      +'<input type="text" value="'+esc(cond.value||'')+'" oninput="updateCond('+i+',\'value\',this.value)" placeholder="value" class="fb-cond-val">'
+    const {logic,rules}=condNormalize(f.cond);
+    const list=rules.length?rules:[{field:'',op:'is',value:''}];
+    html+='<div class="fb-cond-rules">'
+      +(list.length>1
+        ?('<div class="fb-cond-logic">Show this field if <select onchange="updateCondLogic('+i+',this.value)" class="fb-cond-sel"><option value="AND"'+(logic==='AND'?' selected':'')+'>ALL</option><option value="OR"'+(logic==='OR'?' selected':'')+'>ANY</option></select> of the following match:</div>')
+        :'<div class="fb-cond-logic">Show this field if:</div>')
+      +list.map((r,ri)=>'<div class="fb-cond-row">'
+        +'<select onchange="updateCondRule('+i+','+ri+',\'field\',this.value)" class="fb-cond-sel">'
+        +'<option value="">— field —</option>'
+        +others.map(o=>'<option value="'+o.id+'"'+(r.field===o.id?' selected':'')+'>'+esc(o.label||o.type)+'</option>').join('')
+        +'</select>'
+        +'<select onchange="updateCondRule('+i+','+ri+',\'op\',this.value)" class="fb-cond-sel">'
+        +['is','is not','contains'].map(op=>'<option value="'+op+'"'+(r.op===op?' selected':'')+'>'+op+'</option>').join('')
+        +'</select>'
+        +'<input type="text" value="'+esc(r.value||'')+'" oninput="updateCondRule('+i+','+ri+',\'value\',this.value)" placeholder="value" class="fb-cond-val">'
+        +(list.length>1?'<button type="button" class="fb-cond-rm" onclick="removeCondRule('+i+','+ri+')" title="Remove condition">×</button>':'')
+        +'</div>').join('')
+      +'<button type="button" class="fb-cond-add" onclick="addCondRule('+i+')">+ Add condition</button>'
       +'</div>';
   }
   html+='</div>';
@@ -3976,14 +4158,35 @@ function updateField(i,key,val){
 }
 function toggleCond(i,on){
   if(!_formFields[i])return;
-  if(!_formFields[i].cond)_formFields[i].cond={};
-  _formFields[i].cond.enabled=on;
+  const {logic,rules}=condNormalize(_formFields[i].cond);
+  _formFields[i].cond={enabled:on, logic, rules: on&&!rules.length?[{field:'',op:'is',value:''}]:rules};
   renderFormFields();
 }
-function updateCond(i,key,val){
+function addCondRule(i){
   if(!_formFields[i])return;
-  if(!_formFields[i].cond)_formFields[i].cond={enabled:true};
-  _formFields[i].cond[key]=val;
+  const {logic,rules}=condNormalize(_formFields[i].cond);
+  rules.push({field:'',op:'is',value:''});
+  _formFields[i].cond={enabled:true,logic,rules};
+  renderFormFields();
+}
+function removeCondRule(i,ri){
+  if(!_formFields[i])return;
+  const {logic,rules}=condNormalize(_formFields[i].cond);
+  rules.splice(ri,1);
+  _formFields[i].cond={enabled:true,logic,rules};
+  renderFormFields();
+}
+function updateCondRule(i,ri,key,val){
+  if(!_formFields[i])return;
+  const {logic,rules}=condNormalize(_formFields[i].cond);
+  if(!rules[ri])return;
+  rules[ri][key]=val;
+  _formFields[i].cond={enabled:true,logic,rules};
+}
+function updateCondLogic(i,val){
+  if(!_formFields[i])return;
+  const {rules}=condNormalize(_formFields[i].cond);
+  _formFields[i].cond={enabled:true,logic:val==='OR'?'OR':'AND',rules};
 }
 function moveField(i,dir){
   const j=i+dir; if(j<0||j>=_formFields.length)return;
@@ -4012,6 +4215,19 @@ async function saveForm(){
   const btn=colorVal('fb-style-button'); if(btn) style.button=btn;
   const lc=colorVal('fb-style-label'); if(lc) style.label=lc;
   const bc=colorVal('fb-style-border'); if(bc) style.border=bc;
+  // Password: hash a newly-typed one server-side (bcrypt isn't available in
+  // JS); leaving the field blank keeps whatever hash is already saved,
+  // unless "Remove password protection" is checked.
+  const pwNew=get('fb-password');
+  const pwClear=(document.getElementById('fb-password-clear')||{}).checked;
+  let passwordHash=(_curFormMeta&&_curFormMeta.password)||'';
+  if(pwClear) passwordHash='';
+  else if(pwNew){
+    try{ const r=await apiCall('hash_form_password',{password:pwNew}); passwordHash=r.hash; }
+    catch(e){ toast('Could not set password: '+e.message,'err'); return; }
+  }
+  const maxRespRaw=get('fb-max-responses');
+  const maxResponses=(maxRespRaw!==''&&isFinite(+maxRespRaw)&&+maxRespRaw>0)?Math.round(+maxRespRaw):0;
   const form={
     id:(_curForm!=null&&_forms[_curForm]?.id)||('form-'+uid().slice(0,5)),
     title,
@@ -4025,6 +4241,11 @@ async function saveForm(){
       headerTitle:get('fb-header-title'),
       headerDesc:get('fb-header-desc'),
       style,
+      webhookUrl:get('fb-webhook-url'),
+      webhookSecret:get('fb-webhook-secret')||(_curFormMeta&&_curFormMeta.webhookSecret)||'',
+      password:passwordHash,
+      maxResponses,
+      closeDate:get('fb-close-date'),
       phoneFormat:((document.getElementById('fb-phone-format')||{}).checked?'us':''),
       ghlSource:(_curFormMeta&&_curFormMeta.ghlSource)||null,   // CRM form this one is matched to
       ghlAuto:(_curFormMeta&&Array.isArray(_curFormMeta.ghlAuto))?_curFormMeta.ghlAuto:[]
@@ -4692,12 +4913,12 @@ async function viewEntries(formId){
   if(!body)return;
   if(!rows.length){ body.innerHTML='<div class="empty"><h3>No submissions yet</h3><p>Entries will appear here when visitors submit this form.</p></div>'; return; }
   const cols=entryColumns(rows);
-  const thead='<tr><th style="white-space:nowrap">Date</th><th style="white-space:nowrap">reCAPTCHA</th>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
+  const thead='<tr><th style="white-space:nowrap">Date</th><th style="white-space:nowrap">Captcha</th>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
   const tbody=rows.map(e=>{
     const d=e.data||{};
     return '<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">'+esc(e.date||'')+'</td>'
       +'<td style="white-space:nowrap">'+recaptchaCellHtml(e.recaptcha)+'</td>'
-      +cols.map(c=>'<td style="font-size:13px">'+esc(d[c]!=null?String(d[c]):'')+'</td>').join('')
+      +cols.map(c=>'<td style="font-size:13px">'+entryCellHtml(d[c])+'</td>').join('')
       +'</tr>';
   }).join('');
   body.innerHTML=''
@@ -4723,6 +4944,31 @@ function recaptchaCellHtml(rc){
   }
   const score=rc.score!=null?Number(rc.score).toFixed(1):null;
   return '<span title="'+esc(rc.reason||'')+'" style="padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;background:rgba(22,163,74,.1);color:var(--green)">'+(score!=null?score:'✓ passed')+'</span>';
+}
+// An uploaded file's stored path (see fourgeStoreFormUpload in api.php) is
+// absolute to the site root, but this admin page can be co-located with the
+// site or pointed at a remote one via cd_api_url — resolve accordingly.
+function entryFileHref(path){
+  const cfg=(localStorage.getItem('cd_api_url')||'').trim();
+  if(cfg){
+    const siteBase=cfg.replace(/\/admin\/api\.php.*/i,'').replace(/\/$/,'');
+    return (/^https?:\/\//i.test(siteBase)?siteBase:location.origin+siteBase)+'/'+path;
+  }
+  return '../'+path;
+}
+// A submitted value matching our stored upload-path shape renders as a
+// download link; anything else is plain escaped text, as before.
+function entryCellHtml(v){
+  const s=v!=null?String(v):'';
+  if(/^data\/uploads\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,10}$/.test(s)){
+    const name=s.split('/').pop();
+    const href=esc(entryFileHref(s));
+    if(/\.(png|jpe?g|gif|webp)$/i.test(s)){
+      return '<a href="'+href+'" target="_blank" rel="noopener"><img src="'+href+'" alt="'+esc(name)+'" style="max-height:40px;max-width:80px;border-radius:4px;vertical-align:middle;border:1px solid var(--border)"></a>';
+    }
+    return '<a href="'+href+'" target="_blank" rel="noopener">\u{1F4CE} '+esc(name)+'</a>';
+  }
+  return esc(s);
 }
 // Columns = union of field labels across this form's entries, in first-seen order
 // (each entry's own key order follows the form's field order at submit time).
@@ -4776,7 +5022,8 @@ function renderFormHtml(form){
     const name=f.label?slugify(f.label)+'-'+f.id.slice(0,4):f.id;
     const req=f.required?' required':'';
     const reqMark=f.required?' <span class="ff-req">*</span>':'';
-    const condAttr=(f.cond&&f.cond.enabled&&f.cond.field)?' data-cond-field="'+esc(f.cond.field)+'" data-cond-op="'+esc(f.cond.op||'is')+'" data-cond-val="'+esc(f.cond.value||'')+'" style="display:none"':'';
+    const condNorm=condNormalize(f.cond);
+    const condAttr=(f.cond&&f.cond.enabled&&condNorm.rules.length)?' data-cond-rules="'+esc(JSON.stringify(condNorm.rules))+'" data-cond-logic="'+esc(condNorm.logic)+'" style="display:none"':'';
     let inner='';
     // Accessibility (WCAG 1.3.1 / 3.3.2): every control gets a stable id and
     // its visible label is programmatically associated — <label for> on single
@@ -4806,6 +5053,32 @@ function renderFormHtml(form){
         +'<div class="ff-row"><input type="text" aria-label="City" name="'+esc(name)+'-city" placeholder="City"><input type="text" aria-label="State" name="'+esc(name)+'-state" placeholder="State"><input type="text" aria-label="ZIP code" name="'+esc(name)+'-zip" placeholder="ZIP"></div></div>';
     }else if(f.type==='file'){
       inner=lblFor+'<input type="file" id="'+fldId+'" name="'+esc(name)+'" data-fid="'+f.id+'">';
+    }else if(f.type==='rating'){
+      const n=Math.max(3,Math.min(10,parseInt(f.max,10)||5));
+      let stars='';
+      for(let s=n;s>=1;s--){
+        const sid=fldId+'-'+s;
+        stars+='<input type="radio" id="'+sid+'" name="'+esc(name)+'" value="'+s+'"'+(s===n?req:'')+'><label for="'+sid+'" title="'+s+'" aria-label="'+s+' star'+(s===1?'':'s')+'">★</label>';
+      }
+      inner=lblGrp+'<div class="ff-rating" role="radiogroup" aria-labelledby="'+lblId+'" data-fid="'+f.id+'">'+stars+'</div>';
+    }else if(f.type==='scale'){
+      const min=Number.isFinite(parseInt(f.min,10))?parseInt(f.min,10):1;
+      const max=Number.isFinite(parseInt(f.max,10))?parseInt(f.max,10):5;
+      let btns='';
+      for(let v=min;v<=max;v++){
+        const sid=fldId+'-'+v;
+        btns+='<input type="radio" id="'+sid+'" name="'+esc(name)+'" value="'+v+'"'+(v===min?req:'')+'><label for="'+sid+'">'+v+'</label>';
+      }
+      const endLabels=(f.minLabel||f.maxLabel)?'<div class="ff-scale-labels"><span>'+esc(f.minLabel||'')+'</span><span>'+esc(f.maxLabel||'')+'</span></div>':'';
+      inner=lblGrp+'<div class="ff-scale" role="radiogroup" aria-labelledby="'+lblId+'" data-fid="'+f.id+'">'+btns+'</div>'+endLabels;
+    }else if(f.type==='slider'){
+      const min=Number.isFinite(parseInt(f.min,10))?parseInt(f.min,10):0;
+      const max=Number.isFinite(parseInt(f.max,10))?parseInt(f.max,10):100;
+      const step=(parseInt(f.step,10)>0)?parseInt(f.step,10):1;
+      const dflt=Math.round((min+max)/2);
+      inner=lblFor+'<div class="ff-slider-wrap"><input type="range" id="'+fldId+'" name="'+esc(name)+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+dflt+'"'+req+' data-fid="'+f.id+'" oninput="this.nextElementSibling.textContent=this.value"><output>'+dflt+'</output></div>';
+    }else if(f.type==='signature'){
+      inner=lblFor+'<div class="ff-sig-wrap"><canvas class="ff-sig" id="'+fldId+'" name="'+esc(name)+'" data-fid="'+f.id+'"'+(f.required?' data-required="1"':'')+' width="500" height="150"></canvas><button type="button" class="ff-sig-clear">Clear</button></div>';
     }else if(f.type==='hidden'){
       return '<input type="hidden" name="'+esc(f.label||name)+'" value="'+esc(f.value||'')+'">';
     }else if(f.type==='html'){
@@ -4832,6 +5105,9 @@ function renderFormHtml(form){
   // v2 renders the "I'm not a robot" checkbox inline; v3 is invisible (Google
   // injects its own floating badge) and the token is fetched at submit time.
   const rcHtml=(rcKey&&!rcV3)?'<div class="ff-field"><div class="g-recaptcha" data-sitekey="'+esc(rcKey)+'"></div></div>':'';
+  const hc=(_site&&_site.hcaptcha)||{};
+  const hcKey=(hc.enabled&&hc.siteKey)||'';
+  const hcHtml=hcKey?'<div class="ff-field"><div class="h-captcha" data-sitekey="'+esc(hcKey)+'"></div></div>':'';
   const submitLabel=esc((form.settings&&form.settings.submitLabel)||'Submit');
   let navBtns='';
   if(multi){
@@ -4850,14 +5126,19 @@ function renderFormHtml(form){
       +(hdrTitle?'<h2 class="ff-form-title">'+esc(hdrTitle)+'</h2>':'')
       +(hdrDesc?'<p class="ff-form-desc">'+esc(hdrDesc).replace(/\n/g,'<br>')+'</p>':'')
       +'</div>':'';
-  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'"'+(rcKey&&rcV3?' data-rc-v3="'+esc(rcKey)+'"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us="1"':'')+' data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
-    +hdr
-    +pagesHtml
-    +rcHtml
-    +'<div class="ff-msg" style="display:none"></div>'
-    +navBtns
+  const pwHash=String(s.password||'').trim();
+  const gateHtml=pwHash?'<div class="ff-gate"><label class="ff-label">Password Required</label>'
+    +'<input type="password" class="ff-gate-input" placeholder="Enter password">'
+    +'<button type="button" class="ff-gate-btn" onclick="return ffCheckFormPassword(this)">Unlock</button>'
+    +'<div class="ff-gate-err" style="display:none"></div></div>':'';
+  const content=hdr+pagesHtml+rcHtml+hcHtml+'<div class="ff-msg" style="display:none"></div>'+navBtns;
+  const closeDate=String(s.closeDate||'').trim();
+  return fst+'<form class="foundry-form" id="'+fid+'" data-form-id="'+esc(form.id)+'"'+(rcKey&&rcV3?' data-rc-v3="'+esc(rcKey)+'"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us="1"':'')+(closeDate?' data-close-date="'+esc(closeDate)+'"':'')+' data-confirm="'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'" onsubmit="return ffSubmit(event,this)">'
+    +gateHtml
+    +(pwHash?'<div class="ff-gated-content" style="display:none">'+content+'</div>':content)
     +'</form>'
-    +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js'+(rcV3?'?render='+encodeURIComponent(rcKey):'')+'" async defer></scr'+'ipt>':'');
+    +(rcKey?'<scr'+'ipt src="https://www.google.com/recaptcha/api.js'+(rcV3?'?render='+encodeURIComponent(rcKey):'')+'" async defer></scr'+'ipt>':'')
+    +(hcKey?'<scr'+'ipt src="https://js.hcaptcha.com/1/api.js" async defer></scr'+'ipt>':'');
 }
 
 // Turn a form's simple style settings into ONE scoped <style> block. Scoped by the
@@ -4878,7 +5159,12 @@ function formStyleCss(form){
     r.push(R+' .ff-submit,'+R+' .ff-next,'+R+' .ff-prev{border-radius:'+rad+'px !important}');
   }
   if(s.labels==='hide') r.push(R+' .ff-label{position:absolute !important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}');
-  const btn=col(s.button); if(btn) r.push(R+' .ff-submit,'+R+' .ff-next{background:'+btn+' !important}');
+  const btn=col(s.button);
+  if(btn){
+    r.push(R+' .ff-submit,'+R+' .ff-next{background:'+btn+' !important}');
+    r.push(R+' .ff-scale input:checked+label{background:'+btn+' !important;border-color:'+btn+' !important}');
+    r.push(R+' .ff-rating input:checked~label,'+R+' .ff-rating label:hover,'+R+' .ff-rating label:hover~label{color:'+btn+' !important}');
+  }
   const lc=col(s.label);  if(lc)  r.push(R+' .ff-label{color:'+lc+'}');
   const bc=col(s.border); if(bc)  r.push(R+' input,'+R+' textarea,'+R+' select{border-color:'+bc+' !important}');
   return r.length?'<style>'+r.join('')+'</style>':'';
@@ -4904,6 +5190,23 @@ function formsRuntimeCss(){
     +'.foundry-form .ff-choice{display:flex;align-items:center;font-weight:400!important;font-size:15px}'
     +'.foundry-form .ff-row{display:flex;gap:10px}.foundry-form .ff-row>*{flex:1}'
     +'.foundry-form .ff-addr{display:flex;flex-direction:column;gap:10px}'
+    +'.foundry-form .ff-rating{display:flex;flex-direction:row-reverse;justify-content:flex-end;gap:2px}'
+    +'.foundry-form .ff-rating input{position:absolute;opacity:0;width:1px;height:1px}'
+    +'.foundry-form .ff-rating label{cursor:pointer;font-size:28px;line-height:1;color:#d8d4cc;padding:2px}'
+    +'.foundry-form .ff-rating input:checked~label,.foundry-form .ff-rating label:hover,.foundry-form .ff-rating label:hover~label{color:#f5a623}'
+    +'.foundry-form .ff-rating input:focus-visible+label{outline:2px solid var(--ember,#C8531E);outline-offset:2px}'
+    +'.foundry-form .ff-scale{display:flex;gap:6px;flex-wrap:wrap}'
+    +'.foundry-form .ff-scale input{position:absolute;opacity:0;width:1px;height:1px}'
+    +'.foundry-form .ff-scale label{cursor:pointer;min-width:40px;text-align:center;padding:9px 6px;border:1px solid #d8d4cc;border-radius:8px;font-weight:600;font-size:14px}'
+    +'.foundry-form .ff-scale input:checked+label{background:var(--ember,#C8531E);color:#fff;border-color:var(--ember,#C8531E)}'
+    +'.foundry-form .ff-scale input:focus-visible+label{outline:2px solid var(--ember,#C8531E);outline-offset:2px}'
+    +'.foundry-form .ff-scale-labels{display:flex;justify-content:space-between;font-size:12px;color:#777;margin-top:6px}'
+    +'.foundry-form .ff-slider-wrap{display:flex;align-items:center;gap:12px}'
+    +'.foundry-form .ff-slider-wrap input[type=range]{flex:1;width:auto;padding:0;border:none !important}'
+    +'.foundry-form .ff-slider-wrap output{min-width:2.5em;text-align:center;font-weight:700;font-size:15px}'
+    +'.foundry-form .ff-sig-wrap{display:flex;flex-direction:column;gap:8px;align-items:flex-start}'
+    +'.foundry-form canvas.ff-sig{width:100%;max-width:500px;height:150px;border:1px solid #d8d4cc;border-radius:10px;touch-action:none;background:#fff;cursor:crosshair}'
+    +'.foundry-form .ff-sig-clear{background:none;border:1px solid #d8d4cc;border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;color:#555}'
     +'.foundry-form .ff-section{margin:24px 0 12px;border-bottom:2px solid #eee;padding-bottom:8px}.foundry-form .ff-section h3{font-size:18px;margin:0}.foundry-form .ff-section p{color:#777;font-size:14px;margin:4px 0 0}'
     +'.foundry-form .ff-header{margin-bottom:20px}'
     +'.foundry-form .ff-form-title{font-size:26px;font-weight:800;line-height:1.15;margin:0 0 6px}'
@@ -4915,23 +5218,50 @@ function formsRuntimeCss(){
     +'.foundry-form .ff-prev{background:#888}'
     +'.foundry-form .ff-nav{display:flex;gap:10px;justify-content:space-between}'
     +'.foundry-form .ff-msg{padding:14px;border-radius:8px;margin-bottom:14px;font-size:14px}'
-    +'.foundry-form .ff-msg.ok{background:#dcfce7;color:#166534}.foundry-form .ff-msg.err{background:#fee2e2;color:#991b1b}'
+    +'.foundry-form .ff-msg.ok{background:#dcfce7;color:#166534}.foundry-form .ff-msg.err{background:#fee2e2;color:#991b1b}.foundry-form .ff-msg.info{background:#eef2ff;color:#3730a3}'
+    +'.foundry-form .ff-gate{max-width:320px;margin:0 auto}'
+    +'.foundry-form .ff-gate-input{margin-bottom:10px}'
+    +'.foundry-form .ff-gate-btn{width:100%;background:var(--ember,#C8531E);color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}'
+    +'.foundry-form .ff-gate-err{color:#991b1b;font-size:13px;margin-top:8px}'
     +'</style>';
 }
 function formsRuntimeAssets(){
   const css=formsRuntimeCss();
   const js='<scr'+'ipt>'
     +'function ffApiBase(){return (window.FOUNDRY_API||"/admin/api.php");}'
-    +'function ffEvalCond(form){form.querySelectorAll("[data-cond-field]").forEach(function(el){'
-    +'var fid=el.getAttribute("data-cond-field"),op=el.getAttribute("data-cond-op"),val=el.getAttribute("data-cond-val");'
-    +'var src=form.querySelector("[data-fid=\\""+fid+"\\"]");var cur="";'
-    +'if(src){if(src.type==="checkbox"||src.type==="radio"){var ch=form.querySelector("[data-fid=\\""+fid+"\\"] input:checked")||(src.checked?src:null);cur=ch?ch.value:"";}else cur=src.value;}'
-    +'else{var grp=form.querySelector("[data-fid=\\""+fid+"\\"]");if(grp){var c=grp.querySelector("input:checked");cur=c?c.value:"";}}'
-    +'var show=(op==="is")?(cur===val):(op==="is not")?(cur!==val):(op==="contains")?(cur.indexOf(val)>=0):true;'
+    // A condition source can be a single input/select (data-fid on itself) or
+    // a group wrapper (data-fid on the wrapping DIV — radio/checkbox/rating/
+    // scale) — checking tagName rather than input.type covers both uniformly.
+    +'function ffCondVal(form,fid){var src=form.querySelector("[data-fid=\\""+fid+"\\"]");if(!src)return "";var v;if(src.tagName==="DIV"){var ch=src.querySelector("input:checked");v=ch?ch.value:"";}else v=src.value;return v==null?"":v;}'
+    +'function ffEvalCond(form){form.querySelectorAll("[data-cond-rules]").forEach(function(el){'
+    +'var rules;try{rules=JSON.parse(el.getAttribute("data-cond-rules")||"[]");}catch(e){rules=[];}'
+    +'var logic=el.getAttribute("data-cond-logic")||"AND";'
+    +'var results=rules.map(function(r){var cur=ffCondVal(form,r.field);return r.op==="is"?(cur===r.value):r.op==="is not"?(cur!==r.value):r.op==="contains"?(cur.indexOf(r.value)>=0):true;});'
+    +'var show=results.length===0?true:(logic==="OR"?results.some(function(x){return x;}):results.every(function(x){return x;}));'
     +'el.style.display=show?"":"none";});}'
     +'document.addEventListener("input",function(e){var f=e.target.closest(".foundry-form");if(f)ffEvalCond(f);});'
     +'document.addEventListener("change",function(e){var f=e.target.closest(".foundry-form");if(f)ffEvalCond(f);});'
-    +'document.querySelectorAll(".foundry-form").forEach(function(f){ffEvalCond(f);});'
+    // Fire-and-forget view beacon + client-side close-date check, once per
+    // form present when the page loads (ordinary pages never insert a form
+    // later — it's baked into the HTML at placement time).
+    +'function ffFormInit(form){'
+    +'var fid=form.getAttribute("data-form-id");'
+    +'if(fid){try{var payload=JSON.stringify({action:"form_view",formId:fid});if(navigator.sendBeacon){navigator.sendBeacon(ffApiBase(),new Blob([payload],{type:"application/json"}));}else{fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:payload}).catch(function(){});}}catch(e){}}'
+    +'var cd=form.getAttribute("data-close-date");'
+    +'if(cd){var closeAt=new Date(cd+"T23:59:59");if(!isNaN(closeAt)&&new Date()>closeAt){'
+    +'form.querySelectorAll(".ff-gate,.ff-gated-content,.ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});'
+    +'var msg=form.querySelector(".ff-msg");if(msg){msg.className="ff-msg info";msg.style.display="";msg.textContent="This form is no longer accepting responses.";}'
+    +'}}}'
+    +'function ffCheckFormPassword(btn){'
+    +'var gate=btn.closest(".ff-gate");var form=btn.closest(".foundry-form");var input=gate.querySelector(".ff-gate-input");var err=gate.querySelector(".ff-gate-err");'
+    +'var pw=input.value;btn.disabled=true;btn.textContent="Checking…";'
+    +'fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"check_form_password",formId:form.getAttribute("data-form-id"),password:pw})})'
+    +'.then(function(res){return res.json();}).then(function(d){'
+    +'if(d.ok){form.dataset.unlockedPassword=pw;gate.style.display="none";var content=form.querySelector(".ff-gated-content");if(content)content.style.display="";}'
+    +'else{err.style.display="";err.textContent=d.error||"Incorrect password.";btn.disabled=false;btn.textContent="Unlock";}'
+    +'}).catch(function(){err.style.display="";err.textContent="Something went wrong. Please try again.";btn.disabled=false;btn.textContent="Unlock";});'
+    +'return false;}'
+    +'document.querySelectorAll(".foundry-form").forEach(function(f){ffEvalCond(f);ffFormInit(f);});'
     // Per-page lead source: hidden "source…" fields resolve to THIS page's slug
     // at view time, so a form shared across 700 pages reports where each lead
     // actually came from. A placement pinned via [form … source_page=x]
@@ -4947,13 +5277,39 @@ function formsRuntimeAssets(){
     // typed with a leading + (international) are left untouched.
     +'function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,"");if(d.length>11)return v;var p="";if(d.length===11){if(d[0]!=="1")return v;p="1 ";d=d.slice(1);}if(!d.length)return "";if(d.length<4)return p+"("+d;if(d.length<7)return p+"("+d.slice(0,3)+") "+d.slice(3);return p+"("+d.slice(0,3)+") "+d.slice(3,6)+"-"+d.slice(6);}'
     +'document.addEventListener("input",function(e){var t=e.target;if(!t||t.type!=="tel")return;var f=t.closest&&t.closest(".foundry-form");if(f&&f.hasAttribute("data-phone-us"))t.value=ffFmtPhone(t.value);});'
+    // Signature pad: delegated so it works on forms baked into the page at
+    // save time AND ones inserted later — no per-canvas init call needed.
+    +'var _ffSigActive=null,_ffSigLast=null;'
+    +'function ffSigPos(e,canvas){var r=canvas.getBoundingClientRect();var t=(e.touches&&e.touches[0])||e;var sx=canvas.width/r.width,sy=canvas.height/r.height;return {x:(t.clientX-r.left)*sx,y:(t.clientY-r.top)*sy};}'
+    +'function ffSigStart(e){var c=e.target.closest("canvas.ff-sig");if(!c)return;_ffSigActive=c;_ffSigLast=ffSigPos(e,c);c.dataset.hasInk="1";var ctx=c.getContext("2d");ctx.lineWidth=2;ctx.lineCap="round";ctx.strokeStyle="#1A1917";e.preventDefault();}'
+    +'function ffSigMove(e){if(!_ffSigActive)return;var p=ffSigPos(e,_ffSigActive);var ctx=_ffSigActive.getContext("2d");ctx.beginPath();ctx.moveTo(_ffSigLast.x,_ffSigLast.y);ctx.lineTo(p.x,p.y);ctx.stroke();_ffSigLast=p;e.preventDefault();}'
+    +'function ffSigStop(){_ffSigActive=null;_ffSigLast=null;}'
+    +'document.addEventListener("mousedown",ffSigStart);document.addEventListener("mousemove",ffSigMove);document.addEventListener("mouseup",ffSigStop);'
+    +'document.addEventListener("touchstart",ffSigStart,{passive:false});document.addEventListener("touchmove",ffSigMove,{passive:false});document.addEventListener("touchend",ffSigStop);'
+    +'document.addEventListener("click",function(e){var b=e.target.closest(".ff-sig-clear");if(!b)return;var c=b.previousElementSibling;if(c&&c.classList.contains("ff-sig")){c.getContext("2d").clearRect(0,0,c.width,c.height);c.dataset.hasInk="";}});'
     +'async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector(".ff-msg");var btn=form.querySelector(".ff-submit");'
-    +'var data={};new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});'
+    // A file field (or a drawn signature) must travel as multipart/form-data —
+    // JSON.stringify()ing a File object silently produces "{}", so it never
+    // actually uploaded.
+    +'var hasFile=!!form.querySelector("input[type=file]")||!!form.querySelector("canvas.ff-sig");'
+    +'var badSig=null;form.querySelectorAll("canvas.ff-sig[data-required]").forEach(function(c){if(!c.dataset.hasInk)badSig=c;});'
+    +'if(badSig){msg.className="ff-msg err";msg.style.display="";msg.textContent="Please provide a signature.";return false;}'
+    // The reCAPTCHA/hCaptcha widgets each render their own named response
+    // field inside the form; strip both so a submission's own passcode-like
+    // token never lands in the visitor-submitted fields (entries.json, the
+    // notification email) as if it were something the visitor typed.
+    +'var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k]){data[k]+=", "+v;}else data[k]=v;});delete data["g-recaptcha-response"];delete data["h-captcha-response"];}'
     +'btn.disabled=true;btn.textContent="Sending…";'   // register the click first — never wait on reCAPTCHA to show feedback
     +'var rcTok="";var rcV3=form.getAttribute("data-rc-v3")||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||"";'
     +'if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:"submit"}).then(res).catch(function(){res("");});});}catch(_e){res("");}}),new Promise(function(res){setTimeout(function(){res("");},4000);})]);}catch(e){rcTok="";}}'   // race a 4s timeout so a bad key can never freeze the form
-    +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";}'
-    +'try{var res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});'
+    +'else{rcTok=(form.querySelector("[name=g-recaptcha-response]")||{}).value||"";'
+    +'if(form.querySelector(".g-recaptcha")&&!rcTok){btn.disabled=false;btn.textContent="Submit";msg.className="ff-msg err";msg.style.display="";msg.textContent="Please complete the reCAPTCHA.";return false;}}'
+    +'var hcTok=(form.querySelector("[name=h-captcha-response]")||{}).value||"";'
+    +'if(form.querySelector(".h-captcha")&&!hcTok){btn.disabled=false;btn.textContent="Submit";msg.className="ff-msg err";msg.style.display="";msg.textContent="Please complete the captcha.";return false;}'
+    +'try{var res;if(hasFile){var fd=new FormData(form);fd.append("action","send_form");fd.append("formId",form.getAttribute("data-form-id"));fd.append("recaptcha",rcTok);fd.append("hcaptcha",hcTok);fd.append("formPassword",form.dataset.unlockedPassword||"");fd.append("subject",document.title);fd.append("siteUrl",location.href);'
+    +'var sigs=form.querySelectorAll("canvas.ff-sig");for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,"image/png");});if(blob)fd.append(sc.getAttribute("name")||"signature",blob,"signature.png");}'
+    +'res=await fetch(ffApiBase(),{method:"POST",body:fd});}'
+    +'else{res=await fetch(ffApiBase(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send_form",formId:form.getAttribute("data-form-id"),fields:data,recaptcha:rcTok,hcaptcha:hcTok,formPassword:form.dataset.unlockedPassword||"",subject:document.title,siteUrl:location.href})});}'
     +'var d=await res.json();if(d.error)throw new Error(d.error);'
     +'msg.className="ff-msg ok";msg.style.display="";msg.textContent=form.getAttribute("data-confirm");form.querySelectorAll(".ff-page,.ff-nav,.ff-submit").forEach(function(x){x.style.display="none";});}'
     +'catch(err){msg.className="ff-msg err";msg.style.display="";msg.textContent="Something went wrong: "+err.message;btn.disabled=false;btn.textContent="'+'Submit'+'";}'
@@ -5645,6 +6001,7 @@ function blogSyncAddonHtml(){
   const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#5B21B6"></rect><path d="M6 8h12M6 12h12M6 16h8" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>';
   let lastHtml='';
   if(bs.lastCheckedAt) lastHtml='Last checked '+esc(new Date(bs.lastCheckedAt).toLocaleString())+(bs.lastResult?' — '+esc(bs.lastResult):'');
+  if(bs.resolvedBase && src && String(bs.resolvedBase).replace(/\/+$/,'')!==String(src).replace(/\/+$/,'')) lastHtml+=(lastHtml?'<br>':'')+'Reads '+esc(bs.resolvedBase)+'/data/posts.json — the source redirects there.';
   const adminSection = rank<2 ? '' : `<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
         <div style="font-size:12px;font-weight:700;margin-bottom:6px">External scheduler (optional)</div>
         <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">For a true every-10-minute cadence even on a site nobody logs into, point your own crontab or a free service like cron-job.org at this address, with the key below as a Bearer token.</div>
@@ -5660,7 +6017,7 @@ function blogSyncAddonHtml(){
       <span class="pl-logo">${logo}</span>
       <div style="flex:1;min-width:0">
         <div class="pl-n" style="display:flex;align-items:center;gap:8px">Blog Sync <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
-        <div class="pl-s" style="margin-top:3px">Automatically copy every new post from a source site's blog into this site's own blog. Checked whenever someone signs in here (if 10+ minutes have passed), or on demand below.</div>
+        <div class="pl-s" style="margin-top:3px">Automatically copy every new post from a source site's blog into this site's own blog. Checked whenever someone views this site's blog or signs in here (at most once every 10 minutes), or on demand below.</div>
       </div>
     </div>
     <div class="pl-addon-body">
@@ -6440,6 +6797,23 @@ a:hover{text-decoration:underline}
 .ff-choice{display:flex;align-items:center;font-weight:400;font-size:15px}
 .ff-row{display:flex;gap:10px}.ff-row>*{flex:1}
 .ff-addr{display:flex;flex-direction:column;gap:10px}
+.ff-rating{display:flex;flex-direction:row-reverse;justify-content:flex-end;gap:2px}
+.ff-rating input{position:absolute;opacity:0;width:1px;height:1px}
+.ff-rating label{cursor:pointer;font-size:28px;line-height:1;color:#d8d4cc;padding:2px}
+.ff-rating input:checked~label,.ff-rating label:hover,.ff-rating label:hover~label{color:#f5a623}
+.ff-rating input:focus-visible+label{outline:2px solid var(--ember);outline-offset:2px}
+.ff-scale{display:flex;gap:6px;flex-wrap:wrap}
+.ff-scale input{position:absolute;opacity:0;width:1px;height:1px}
+.ff-scale label{cursor:pointer;min-width:40px;text-align:center;padding:9px 6px;border:1px solid #d8d4cc;border-radius:8px;font-weight:600;font-size:14px}
+.ff-scale input:checked+label{background:var(--ember);color:#fff;border-color:var(--ember)}
+.ff-scale input:focus-visible+label{outline:2px solid var(--ember);outline-offset:2px}
+.ff-scale-labels{display:flex;justify-content:space-between;font-size:12px;color:#777;margin-top:6px}
+.ff-slider-wrap{display:flex;align-items:center;gap:12px}
+.ff-slider-wrap input[type=range]{flex:1;width:auto;padding:0;border:none}
+.ff-slider-wrap output{min-width:2.5em;text-align:center;font-weight:700;font-size:15px}
+.ff-sig-wrap{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+canvas.ff-sig{width:100%;max-width:500px;height:150px;border:1px solid #d8d4cc;border-radius:10px;touch-action:none;background:#fff;cursor:crosshair}
+.ff-sig-clear{background:none;border:1px solid #d8d4cc;border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;color:#555}
 .ff-section{margin:24px 0 12px;border-bottom:2px solid #eee;padding-bottom:8px}.ff-section h3{font-size:18px;margin:0}.ff-section p{color:#777;font-size:14px;margin:4px 0 0}
 .ff-header{margin-bottom:20px}.ff-form-title{font-size:26px;font-weight:800;line-height:1.15;margin:0 0 6px}.ff-form-desc{color:#666;font-size:15px;line-height:1.5;margin:0}
 .ff-heading{margin:8px 0 2px}.ff-heading h3{font-size:19px;font-weight:700;margin:0}
@@ -6449,7 +6823,11 @@ a:hover{text-decoration:underline}
 .ff-prev{background:#888}
 .ff-nav{display:flex;gap:10px;justify-content:space-between}
 .ff-msg{padding:14px;border-radius:8px;margin-bottom:14px;font-size:14px}
-.ff-msg.ok{background:#dcfce7;color:#166534}.ff-msg.err{background:#fee2e2;color:#991b1b}
+.ff-msg.ok{background:#dcfce7;color:#166534}.ff-msg.err{background:#fee2e2;color:#991b1b}.ff-msg.info{background:#eef2ff;color:#3730a3}
+.ff-gate{max-width:320px;margin:0 auto}
+.ff-gate-input{margin-bottom:10px}
+.ff-gate-btn{width:100%;background:var(--ember);color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}
+.ff-gate-err{color:#991b1b;font-size:13px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -6479,6 +6857,12 @@ function blockToHtml(b){
 }
 function decodeEntities(s){if(!s)return'';var t=document.createElement('textarea');t.innerHTML=s;return t.value;}
 function slugify(s){return String(s||'').toLowerCase().replace(/\\s+/g,'-').replace(/[^a-z0-9-]/g,'');}
+function condNormalize(cond){
+  if(!cond) return {logic:'AND',rules:[]};
+  if(Array.isArray(cond.rules)) return {logic:cond.logic==='OR'?'OR':'AND',rules:cond.rules};
+  if(cond.field) return {logic:'AND',rules:[{field:cond.field,op:cond.op||'is',value:cond.value||''}]};
+  return {logic:'AND',rules:[]};
+}
 function ffRenderForm(form){
   if(!form||!form.fields)return'';
   var fid='ffm-'+form.id;
@@ -6490,7 +6874,8 @@ function ffRenderForm(form){
     var name=f.label?slugify(f.label)+'-'+f.id.slice(0,4):f.id;
     var req=f.required?' required':'';
     var rm=f.required?' <span class=\"ff-req\">*</span>':'';
-    var cond=(f.cond&&f.cond.enabled&&f.cond.field)?' data-cond-field=\"'+f.cond.field+'\" data-cond-op=\"'+(f.cond.op||'is')+'\" data-cond-val=\"'+esc(f.cond.value||'')+'\" style=\"display:none\"':'';
+    var condNorm=condNormalize(f.cond);
+    var cond=(f.cond&&f.cond.enabled&&condNorm.rules.length)?' data-cond-rules=\"'+esc(JSON.stringify(condNorm.rules))+'\" data-cond-logic=\"'+condNorm.logic+'\" style=\"display:none\"':'';
     var fldId='ff-'+form.id+'-'+f.id, lblId=fldId+'-l';
     var lbl='<label class=\"ff-label\" id=\"'+lblId+'\" for=\"'+fldId+'\">'+esc(f.label||'')+rm+'</label>';
     var lblGrp='<label class=\"ff-label\" id=\"'+lblId+'\">'+esc(f.label||'')+rm+'</label>';
@@ -6505,6 +6890,36 @@ function ffRenderForm(form){
     else if(f.type==='name'){inner=lblGrp+'<div class=\"ff-row\" role=\"group\" aria-labelledby=\"'+lblId+'\"><input type=\"text\" id=\"'+fldId+'\" aria-label=\"'+esc((f.label||'Name')+' — first')+'\" name=\"'+name+'-first\" placeholder=\"First\"'+req+' data-fid=\"'+f.id+'\"><input type=\"text\" aria-label=\"'+esc((f.label||'Name')+' — last')+'\" name=\"'+name+'-last\" placeholder=\"Last\"'+req+'></div>';}
     else if(f.type==='address'){inner=lblGrp+'<div class=\"ff-addr\" role=\"group\" aria-labelledby=\"'+lblId+'\"><input type=\"text\" id=\"'+fldId+'\" aria-label=\"Street address\" name=\"'+name+'-street\" placeholder=\"Street Address\"'+req+' data-fid=\"'+f.id+'\"><div class=\"ff-row\"><input type=\"text\" aria-label=\"City\" name=\"'+name+'-city\" placeholder=\"City\"><input type=\"text\" aria-label=\"State\" name=\"'+name+'-state\" placeholder=\"State\"><input type=\"text\" aria-label=\"ZIP code\" name=\"'+name+'-zip\" placeholder=\"ZIP\"></div></div>';}
     else if(f.type==='file'){inner=lbl+'<input type=\"file\" id=\"'+fldId+'\" name=\"'+name+'\" data-fid=\"'+f.id+'\">';}
+    else if(f.type==='rating'){
+      var rn=Math.max(3,Math.min(10,parseInt(f.max,10)||5));
+      var rstars='';
+      for(var rs2=rn;rs2>=1;rs2--){
+        var rsid=fldId+'-'+rs2;
+        rstars+='<input type=\"radio\" id=\"'+rsid+'\" name=\"'+name+'\" value=\"'+rs2+'\"'+(rs2===rn?req:'')+'><label for=\"'+rsid+'\" title=\"'+rs2+'\" aria-label=\"'+rs2+' star'+(rs2===1?'':'s')+'\">★</label>';
+      }
+      inner=lblGrp+'<div class=\"ff-rating\" role=\"radiogroup\" aria-labelledby=\"'+lblId+'\" data-fid=\"'+f.id+'\">'+rstars+'</div>';
+    }
+    else if(f.type==='scale'){
+      var scMin=isFinite(parseInt(f.min,10))?parseInt(f.min,10):1;
+      var scMax=isFinite(parseInt(f.max,10))?parseInt(f.max,10):5;
+      var scBtns='';
+      for(var scV=scMin;scV<=scMax;scV++){
+        var scId=fldId+'-'+scV;
+        scBtns+='<input type=\"radio\" id=\"'+scId+'\" name=\"'+name+'\" value=\"'+scV+'\"'+(scV===scMin?req:'')+'><label for=\"'+scId+'\">'+scV+'</label>';
+      }
+      var scEnds=(f.minLabel||f.maxLabel)?('<div class=\"ff-scale-labels\"><span>'+esc(f.minLabel||'')+'</span><span>'+esc(f.maxLabel||'')+'</span></div>'):'';
+      inner=lblGrp+'<div class=\"ff-scale\" role=\"radiogroup\" aria-labelledby=\"'+lblId+'\" data-fid=\"'+f.id+'\">'+scBtns+'</div>'+scEnds;
+    }
+    else if(f.type==='slider'){
+      var slMin=isFinite(parseInt(f.min,10))?parseInt(f.min,10):0;
+      var slMax=isFinite(parseInt(f.max,10))?parseInt(f.max,10):100;
+      var slStep=(parseInt(f.step,10)>0)?parseInt(f.step,10):1;
+      var slDflt=Math.round((slMin+slMax)/2);
+      inner=lbl+'<div class=\"ff-slider-wrap\"><input type=\"range\" id=\"'+fldId+'\" name=\"'+name+'\" min=\"'+slMin+'\" max=\"'+slMax+'\" step=\"'+slStep+'\" value=\"'+slDflt+'\"'+req+' data-fid=\"'+f.id+'\" oninput=\"this.nextElementSibling.textContent=this.value\"><output>'+slDflt+'</output></div>';
+    }
+    else if(f.type==='signature'){
+      inner=lbl+'<div class=\"ff-sig-wrap\"><canvas class=\"ff-sig\" id=\"'+fldId+'\" name=\"'+name+'\" data-fid=\"'+f.id+'\"'+(f.required?' data-required=\"1\"':'')+' width=\"500\" height=\"150\"></canvas><button type=\"button\" class=\"ff-sig-clear\">Clear</button></div>';
+    }
     else if(f.type==='hidden'){return '<input type=\"hidden\" name=\"'+esc(f.label||name)+'\" value=\"'+esc(f.value||'')+'\">';}
     else if(f.type==='html'){return '<div class=\"ff-html\"'+cond+'>'+(f.content||'')+'</div>';}
     else if(f.type==='heading'){return '<div class=\"ff-heading\"'+cond+'><h3>'+esc(f.label||'')+'</h3></div>';}
@@ -6517,35 +6932,90 @@ function ffRenderForm(form){
   var sl=esc((form.settings&&form.settings.submitLabel)||'Submit');
   var nav=multi?('<div class=\"ff-nav\"><button type=\"button\" class=\"ff-prev\" data-dir=\"-1\" style=\"display:none\">← Previous</button><button type=\"button\" class=\"ff-next\" data-dir=\"1\">Next →</button><button type=\"submit\" class=\"ff-submit\" style=\"display:none\">'+sl+'</button></div>'):('<button type=\"submit\" class=\"ff-submit\">'+sl+'</button>');
   var rc=(_rcSiteKey&&!_rcV3)?'<div class=\"ff-field\"><div class=\"g-recaptcha\" data-sitekey=\"'+_rcSiteKey+'\"></div></div>':'';
+  var hcHtml=_hcSiteKey?'<div class=\"ff-field\"><div class=\"h-captcha\" data-sitekey=\"'+_hcSiteKey+'\"></div></div>':'';
   var st=(form.settings&&form.settings.style)||{};
   function ffCol(v){v=(''+v).trim();return (v&&/^[#a-zA-Z0-9(),.% ]+$/.test(v))?v:'';}
   var R='#'+fid, rs=[];
   var sbg=ffCol(st.bg); if(sbg&&st.bg!=='none')rs.push(R+'.foundry-form{background:'+sbg+';padding:28px;border-radius:14px}');
   var srad=parseFloat(st.radius); if(isFinite(srad)){srad=Math.max(0,Math.min(80,Math.round(srad)));rs.push(R+' input,'+R+' textarea,'+R+' select{border-radius:'+srad+'px !important}');rs.push(R+' .ff-submit,'+R+' .ff-next,'+R+' .ff-prev{border-radius:'+srad+'px !important}');}
   if(st.labels==='hide')rs.push(R+' .ff-label{position:absolute !important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}');
-  var sbt=ffCol(st.button); if(sbt)rs.push(R+' .ff-submit,'+R+' .ff-next{background:'+sbt+' !important}');
+  var sbt=ffCol(st.button);
+  if(sbt){
+    rs.push(R+' .ff-submit,'+R+' .ff-next{background:'+sbt+' !important}');
+    rs.push(R+' .ff-scale input:checked+label{background:'+sbt+' !important;border-color:'+sbt+' !important}');
+    rs.push(R+' .ff-rating input:checked~label,'+R+' .ff-rating label:hover,'+R+' .ff-rating label:hover~label{color:'+sbt+' !important}');
+  }
   var slc=ffCol(st.label); if(slc)rs.push(R+' .ff-label{color:'+slc+'}');
   var sbc=ffCol(st.border); if(sbc)rs.push(R+' input,'+R+' textarea,'+R+' select{border-color:'+sbc+' !important}');
   var stl=rs.length?('<style>'+rs.join('')+'</style>'):'';
   var hs=form.settings||{}, ht=(hs.headerTitle||'').toString().trim(), hd=(hs.headerDesc||'').toString().trim();
   var hdr=(ht||hd)?('<div class=\"ff-header\">'+(ht?'<h2 class=\"ff-form-title\">'+esc(ht)+'</h2>':'')+(hd?'<p class=\"ff-form-desc\">'+esc(hd).replace(/\\n/g,'<br>')+'</p>':'')+'</div>'):'';
   var fst=stl+((((form.settings&&form.settings.css)||'').toString().trim())?('<style>'+form.settings.css+'</style>'):'');
-  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us=\"1\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+hdr+ph+rc+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav+'</form>';
+  var pwHash=(hs.password||'').toString().trim();
+  var gateHtml=pwHash?('<div class=\"ff-gate\"><label class=\"ff-label\">Password Required</label><input type=\"password\" class=\"ff-gate-input\" placeholder=\"Enter password\"><button type=\"button\" class=\"ff-gate-btn\" onclick=\"return ffCheckFormPassword(this)\">Unlock</button><div class=\"ff-gate-err\" style=\"display:none\"></div></div>'):'';
+  var content=hdr+ph+rc+hcHtml+'<div class=\"ff-msg\" style=\"display:none\"></div>'+nav;
+  var closeDate=(hs.closeDate||'').toString().trim();
+  return fst+'<form class=\"foundry-form\" id=\"'+fid+'\" data-form-id=\"'+esc(form.id)+'\"'+(_rcV3&&_rcSiteKey?' data-rc-v3=\"'+_rcSiteKey+'\"':'')+((form.settings&&form.settings.phoneFormat==='us')?' data-phone-us=\"1\"':'')+(closeDate?' data-close-date=\"'+esc(closeDate)+'\"':'')+' data-confirm=\"'+esc((form.settings&&form.settings.confirmation)||'Thank you!')+'\" onsubmit=\"return ffSubmit(event,this)\">'+gateHtml+(pwHash?('<div class=\"ff-gated-content\" style=\"display:none\">'+content+'</div>'):content)+'</form>';
 }
-function ffEvalCond(form){form.querySelectorAll('[data-cond-field]').forEach(function(el){var fid=el.getAttribute('data-cond-field'),op=el.getAttribute('data-cond-op'),val=el.getAttribute('data-cond-val');var grp=form.querySelector('[data-fid=\"'+fid+'\"]');var cur='';if(grp){if(grp.tagName==='DIV'){var ch=grp.querySelector('input:checked');cur=ch?ch.value:'';}else cur=grp.value;}var show=(op==='is')?(cur===val):(op==='is not')?(cur!==val):(op==='contains')?(cur.indexOf(val)>=0):true;el.style.display=show?'':'none';});}
+function ffCondVal(form,fid){var src=form.querySelector('[data-fid=\"'+fid+'\"]');if(!src)return '';var v;if(src.tagName==='DIV'){var ch=src.querySelector('input:checked');v=ch?ch.value:'';}else v=src.value;return v==null?'':v;}
+function ffEvalCond(form){form.querySelectorAll('[data-cond-rules]').forEach(function(el){var rules;try{rules=JSON.parse(el.getAttribute('data-cond-rules')||'[]');}catch(e){rules=[];}var logic=el.getAttribute('data-cond-logic')||'AND';var results=rules.map(function(r){var cur=ffCondVal(form,r.field);return r.op==='is'?(cur===r.value):r.op==='is not'?(cur!==r.value):r.op==='contains'?(cur.indexOf(r.value)>=0):true;});var show=results.length===0?true:(logic==='OR'?results.some(function(x){return x;}):results.every(function(x){return x;}));el.style.display=show?'':'none';});}
 function ffPage(f,dir){var pages=f.querySelectorAll('.ff-page');var cur=0;pages.forEach(function(p,i){if(p.style.display!=='none')cur=i;});var nx=cur+dir;if(nx<0||nx>=pages.length)return;pages[cur].style.display='none';pages[nx].style.display='';f.querySelector('.ff-prev').style.display=nx>0?'':'none';f.querySelector('.ff-next').style.display=nx<pages.length-1?'':'none';f.querySelector('.ff-submit').style.display=nx===pages.length-1?'':'none';}
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var data={};new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}try{var res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,subject:document.title,siteUrl:location.href})});var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+var _ffSigActive=null,_ffSigLast=null;
+function ffSigPos(e,canvas){var r=canvas.getBoundingClientRect();var t=(e.touches&&e.touches[0])||e;var sx=canvas.width/r.width,sy=canvas.height/r.height;return {x:(t.clientX-r.left)*sx,y:(t.clientY-r.top)*sy};}
+function ffSigStart(e){var c=e.target.closest('canvas.ff-sig');if(!c)return;_ffSigActive=c;_ffSigLast=ffSigPos(e,c);c.dataset.hasInk='1';var ctx=c.getContext('2d');ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#1A1917';e.preventDefault();}
+function ffSigMove(e){if(!_ffSigActive)return;var p=ffSigPos(e,_ffSigActive);var ctx=_ffSigActive.getContext('2d');ctx.beginPath();ctx.moveTo(_ffSigLast.x,_ffSigLast.y);ctx.lineTo(p.x,p.y);ctx.stroke();_ffSigLast=p;e.preventDefault();}
+function ffSigStop(){_ffSigActive=null;_ffSigLast=null;}
+document.addEventListener('mousedown',ffSigStart);document.addEventListener('mousemove',ffSigMove);document.addEventListener('mouseup',ffSigStop);
+document.addEventListener('touchstart',ffSigStart,{passive:false});document.addEventListener('touchmove',ffSigMove,{passive:false});document.addEventListener('touchend',ffSigStop);
+document.addEventListener('click',function(e){var b=e.target.closest('.ff-sig-clear');if(!b)return;var c=b.previousElementSibling;if(c&&c.classList.contains('ff-sig')){c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.hasInk='';}});
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]')||!!form.querySelector('canvas.ff-sig');var badSig=null;form.querySelectorAll('canvas.ff-sig[data-required]').forEach(function(c){if(!c.dataset.hasInk)badSig=c;});if(badSig){msg.className='ff-msg err';msg.style.display='';msg.textContent='Please provide a signature.';return false;}var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});delete data['g-recaptcha-response'];delete data['h-captcha-response'];}btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}var hcTok=(form.querySelector('[name=h-captcha-response]')||{}).value||'';if(_hcSiteKey&&!hcTok){btn.disabled=false;btn.textContent='Submit';var m3=form.querySelector('.ff-msg');m3.className='ff-msg err';m3.style.display='';m3.textContent='Please complete the captcha.';return false;}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('hcaptcha',hcTok);fd.append('formPassword',form.dataset.unlockedPassword||'');fd.append('subject',document.title);fd.append('siteUrl',location.href);var sigs=form.querySelectorAll('canvas.ff-sig');for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,'image/png');});if(blob)fd.append(sc.getAttribute('name')||'signature',blob,'signature.png');}res=await fetch('admin/api.php',{method:'POST',body:fd});}else{res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,hcaptcha:hcTok,formPassword:form.dataset.unlockedPassword||'',subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,'');if(d.length>11)return v;var p='';if(d.length===11){if(d[0]!=='1')return v;p='1 ';d=d.slice(1);}if(!d.length)return '';if(d.length<4)return p+'('+d;if(d.length<7)return p+'('+d.slice(0,3)+') '+d.slice(3);return p+'('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);}
-function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
-var _blogForms=[];var _rcSiteKey='';var _rcV3=false;
+function ffFormInit(form){
+  var fid=form.getAttribute('data-form-id');
+  if(fid){try{var payload=JSON.stringify({action:'form_view',formId:fid});if(navigator.sendBeacon){navigator.sendBeacon('admin/api.php',new Blob([payload],{type:'application/json'}));}else{fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:payload}).catch(function(){});}}catch(e){}}
+  var cd=form.getAttribute('data-close-date');
+  if(cd){
+    var closeAt=new Date(cd+'T23:59:59');
+    if(!isNaN(closeAt)&&new Date()>closeAt){
+      form.querySelectorAll('.ff-gate,.ff-gated-content,.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});
+      var msg=form.querySelector('.ff-msg');
+      if(msg){msg.className='ff-msg info';msg.style.display='';msg.textContent='This form is no longer accepting responses.';}
+    }
+  }
+}
+function ffCheckFormPassword(btn){
+  var gate=btn.closest('.ff-gate');var form=btn.closest('.foundry-form');var input=gate.querySelector('.ff-gate-input');var err=gate.querySelector('.ff-gate-err');
+  var pw=input.value;btn.disabled=true;btn.textContent='Checking…';
+  fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'check_form_password',formId:form.getAttribute('data-form-id'),password:pw})})
+    .then(function(res){return res.json();}).then(function(d){
+      if(d.ok){form.dataset.unlockedPassword=pw;gate.style.display='none';var content=form.querySelector('.ff-gated-content');if(content)content.style.display='';}
+      else{err.style.display='';err.textContent=d.error||'Incorrect password.';btn.disabled=false;btn.textContent='Unlock';}
+    }).catch(function(){err.style.display='';err.textContent='Something went wrong. Please try again.';btn.disabled=false;btn.textContent='Unlock';});
+  return false;
+}
+function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);ffFormInit(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
+var _blogForms=[];var _rcSiteKey='';var _rcV3=false;var _hcSiteKey='';
 async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
-try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}}}catch(e){}
-if(_rcSiteKey){var s=document.createElement('script');s.src='https://www.google.com/recaptcha/api.js'+(_rcV3?'?render='+encodeURIComponent(_rcSiteKey):'');s.async=true;s.defer=true;document.head.appendChild(s);}}
+try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}if(sj&&sj.hcaptcha&&sj.hcaptcha.enabled){_hcSiteKey=sj.hcaptcha.siteKey||'';}}}catch(e){}
+if(_rcSiteKey){var s=document.createElement('script');s.src='https://www.google.com/recaptcha/api.js'+(_rcV3?'?render='+encodeURIComponent(_rcSiteKey):'');s.async=true;s.defer=true;document.head.appendChild(s);}
+if(_hcSiteKey){var hs=document.createElement('script');hs.src='https://js.hcaptcha.com/1/api.js';hs.async=true;hs.defer=true;document.head.appendChild(hs);}}
 function renderShortcodes(html){
   return html.replace(new RegExp('\\\\[form id=([\\\\w-]+)\\\\]','g'),function(m,id){
     var form=_blogForms.find(function(f){return f.id===id;});
     return form?ffRenderForm(form):'';
   });
+}
+// Blog Sync: ask the server to pull any new posts from the partner blog — a cheap
+// no-op unless the sync is enabled and 10+ minutes have passed since the last
+// check. When posts did arrive, the archive re-renders once so this very visitor
+// sees them; the single-post view just lets the next page load pick them up.
+var _blogSyncPoked=false;
+function pokeBlogSync(rerender){
+  if(_blogSyncPoked) return; _blogSyncPoked=true;
+  try{
+    fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'blog_sync_poke'}),keepalive:true})
+      .then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0&&rerender) loadBlog(); }).catch(function(){});
+  }catch(e){}
 }
 async function loadBlog(){
   var root=document.getElementById('blog-root');
@@ -6594,8 +7064,9 @@ async function loadBlog(){
       +'<div class="content">'+body+'</div>'
       +'</article>';
     ffInitForms();
+    pokeBlogSync(false);
   }else{
-    if(!posts.length){root.innerHTML='<div class="archive-head"><h1>Blog</h1></div><div class="empty-state"><p>No posts published yet. Check back soon!</p></div>';return;}
+    if(!posts.length){root.innerHTML='<div class="archive-head"><h1>Blog</h1></div><div class="empty-state"><p>No posts published yet. Check back soon!</p></div>';pokeBlogSync(true);return;}
     posts.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
     var cards=posts.map(function(p){
       return '<a class="post-card" href="posts.html?p='+encodeURIComponent(p.slug)+'">'
@@ -6606,6 +7077,7 @@ async function loadBlog(){
         +'</div></a>';
     }).join('');
     root.innerHTML='<div class="archive-head"><h1>Blog</h1><p>News and articles from ${siteName}</p></div><div class="post-grid">'+cards+'</div>';
+    pokeBlogSync(true);
   }
 }
 loadBlog();
@@ -6683,6 +7155,12 @@ function postsRuntimeAssets(){
     +'    var bs=groups[src];\n'
     +'    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);\n'
     +'  }\n'
+    // Blog Sync: ask the server to pull any new posts from the partner blog — a
+    // cheap no-op unless the sync is enabled and 10+ minutes have passed. When
+    // posts did arrive, the list repaints once so this very visitor sees them.
+    +'  if(groups[""]&&!window.__fourgePostsPoked){ window.__fourgePostsPoked=true;\n'
+    +'    try{ fetch("/admin/api.php",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"blog_sync_poke"}),keepalive:true}).then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0) run(); }).catch(function(){}); }catch(e){}\n'
+    +'  }\n'
     +'}\n'
     +'window.fourgePostsRefresh=run;\n'
     +'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();\n'
@@ -6704,6 +7182,34 @@ function ensurePostsRuntime(html){
   html=/<\/head>/i.test(html) ? html.replace(/<\/head>/i,m=>css+'\n'+m) : (css+'\n'+html);
   html=/<\/body>/i.test(html) ? html.replace(/<\/body>/i,m=>js+'\n'+m) : (html+'\n'+js);
   return html;
+}
+
+// Version-gated, like eventsRuntimeSweepIfStale(): when the blog runtimes gain
+// something every page already out there must have (here, the Blog Sync poke
+// that keeps a partner site's archive current between logins), re-stamp them
+// once — posts.html only while it is still the generated shell (never a custom
+// page someone renamed to posts.html), plus any page carrying a
+// [data-fourge-posts] list. Bump the version to sweep again after a later change.
+const POSTS_RUNTIME_SWEEP_VERSION=1;
+async function postsRuntimeSweepIfStale(){
+  if(!canCallApi() || (_site&&_site.postsRuntimeSweptVersion===POSTS_RUNTIME_SWEEP_VERSION)) return;
+  try{
+    const d=await apiCall('read_file',{path:'posts.html'});
+    const html=d.content||'';
+    if(/id="blog-root"/.test(html) && /function loadBlog\(\)/.test(html) && !/blog_sync_poke/.test(html)) await ensurePostsHtml();
+  }catch(e){ /* no posts.html on this site — nothing to refresh */ }
+  if(!Object.keys(_pages).length) await loadPages();
+  for(const pg of getPageList()){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    try{
+      const d=await apiCall('read_file',{path:fp});
+      const html=d.content||''; if(!html || !/data-fourge-posts\b/.test(html)) continue;
+      const out=ensurePostsRuntime(html);
+      if(out!==html) await apiCall('write_file',{path:fp,content:out});
+    }catch(e){}
+  }
+  _site.postsRuntimeSweptVersion=POSTS_RUNTIME_SWEEP_VERSION;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -8954,8 +9460,8 @@ async function placePostListOnPage(pid){
     else if(/<\/body>/i.test(html))   html=html.replace(/<\/body>/i,m=>sec+m);
     else html+=sec;
     html=veFinalizePageHtml(html);   // posts runtime + favicon + forms pipeline in one pass
-    await apiCall('write_file',{path:fp,content:html});
-    try{ ghMirror(fp,html,'Fourge: add post list to '+fp); }catch(e){}
+    const wd=await apiCall('write_file',{path:fp,content:html});
+    try{ ghMirror(fp,html,'Fourge: add post list to '+fp,{serverResult:wd&&wd.gh}); }catch(e){}
     const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
     toast('Post list added to “'+decodeHtml(pg.title||pid)+'” — it now shows every published post, newest first ✓','ok');
   }catch(e){ toast('Could not add: '+e.message,'err'); }
@@ -9638,10 +10144,10 @@ async function seoStampAllPages(){
   return {done,failed,guarded};
 }
 async function saveSEO(){
-  const json=JSON.stringify(_seo,null,2); let ok=false;
-  if(canCallApi()){ try{ await apiCall('write_file',{path:'data/seo.json',content:json}); ok=true; }catch(e){} }
-  const{repo,pat}=ghCfg();
-  if(repo&&pat){ try{ const sha=await ghSHA(F_SEO); await ghWrite(F_SEO,json,sha,'Fourge: SEO update'); ok=true; }catch(e){} }
+  const json=JSON.stringify(_seo,null,2); let ok=false, wd=null;
+  if(canCallApi()){ try{ wd=await apiCall('write_file',{path:'data/seo.json',content:json}); ok=true; }catch(e){} }
+  // The server mirrored inline (`gh`); the browser PAT is only ever the fallback.
+  try{ const g=await ghMirror(F_SEO,json,'Fourge: SEO update',{serverResult:wd&&wd.gh}); ok=ok||g.ok; }catch(e){}
   if(!ok){ toast('Save failed — configure Server API or GitHub','err'); return; }
   _seoLoaded=true;
   const r=await seoStampAllPages();
@@ -10107,10 +10613,20 @@ async function seoWriteRobots(notify){
 }
 
 // ── SITE INFO ─────────────────────────────────
+// The Site Foundry inputs are static markup holding placeholders (the brand
+// swatches default to Fourge's own navy and orange). They only reflect the real
+// site once loadSiteInfo() has run — and that only happens when the panel is
+// opened. saveSiteInfo() is ALSO reached from panels that never open Site
+// Foundry (reCAPTCHA/hCaptcha/GHL settings, login-screen meta, editor
+// permissions), so it has to know whether those inputs hold the site's data or
+// still the placeholders. This flag is that knowledge; the brand swatches carry
+// the same data-set="1" gate every other color picker in the admin uses.
+let _siteInfoLoaded=false;
 async function loadSiteInfo(){
   if(!Object.keys(_site).length)try{const r=await fetch('../data/site.json?t='+Date.now());if(r.ok)_site=await r.json();}catch{}
   const fields=[['si-name','name'],['si-tagline','tagline'],['si-website','website'],['si-notify','notifyEmail'],['si-phone','phone'],['si-email','email'],['si-street','address.street'],['si-city','address.city'],['si-state','address.state'],['si-zip','address.zip'],['si-facebook','social.facebook'],['si-instagram','social.instagram'],['si-linkedin','social.linkedin'],['si-youtube','social.youtube']];
   fields.forEach(([id,path])=>{const el=document.getElementById(id);if(!el)return;const keys=path.split('.');let val=_site;keys.forEach(k=>val=val?.[k]);el.value=val||'';});
+  _siteInfoLoaded=true;
   faviconRender();
   siRenderTypography(_site.typography||{});    // site-wide fonts
   siRenderHeadings(_site.headingStyles||{});   // site-wide heading controls
@@ -10136,8 +10652,10 @@ async function designAutofill(){
     fillIf('si-linkedin',  grabSoc(/href=["'](https?:\/\/(?:www\.)?linkedin\.com\/[^"']+)/i));
     fillIf('si-youtube',   grabSoc(/href=["'](https?:\/\/(?:www\.)?youtube\.com\/[^"']+)/i));
   }
-  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP){ fcSet(pe,brandP); fcSyncHex(pe); }
-  const se=document.getElementById('si-brand-secondary'); if(se&&brandS){ fcSet(se,brandS); fcSyncHex(se); }
+  // data-set="1" marks a swatch as holding a real value (loaded here, or later
+  // changed by hand); saveSiteInfo() ignores a swatch that never got there.
+  const pe=document.getElementById('si-brand-primary'); if(pe&&brandP){ fcSet(pe,brandP); fcSyncHex(pe); pe.dataset.set='1'; }
+  const se=document.getElementById('si-brand-secondary'); if(se&&brandS){ fcSet(se,brandS); fcSyncHex(se); se.dataset.set='1'; }
 }
 // Regex strip-and-splice, not a DOMParser round-trip: this now runs on EVERY
 // page save (see veFinalizePageHtml), and re-serialising a client's
@@ -10163,6 +10681,9 @@ async function brandApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
   const primary=fcVal('si-brand-primary');
   const secondary=fcVal('si-brand-secondary');
+  // An explicit "apply what I see": from here on saveSiteInfo() treats both
+  // swatches as deliberately chosen, exactly as a manual change would.
+  ['si-brand-primary','si-brand-secondary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.dataset.set='1'; });
   if(!_site.brand) _site.brand={}; _site.brand.primary=primary; _site.brand.secondary=secondary;
   try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
   if(!Object.keys(_pages).length) await loadPages();
@@ -11090,10 +11611,25 @@ async function goliveScan(apply){
 // ── PLUGINS ───────────────────────────────────
 async function saveSiteInfo(){
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
-  _site.name=get('si-name');_site.tagline=get('si-tagline');_site.website=get('si-website');_site.phone=get('si-phone');_site.email=get('si-email');
-  if(!_site.address)_site.address={};_site.address.street=get('si-street');_site.address.city=get('si-city');_site.address.state=get('si-state');_site.address.zip=get('si-zip');
-  if(!_site.social)_site.social={};_site.social.facebook=get('si-facebook');_site.social.instagram=get('si-instagram');_site.social.linkedin=get('si-linkedin');_site.social.youtube=get('si-youtube');
-  if(!_site.brand)_site.brand={};_site.brand.primary=fcVal('si-brand-primary');_site.brand.secondary=fcVal('si-brand-secondary');
+  // Only read the Site Foundry text inputs once loadSiteInfo() has filled them
+  // from the real site. Until then they are empty placeholders, and copying them
+  // in wiped the site's name, contact and social details — which is exactly what
+  // a reCAPTCHA or permissions save did in a session that never opened Site
+  // Foundry.
+  if(_siteInfoLoaded){
+    _site.name=get('si-name');_site.tagline=get('si-tagline');_site.website=get('si-website');_site.phone=get('si-phone');_site.email=get('si-email');
+    if(!_site.address)_site.address={};_site.address.street=get('si-street');_site.address.city=get('si-city');_site.address.state=get('si-state');_site.address.zip=get('si-zip');
+    if(!_site.social)_site.social={};_site.social.facebook=get('si-facebook');_site.social.instagram=get('si-instagram');_site.social.linkedin=get('si-linkedin');_site.social.youtube=get('si-youtube');
+  }
+  // Brand colors: a swatch counts only once it holds a real value — loaded from
+  // the site by designAutofill() or changed by hand (data-set="1"). An untouched
+  // swatch still shows its markup default, Fourge's own orange for the secondary,
+  // and that must never be mistaken for the client's brand: every page save
+  // (veFinalizePageHtml) stamps whatever is in _site.brand onto the page.
+  if(!_site.brand)_site.brand={};
+  const bp=document.getElementById('si-brand-primary'), bs=document.getElementById('si-brand-secondary');
+  if(bp&&bp.dataset.set==='1') _site.brand.primary=fcVal(bp);
+  if(bs&&bs.dataset.set==='1') _site.brand.secondary=fcVal(bs);
   // Site-wide heading styles — only touch them if the controls are actually on screen.
   if(document.getElementById('sh-h1-size')){ const hs=siReadHeadings(); if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles; }
   // Site-wide fonts — same guard: only when the Design tab has been rendered.
@@ -11104,19 +11640,21 @@ async function saveSiteInfo(){
   const json=JSON.stringify(_site,null,2);
   let savedLocal=false, savedGH=false;
 
-  // 1. Save to server via api.php (works without GitHub)
+  // 1. Save to server via api.php (works without GitHub). The server mirrors
+  //    the file to GitHub inline and reports how that went (`gh`).
   const{url,token}=getApiCfg();
+  let wd=null;
   if(url&&token){
-    try{ await apiCall('write_file',{path:'data/site.json',content:json}); savedLocal=true; }
+    try{ wd=await apiCall('write_file',{path:'data/site.json',content:json}); savedLocal=true; }
     catch(e){ console.warn('Local save failed:',e.message); }
   }
 
-  // 2. Push to GitHub if configured
-  const{repo,pat}=ghCfg();
-  if(repo&&pat){
-    try{ const sha=await ghSHA(F_SITE); await ghWrite(F_SITE,json,sha,'Fourge: site config update'); savedGH=true; }
-    catch(e){ console.warn('GitHub save failed:',e.message); }
-  }
+  // 2. GitHub: the server's own result when it has one, the browser PAT otherwise.
+  try{
+    const g=await ghMirror(F_SITE,json,'Fourge: site config update',{serverResult:wd&&wd.gh});
+    savedGH=g.ok;
+    if(!g.ok&&g.error&&g.error!=='not_configured') console.warn('GitHub save failed:',g.error);
+  }catch(e){ console.warn('GitHub save failed:',e.message); }
 
   if(savedLocal&&savedGH) toast('Saved to server + GitHub ✓','ok');
   else if(savedLocal)     toast('Saved to server ✓ (GitHub not configured)','ok');
@@ -11183,10 +11721,9 @@ async function gaRefreshCredStatus(){
 async function gaPersistSite(){
   const json=JSON.stringify(_site,null,2);
   const{url,token}=getApiCfg();
-  let saved=false;
-  if(url&&token){ try{ await apiCall('write_file',{path:'data/site.json',content:json}); saved=true; }catch(e){} }
-  const{repo,pat}=ghCfg();
-  if(repo&&pat){ try{ const sha=await ghSHA(F_SITE); await ghWrite(F_SITE,json,sha,'Fourge: analytics settings'); saved=true; }catch(e){} }
+  let saved=false, wd=null;
+  if(url&&token){ try{ wd=await apiCall('write_file',{path:'data/site.json',content:json}); saved=true; }catch(e){} }
+  try{ const g=await ghMirror(F_SITE,json,'Fourge: analytics settings',{serverResult:wd&&wd.gh}); saved=saved||g.ok; }catch(e){}
   if(!saved) throw new Error('Configure Server API or GitHub in Settings');
 }
 
@@ -11668,6 +12205,7 @@ function renderPlugins(){
     const home=PLUG_PRESET_HOME[preset.name]||'Functional → Header';
     return`<div class="pl-row"><span class="pl-logo">${preset.logo||`<i class="fa-solid ${preset.icon}" style="color:var(--muted);font-size:16px"></i>`}</span><div style="flex:1"><div class="pl-n">${esc(preset.name)}</div><div class="pl-s">${esc(preset.desc)} · Custom Code → ${home}</div></div><button class="fd-btn-secondary" style="font-size:12px;padding:6px 12px;white-space:nowrap" onclick="navTo('analytics');setTimeout(function(){gaTab('setup');},50)">Open Custom Code →</button></div>`;}).join('');
   body.innerHTML=recaptchaAddonHtml()
+    +hcaptchaAddonHtml()
     +fleetAddonHtml()
     +ghlAddonHtml()
     +mailAddonHtml()
@@ -11755,6 +12293,58 @@ function rcRenderStatus(d){
 }
 // Show the v3 score-threshold control only when v3 is selected.
 function rcToggleV3(v){ const row=document.getElementById('s-rc-threshold-row'); if(row) row.style.display=(v==='v3')?'':'none'; }
+
+// ── hCaptcha add-on ──────────────────────────────────────────────────────────
+// An alternative to reCAPTCHA above — same site-wide on/off + two-key shape
+// (site.json's hcaptcha key, verified server-side by cmsVerifyHcaptcha), but
+// only the standard checkbox challenge (no invisible/score mode reCAPTCHA v3
+// has), so there's no version or threshold control to configure here.
+function hcaptchaAddonHtml(){
+  const hc=(_site&&_site.hcaptcha)||{};
+  const on=!!hc.enabled, siteKey=hc.siteKey||'', hasSecret=!!hc.hasSecret;
+  const hint='font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5';
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#0074BF"></rect><path d="M12 6l5 2v4c0 3.5-2.2 6-5 7-2.8-1-5-3.5-5-7V8z" fill="none" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"></path><path d="M9.5 12l1.8 1.8L14.5 10" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">hCaptcha <span class="pl-badge${on?' on':''}">${on?'Active':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">A privacy-focused alternative to reCAPTCHA — blocks spam-bot form submissions with its own checkbox challenge. Enter your two keys once — every form on the site is protected. Create keys at <code>dashboard.hcaptcha.com</code>.</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <div class="fg"><label>Site Key (public)</label><input type="text" id="s-hc-site" placeholder="10000000-0000-0000-0000-000000000001" value="${esc(siteKey)}"></div>
+      <div class="fg"><label>Secret Key (kept on the server)</label><input type="password" id="s-hc-secret" placeholder="${hasSecret?'Secret saved on server':'0x0000… (kept on server)'}"></div>
+      <div class="pl-addon-actions">
+        <button class="fd-btn-primary" onclick="saveHcaptcha()">Save hCaptcha</button>
+        ${on?'<button class="fd-btn-ghost" onclick="disableHcaptcha()">Turn off</button>':''}
+        <a href="https://dashboard.hcaptcha.com/signup" target="_blank" rel="noopener" class="pl-addon-link">Get your keys ↗</a>
+      </div>
+      <div style="${hint}">Uses its own widget, separate from reCAPTCHA above — most sites only need one. Turning both on protects every form with both checks.</div>
+    </div>
+  </div>`;
+}
+async function saveHcaptcha(){
+  const siteKey=document.getElementById('s-hc-site')?.value.trim()||'';
+  const secret=document.getElementById('s-hc-secret')?.value.trim()||'';
+  if(!_site.hcaptcha) _site.hcaptcha={};
+  _site.hcaptcha.siteKey=siteKey;
+  if(secret) _site.hcaptcha.secret=secret;
+  _site.hcaptcha.hasSecret=!!(secret||_site.hcaptcha.secret);
+  _site.hcaptcha.enabled=!!siteKey;
+  try{
+    await saveSiteInfo();
+    const hcSec=document.getElementById('s-hc-secret');if(hcSec){hcSec.value='';hcSec.placeholder='Secret saved on server';}
+    if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
+    toast(siteKey?'hCaptcha saved — forms are now protected ✓':'hCaptcha keys cleared','ok');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
+async function disableHcaptcha(){
+  if(!_site.hcaptcha||!_site.hcaptcha.enabled){ toast('hCaptcha is already off'); return; }
+  _site.hcaptcha.enabled=false;
+  try{ await saveSiteInfo(); toast('hCaptcha turned off','ok'); renderPlugins(); }
+  catch(e){ toast('Save failed: '+e.message,'err'); }
+}
 
 // ── FLEET DASHBOARD add-on ───────────────────────────────────────────────────
 // Off by default on every site — same shape as the TLP feed connection (an
@@ -12589,6 +13179,16 @@ async function doUpdate(st){
     const html=blobs['admin/index.html'];
     if(html!=null && (html.length<10000 || html.indexOf('CMS_VERSION')<0))
       throw new Error('Downloaded index.html looks invalid — aborting');
+    // The gate compares version.json against the CMS_VERSION baked into the
+    // installed index.html. A release that moved one without the other would put
+    // every site into an endless install → reload → install loop (as 1.14.121 did
+    // on 2026-09-17). Refuse such a release outright: the site stays on its
+    // current build, the loader carries on into the CMS, and the toast says why.
+    if(html!=null){
+      const m=html.match(/const CMS_VERSION='([^']+)'/);
+      if(!m || semverCmp(m[1], remote.version)!==0)
+        throw new Error('Update '+remote.version+' is mislabelled — its index.html says '+(m?m[1]:'nothing')+'. Not installing; the release needs its version numbers aligned.');
+    }
     // 2) Write engine files, index.html last.
     const order=files.slice().sort((a,b)=> a==='admin/index.html'?1 : (b==='admin/index.html'?-1:0));
     for(const f of order){ await apiCall('write_file',{path:f,content:blobs[f]}); }
@@ -12612,6 +13212,7 @@ async function doUpdate(st){
     // reported as a failed update.
     try{ await ghSyncSiteContent(); }catch(e){ console.warn('GitHub content sync skipped:',e.message); }
     try{ await ghEnsureRepoPrivate(); }catch(e){ console.warn('GitHub repo-privacy check skipped:',e.message); }
+    ghStampDailySync();   // that was today's sync — the login tick needn't repeat it
     return true;
   }catch(e){ toast('Update failed: '+e.message,'err'); return false; }
 }
@@ -13594,9 +14195,9 @@ async function customCssApplyAll(){
   toast(done?('Custom CSS applied to '+done+' page(s) ✓'):'Every page was already up to date','ok');
 }
 async function savePagesJson(){
-  const json=JSON.stringify(_pages,null,2); let ok=false;
-  if(canCallApi()){ try{ await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
-  try{ const g=await ghMirror(F_PAGES,json,'Fourge: page settings'); ok=ok||g.ok; }catch(e){}
+  const json=JSON.stringify(_pages,null,2); let ok=false, wd=null;
+  if(canCallApi()){ try{ wd=await apiCall('write_file',{path:F_PAGES,content:json}); ok=true; }catch(e){} }
+  try{ const g=await ghMirror(F_PAGES,json,'Fourge: page settings',{serverResult:wd&&wd.gh}); ok=ok||g.ok; }catch(e){}
   if(ok) savePagesBackup();   // keep the known-good snapshot in sync with this change
   return ok;
 }
@@ -16075,14 +16676,10 @@ async function veSaveTemplateToAll(zone){
   if(updated>0) toast(updated+' page(s) updated with new '+zone+(failed?' ('+failed+' skipped)':''),'ok');
   else toast('No pages updated — no '+zone+' section found in your page files','err');
 
-  // Also update _veHtml cache and GitHub
-  const{repo,pat}=ghCfg();
-  if(repo&&pat&&updated>0){
-    try{
-      const sha=await ghSHA(F_PAGES);
-      await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),sha,'Fourge: template update '+zone);
-    }catch{}
-  }
+  // Every page file written above was mirrored to GitHub by the server as it was
+  // saved (see cmsWriteFile), and _pages itself didn't change — so there is
+  // nothing left to push. (This used to re-push an unchanged pages.json from the
+  // browser: a redundant commit at best.)
 }
 
 
@@ -16959,9 +17556,12 @@ async function logRevision(pg, filePath, html){
     if(revs.length>100){ dropped=revs.slice(100); revs=revs.slice(0,100); }
     const revIndex=JSON.stringify(revs,null,2);
     // Server copy (primary source for the Revisions list / view / restore).
-    await apiCall('write_file',{path:'data/revisions.json',content:revIndex});
-    await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html});
-    dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html'}).catch(()=>{}); });
+    // gh:false — these writes opt out of the server's inline mirror so the page
+    // save doesn't wait on GitHub for them; the snapshots are mirrored below,
+    // asynchronously, exactly as before.
+    await apiCall('write_file',{path:'data/revisions.json',content:revIndex,gh:false});
+    await apiCall('write_file',{path:'data/rev_'+rid+'.html',content:html,gh:false});
+    dropped.forEach(x=>{ apiCall('delete_file',{path:'data/rev_'+x.id+'.html',gh:false}).catch(()=>{}); });
     // GitHub mirror (durable version history in the repo). Server-side push, so
     // it runs for EVERY user — not just Architect sessions holding the PAT.
     // Non-blocking so a GitHub hiccup or rate-limit can never fail the page save.
@@ -17008,11 +17608,11 @@ async function veSavePage(){
 
     // 1. Save to server
     const{url,token}=getApiCfg();
-    let savedServer=false, serverErr='';
+    let savedServer=false, serverErr='', serverGh=null;
     if(url&&token){
       try{
-        await apiCall('write_file',{path:filePath,content:html});
-        savedServer=true;
+        const wd=await apiCall('write_file',{path:filePath,content:html});
+        savedServer=true; serverGh=wd&&wd.gh;   // the server mirrored inline — use its verdict, don't push twice
       }catch(e){ serverErr=e.message; console.warn('Server save failed:',e.message); }
     } else {
       serverErr='Server API not configured (Settings → Server API)';
@@ -17022,7 +17622,7 @@ async function veSavePage(){
     //    browser PAT as fallback; a real failure is SHOWN, not just logged.
     let savedGH=false, ghErr='';
     try{
-      const g=await ghMirror(pg.file,html,'Fourge: visual edit "'+pg.title+'"');
+      const g=await ghMirror(pg.file,html,'Fourge: visual edit "'+pg.title+'"',{serverResult:serverGh});
       savedGH=g.ok;
       if(!g.ok && g.error && g.error!=='not_configured'){ ghErr=g.error; console.warn('GitHub save failed:',g.error); }
     }catch(e){ console.warn('GitHub save failed:',e.message); }
@@ -17139,10 +17739,24 @@ async function createNewPage(){
   _veHtml[id]=html;_veOrigHtml[id]='';
   try{
     const{url,token}=getApiCfg();
-    if(url&&token) await apiCall('write_file',{path:file,content:html}).catch(()=>{});
-    const r=await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),_pagesSHA,'Fourge: add page "'+title+'"');
-    _pagesSHA=r.content?.sha||_pagesSHA;
-    try{const{content:sc,sha:ss}=await ghRead(F_SITE);const sd=JSON.parse(sc);if(!sd.nav)sd.nav=[];if(!sd.nav.find(n=>n.id===id)){sd.nav.push({id,label:title,file});await ghWrite(F_SITE,JSON.stringify(sd,null,2),ss,'Fourge: add "'+title+'" to nav');}}catch{}
+    if(url&&token){
+      // Server mode: the page file, pages.json and the nav entry all go through
+      // api.php, which mirrors each of them to GitHub itself. (This path used to
+      // push pages.json straight from the browser only — so the server's
+      // pages.json never learned about the new page, and for any session
+      // without the Architect PAT the push threw, rolling the page back in
+      // memory even though its file had already been written.)
+      await apiCall('write_file',{path:file,content:html});
+      if(!(await savePagesJson())) throw new Error('Could not save pages.json');
+      try{
+        if(!_site.nav) _site.nav=[];
+        if(!_site.nav.find(n=>n.id===id)){ _site.nav.push({id,label:title,file}); await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+      }catch(e){ console.warn('Nav update failed:',e.message); }
+    } else {
+      const r=await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),_pagesSHA,'Fourge: add page "'+title+'"');
+      _pagesSHA=r.content?.sha||_pagesSHA;
+      try{const{content:sc,sha:ss}=await ghRead(F_SITE);const sd=JSON.parse(sc);if(!sd.nav)sd.nav=[];if(!sd.nav.find(n=>n.id===id)){sd.nav.push({id,label:title,file});await ghWrite(F_SITE,JSON.stringify(sd,null,2),ss,'Fourge: add "'+title+'" to nav');}}catch{}
+    }
     closeM('m-newpage');_curPage=id;renderVePageList();veLoadPage(id);toast('Page created!','ok');
   }catch(e){delete _pages[id];delete _veHtml[id];toast('Failed: '+e.message,'err');}
 }
@@ -17240,6 +17854,7 @@ async function apiCall(action,body={}){
     const fd=new FormData();
     fd.append('action','write_file');
     fd.append('path', body.path||'');
+    if(body.gh===false||body.gh===0||body.gh==='0') fd.append('gh','0');   // opt out of the server's inline GitHub mirror (see cmsWriteFile)
     fd.append('content_file', new Blob([body.content],{type:'text/plain'}), 'content.txt');
     const res=await fetch(getApiBase(),{method:'POST',headers:authHeaders(),body:fd});
     let d=null; try{ d=await res.json(); }catch(e){ throw new Error('Server returned an invalid response ('+res.status+')'); }
@@ -17767,18 +18382,24 @@ async function importFromServerRun(forceOverride){
   savePagesBackup();   // capture imported pages now, so a later failed scan can't drop them
   const pagesJson = JSON.stringify(pagesData, null, 2);
 
-  // Save to server first (always works, no GitHub needed)
+  // Save to server first (always works, no GitHub needed). The server mirrors
+  // pages.json to GitHub inline and reports how that went (`gh`).
   const{url:apiUrl,token:apiToken}=getApiCfg();
+  let savedServer=false, serverGh=null;
   if(apiUrl&&apiToken){
     try{
-      await apiCall('write_file',{path:'data/pages.json',content:pagesJson});
-      ll('<span class="l-ok">✓</span> pages.json saved to server');
+      const wd=await apiCall('write_file',{path:'data/pages.json',content:pagesJson});
+      savedServer=true; serverGh=wd&&wd.gh;
+      ll('<span class="l-ok">✓</span> pages.json saved to server'+(serverGh&&serverGh.ok?' + mirrored to GitHub':''));
     }catch(e){ ll(`<span class="l-warn">⚠</span> Server pages.json: ${esc(e.message)}`); }
   }
 
-  // Also push to GitHub if configured
+  // GitHub from the browser only when the server didn't already do it (no
+  // Server API at all, or the server has no repo/token configured).
   const{repo:ghRepo,pat:ghPat}=ghCfg();
-  if(ghRepo&&ghPat){
+  if(serverGh&&serverGh.ok){
+    // already mirrored above
+  } else if(ghRepo&&ghPat){
     try{
       const r = await ghWrite(F_PAGES, pagesJson, pagesSHA, 'Fourge: import ' + imported + ' page(s)');
       _pagesSHA = r.content?.sha || pagesSHA;
@@ -17788,12 +18409,26 @@ async function importFromServerRun(forceOverride){
     ll('<span class="l-info">ℹ</span> GitHub not configured — pages saved to server only');
   }
 
-  // Step 7: Save site.json nav
-  if(newNav.length && siteSHA){
-    try{
-      await ghWrite(F_SITE, JSON.stringify(siteData, null, 2), siteSHA, 'Fourge: add ' + newNav.length + ' page(s) to nav');
-      ll(`<span class="l-ok">✓</span> site.json nav updated`);
-    }catch(e){ ll(`<span class="l-warn">⚠</span> site.json nav: ${esc(e.message)}`); }
+  // Step 7: Save site.json nav. In server mode the server's own site.json is
+  // the source of truth (siteData above came from GitHub and is a bare default
+  // when the browser has no PAT), and that write is mirrored by the server;
+  // otherwise push through the browser PAT as before.
+  if(newNav.length){
+    if(savedServer){
+      try{
+        const d=await apiCall('read_file',{path:F_SITE}); const sd=JSON.parse(d.content||'{}')||{};
+        if(!Array.isArray(sd.nav)) sd.nav=[];
+        newNav.forEach(n=>{ if(!sd.nav.find(x=>x.id===n.id)) sd.nav.push(n); });
+        await apiCall('write_file',{path:F_SITE,content:JSON.stringify(sd,null,2)});
+        _site.nav=sd.nav;
+        ll(`<span class="l-ok">✓</span> site.json nav updated`);
+      }catch(e){ ll(`<span class="l-warn">⚠</span> site.json nav: ${esc(e.message)}`); }
+    } else if(siteSHA){
+      try{
+        await ghWrite(F_SITE, JSON.stringify(siteData, null, 2), siteSHA, 'Fourge: add ' + newNav.length + ' page(s) to nav');
+        ll(`<span class="l-ok">✓</span> site.json nav updated`);
+      }catch(e){ ll(`<span class="l-warn">⚠</span> site.json nav: ${esc(e.message)}`); }
+    }
   }
 
   // ── Import media files ──────────────────────────────────────────
@@ -17833,7 +18468,8 @@ async function importFromServerRun(forceOverride){
         // Save to server first (no GitHub needed)
         try{ await apiCall('write_file',{path:'data/media.json',content:JSON.stringify(mediaData,null,2)}); }catch(e){ ll('<span class="l-warn">⚠</span> Server media.json: '+esc(e.message)); }
         // Also push to GitHub if configured
-        try{ await ghWrite('data/media.json', JSON.stringify(mediaData, null, 2), mediaSHA, 'Fourge: import ' + added + ' media file(s)'); }catch{}
+        // The server write above already mirrored it; the browser PAT is only for a site with no Server API at all.
+        if(!canCallApi()){ try{ await ghWrite('data/media.json', JSON.stringify(mediaData, null, 2), mediaSHA, 'Fourge: import ' + added + ' media file(s)'); }catch{} }
         ll(`<span class="l-ok">✓</span> ${added} media file(s) added to library (${mediaFiles.length} found, ${mediaFiles.length - added} already existed)`);
         _media = mediaData;
       } else {

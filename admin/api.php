@@ -184,8 +184,11 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //    (session OR constant-time Bearer match) and refuse everything else.
 //    'blog_sync_tick' is the same shape, for the same reason: an external
 //    scheduler needs to reach it with no session at all.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
+//  • 'check_form_password' / 'form_view' are public for the same reason as
+//    'send_form': a site visitor has no token or session. Neither exposes
+//    anything beyond a single form's own pass/fail check or view counter.
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -244,6 +247,7 @@ try {
         case 'ghl_form_def':    ob_end_clean(); fourgeApiGhlFormDef($authUser, $body); break;
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'gh_set_private':  ob_end_clean(); fourgeApiGhSetPrivate($authUser, $body); break;
+        case 'gh_sync_all':     ob_end_clean(); fourgeApiGhSyncAll($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'ai_endpoint_test': ob_end_clean(); fourgeApiAiEndpointTest($authUser, $body); break;
@@ -258,6 +262,7 @@ try {
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
         case 'seo_pkg_publish_all': ob_end_clean(); fourgeApiSeoPkgPublishAll($authUser, $body); break;
         case 'blog_sync_tick':  ob_end_clean(); fourgeApiBlogSyncTick($authUser, $body); break;
+        case 'blog_sync_poke':  ob_end_clean(); fourgeApiBlogSyncPoke(); break;
         case 'blog_sync_admin': ob_end_clean(); fourgeApiBlogSyncAdmin($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
@@ -269,6 +274,9 @@ try {
         case 'upload':      ob_end_clean(); handleUpload();    break;
         case 'delete_file': ob_end_clean(); cmsDeleteFile($body); break;
         case 'send_form':   ob_end_clean(); cmsSendForm($body); break;
+        case 'check_form_password': ob_end_clean(); fourgeApiCheckFormPassword($body); break;
+        case 'form_view':   ob_end_clean(); fourgeApiFormView($body); break;
+        case 'hash_form_password': ob_end_clean(); fourgeApiHashFormPassword($body); break;
         case 'ga_save_credentials': ob_end_clean(); gaSaveCredentials($body); break;
         case 'ga_status':   ob_end_clean(); gaStatus();          break;
         case 'ga_report':   ob_end_clean(); gaReport($body);     break;
@@ -505,7 +513,16 @@ function cmsWriteFile($body) {
         echo json_encode(['error' => 'Could not write: ' . htmlspecialchars($relPath)]);
         return;
     }
-    echo json_encode(['ok' => true, 'path' => $relPath, 'size' => strlen($content)]);
+    // Mirror the saved bytes to the site's GitHub repo right here, and report the
+    // outcome as `gh` so the client can say "Saved to server + GitHub" truthfully
+    // instead of pushing a second time itself. gh=0 opts a write out: the revision
+    // snapshots use it, since they mirror themselves asynchronously and a page
+    // save should not wait on them. A mirror problem never fails the save.
+    $ghOpt = $body['gh'] ?? ($_POST['gh'] ?? null);
+    $gh = ($ghOpt === '0' || $ghOpt === 0 || $ghOpt === false)
+        ? ['ok' => false, 'reason' => 'opted_out']
+        : cmsGhAfterWrite(cmsGhRelPath($dest), $content);
+    echo json_encode(['ok' => true, 'path' => $relPath, 'size' => strlen($content), 'gh' => $gh]);
 }
 
 // ── UPLOAD FILES ──────────────────────────────────────────────────────────────
@@ -581,7 +598,13 @@ function handleUpload() {
         }
         $dest = $destDir . '/' . $safe;
         if (move_uploaded_file($tmp, $dest)) {
-            $results[] = ['name'=>$safe,'success'=>true,'path'=>$toRel . $safe];
+            $res = ['name'=>$safe,'success'=>true,'path'=>$toRel . $safe];
+            // Same inline GitHub mirror as cmsWriteFile(), binary-safe — so images,
+            // videos, fonts and documents reach the repo too, not just text files.
+            $ghOpt = $_POST['gh'] ?? null;
+            $res['gh'] = ($ghOpt === '0') ? ['ok' => false, 'reason' => 'opted_out']
+                                          : cmsGhAfterWrite(cmsGhRelPath($dest), (string)@file_get_contents($dest));
+            $results[] = $res;
         } else {
             $results[] = ['name'=>$safe,'success'=>false,'error'=>'Could not save'];
         }
@@ -597,8 +620,13 @@ function cmsDeleteFile($body) {
     if (!$safe || strpos($safe, PUBLIC_HTML) !== 0 || !is_file($safe)) {
         http_response_code(404); echo json_encode(['error' => 'File not found']); return;
     }
+    $rel = cmsGhRelPath($safe);
     unlink($safe);
-    echo json_encode(['ok' => true]);
+    // Keep the repo in step: a file removed here is removed there (gh=0 opts out,
+    // as for cmsWriteFile). Reported, never fatal.
+    $ghOpt = $body['gh'] ?? null;
+    $gh = ($ghOpt === '0' || $ghOpt === 0 || $ghOpt === false) ? ['ok' => false, 'reason' => 'opted_out'] : cmsGhAfterDelete($rel);
+    echo json_encode(['ok' => true, 'gh' => $gh]);
 }
 
 // ── MAILGUN FORM ──────────────────────────────────────────────────────────────
@@ -743,6 +771,54 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
         return $finish('blocked', 'score ' . $data['score'] . ' is below your threshold ' . $threshold . ' — this looks like a bot. Lower the threshold in Plugins → reCAPTCHA if real visitors are being blocked.');
     }
     return $finish('passed', 'passed (v2 checkbox — no score)');
+}
+
+// hCaptcha: an alternative to reCAPTCHA (Plugins → hCaptcha), same site-wide
+// on/off + two-key shape as reCAPTCHA above, read straight from data/site.json.
+function cmsHcaptchaSecret() {
+    try {
+        $file = __DIR__ . '/../data/site.json';
+        if (!file_exists($file)) return '';
+        $site = json_decode(file_get_contents($file), true);
+        if (!empty($site['hcaptcha']['enabled']) && !empty($site['hcaptcha']['secret'])) {
+            return $site['hcaptcha']['secret'];
+        }
+    } catch (Exception $e) {}
+    return '';
+}
+// hCaptcha's checkbox challenge has no score to threshold against (unlike
+// reCAPTCHA v3) — same non-losing philosophy as reCAPTCHA v2: a successful
+// verification passes, anything else (no token, bad token, hCaptcha
+// unreachable) is 'allowed_unverified' rather than actively blocking, so a
+// real lead is never lost to a misconfigured or momentarily-down check.
+function cmsVerifyHcaptcha($secret, $token) {
+    $rec = ['at' => date('c'), 'outcome' => '', 'ok' => false, 'reason' => '', 'score' => null, 'tokenReceived' => ($token !== '' && $token !== null)];
+    $finish = function ($outcome, $reason) use (&$rec) {
+        $rec['outcome'] = $outcome; $rec['reason'] = $reason; $rec['ok'] = ($outcome === 'passed');
+        error_log('Fourge hCaptcha: ' . strtoupper($outcome) . ' — ' . $reason);
+        return $rec;
+    };
+    $letThrough = ' The submission was let through so a real lead is not lost — but hCaptcha is NOT protecting this form until this is fixed.';
+    if ($token === '' || $token === null) {
+        return $finish('allowed_unverified', 'No token received from the form — the hCaptcha widget did not load on the page.' . $letThrough);
+    }
+    $ch = curl_init('https://hcaptcha.com/siteverify');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => http_build_query(['secret' => $secret, 'response' => $token]),
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    $res = curl_exec($ch); $curlErr = curl_error($ch);
+    curl_close($ch);
+    if (!$res) return $finish('allowed_unverified', 'No response from hCaptcha siteverify' . ($curlErr ? ' (' . $curlErr . ')' : '') . ' — the server may be blocking outbound HTTPS.' . $letThrough);
+    $data = json_decode($res, true);
+    if (empty($data['success'])) {
+        $codes = isset($data['error-codes']) ? implode(', ', (array)$data['error-codes']) : 'unknown';
+        return $finish('allowed_unverified', 'hCaptcha rejected the verification: ' . $codes . '.' . $letThrough);
+    }
+    return $finish('passed', 'passed');
 }
 
 // Admin diagnostic: report the current reCAPTCHA config + the outcome of the most
@@ -893,6 +969,134 @@ function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl, $form
     return true;
 }
 
+// Look up one form's own definition in data/forms.json by id — the shared
+// lookup behind cmsGhlFormMapping, cmsFormWebhookConfig, the form-password
+// check, and the response-limit/close-date check below.
+function cmsFormById($formId) {
+    if ($formId === '') return null;
+    $forms = json_decode(@file_get_contents(__DIR__ . '/../data/forms.json'), true);
+    if (!is_array($forms)) return null;
+    foreach ($forms as $f) { if (($f['id'] ?? '') === $formId) return $f; }
+    return null;
+}
+// Generic outbound webhook config for one form — its settings.webhookUrl/
+// webhookSecret, or null if the form has none configured.
+function cmsFormWebhookConfig($formId) {
+    $form = cmsFormById($formId);
+    if (!$form) return null;
+    $url = trim((string)($form['settings']['webhookUrl'] ?? ''));
+    if ($url === '') return null;
+    return ['url' => $url, 'secret' => (string)($form['settings']['webhookSecret'] ?? '')];
+}
+// POSTs one submission as JSON to an operator-supplied URL. Guarded by the same
+// https-and-public-host check every other operator-supplied URL in this codebase
+// gets (fourgeTlpUrlOk — see the TLP feed / Fleet Dashboard / custom AI endpoint).
+// When a secret is set, the raw JSON body is HMAC-SHA256 signed the same way
+// GitHub/Stripe webhooks are, so the receiving end can verify it really came from
+// this form and wasn't forged or replayed by a different sender.
+function cmsSendWebhook($url, $secret, $payload) {
+    if (!fourgeTlpUrlOk($url)) return false;
+    $body = json_encode($payload);
+    $headers = ['Content-Type: application/json'];
+    if ($secret !== '') {
+        $headers[] = 'X-Fourge-Signature: sha256=' . hash_hmac('sha256', $body, $secret);
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => $headers,
+        CURLOPT_POSTFIELDS     => $body,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $code >= 200 && $code < 300;
+}
+
+// Returns a user-facing reason this form is closed (past its close date, or
+// at its response cap), or '' if it's open. Checked before reCAPTCHA/hCaptcha
+// in cmsSendForm — no point verifying a captcha for a submission that can't
+// be accepted anyway.
+function cmsFormClosedReason($form) {
+    $s = $form['settings'] ?? [];
+    $closeDate = trim((string)($s['closeDate'] ?? ''));
+    if ($closeDate !== '') {
+        $ts = strtotime($closeDate . ' 23:59:59');
+        if ($ts !== false && time() > $ts) return 'This form is no longer accepting responses.';
+    }
+    $max = (int)($s['maxResponses'] ?? 0);
+    if ($max > 0 && cmsCountEntriesForForm((string)($form['id'] ?? '')) >= $max) {
+        return 'This form has reached its response limit.';
+    }
+    return '';
+}
+function cmsCountEntriesForForm($formId) {
+    $entries = json_decode(@file_get_contents(__DIR__ . '/../data/entries.json'), true);
+    if (!is_array($entries)) return 0;
+    $n = 0;
+    foreach ($entries as $e) { if (($e['formId'] ?? '') === $formId) $n++; }
+    return $n;
+}
+// A submission itself carries the password it was unlocked with (the client
+// only reveals the real form after a successful check_form_password call —
+// see ffCheckFormPassword in admin/index.html), so cmsSendForm can verify it
+// independently. Without this, a password-protected form's real gate would
+// be purely a client-side courtesy: anyone could skip straight to send_form.
+function cmsFormPasswordOk($form, $submitted) {
+    $hash = (string)($form['settings']['password'] ?? '');
+    if ($hash === '') return true;   // not password-protected
+    return $submitted !== '' && password_verify($submitted, $hash);
+}
+// Public: verify a visitor-entered password against a password-protected
+// form's stored hash (bcrypt, same approach as page passwords — see
+// fourgeApiSetPagePassword). A low-stakes gate on who can see/submit a form,
+// not a high-security boundary, so no extra rate-limiting beyond bcrypt's
+// own inherent slowness.
+function fourgeApiCheckFormPassword($body) {
+    $formId = (string)($body['formId'] ?? '');
+    $password = (string)($body['password'] ?? '');
+    $form = cmsFormById($formId);
+    $hash = (string)($form['settings']['password'] ?? '');
+    if ($hash === '') { echo json_encode(['ok' => true]); return; }   // not password-protected — nothing to check
+    if ($password !== '' && password_verify($password, $hash)) {
+        echo json_encode(['ok' => true]);
+    } else {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Incorrect password']);
+    }
+}
+// Public, best-effort view counter feeding the Forms list's analytics — never
+// blocks or errors loudly; a lost increment under concurrent writes is an
+// acceptable tradeoff for not needing file locking on every page view.
+function fourgeApiFormView($body) {
+    $formId = (string)($body['formId'] ?? '');
+    if ($formId === '') { echo json_encode(['ok' => false]); return; }
+    try {
+        $file = __DIR__ . '/../data/form-analytics.json';
+        $data = is_file($file) ? json_decode(file_get_contents($file), true) : [];
+        if (!is_array($data)) $data = [];
+        if (!isset($data[$formId]) || !is_array($data[$formId])) $data[$formId] = ['views' => 0];
+        $data[$formId]['views'] = (int)($data[$formId]['views'] ?? 0) + 1;
+        file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT));
+    } catch (Throwable $e) {}
+    echo json_encode(['ok' => true]);
+}
+// The form builder calls this once when the admin sets/changes a form's
+// password, then saves the returned hash into settings.password itself via
+// the normal saveForm()/write_file flow — so this endpoint only ever hashes,
+// it never touches forms.json (no second write path to conflict with the
+// builder's own full-array save). Requires the same auth the read_file/
+// write_file actions already require (session or the shared API token) —
+// the dispatcher gates that before this function ever runs.
+function fourgeApiHashFormPassword($body) {
+    $password = (string)($body['password'] ?? '');
+    if (strlen($password) < 4) { http_response_code(400); echo json_encode(['error' => 'Password must be at least 4 characters']); return; }
+    echo json_encode(['ok' => true, 'hash' => password_hash($password, PASSWORD_DEFAULT)]);
+}
+
 // Same slug the form renderer uses for input names (admin/index.html slugify()),
 // so submitted keys — slug(label)-<first 4 of field id> — can be matched back to
 // the form's field definitions here on the server.
@@ -907,10 +1111,7 @@ function cmsSlug($s) {
 // field (firstName/email/companyName/…) or a custom field (by id/key). Hidden
 // CRM fields the form was matched with (settings.ghlAuto) are sent as constants.
 function cmsGhlFormMapping($formId, $fields) {
-    $forms = json_decode(@file_get_contents(__DIR__ . '/../data/forms.json'), true);
-    if (!is_array($forms)) return null;
-    $form = null;
-    foreach ($forms as $f) { if (($f['id'] ?? '') === $formId) { $form = $f; break; } }
+    $form = cmsFormById($formId);
     if (!$form) return null;
     return cmsGhlApplyMapping($form, $fields);
 }
@@ -1068,14 +1269,18 @@ function cmsGhMirrorCfg() {
     return [$repo, $branch, $token];
 }
 // One GitHub REST call. Returns [httpCode, decodedJson|null, curlError].
-function cmsGhApi($method, $url, $token, $payload = null) {
+// $timeout grows with the payload (a 20 MB image is a ~27 MB base64 body, and
+// a shared host can take a while to push that); the connect phase is always
+// capped so an unreachable GitHub costs a save seconds, not the full budget.
+function cmsGhApi($method, $url, $token, $payload = null, $timeout = 25) {
     $ch = curl_init($url);
     $opts = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CUSTOMREQUEST  => $method,
         CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $token, 'Accept: application/vnd.github+json', 'User-Agent: FourgeCMS', 'X-GitHub-Api-Version: 2022-11-28'],
         CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_TIMEOUT        => 25,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT        => max(5, (int)$timeout),
     ];
     if ($payload !== null) $opts[CURLOPT_POSTFIELDS] = json_encode($payload);
     curl_setopt_array($ch, $opts);
@@ -1083,42 +1288,195 @@ function cmsGhApi($method, $url, $token, $payload = null) {
     curl_close($ch);
     return [$code, $res ? json_decode($res, true) : null, $err];
 }
+
+// ── What belongs in the site's repo ──────────────────────────────────
+// Everything under the web root that IS the site — pages, data/*.json, images,
+// video, fonts, documents, .htaccess files — minus what must never land in a
+// repo:
+//  • .git internals, and the CMS engine itself (admin/): api.php can carry
+//    inline secrets on installs without config.secret.php, and the engine is
+//    updated from the FoundryCMS template repo by the updater anyway, so a copy
+//    in the site's own repo would only ever be a stale fork;
+//  • credentials and PII: users.json (password hashes), entries.json and
+//    data/uploads/ (form submissions and their attachments — once in git
+//    history they are there forever), .htpasswd, the databases (and their
+//    WAL/SHM siblings), any dot-file or dot-folder other than .htaccess and
+//    .well-known (.env, .ga-token.json, .DS_Store, .github …);
+//  • pure churn: the form-analytics counter, the reCAPTCHA debug log, logs,
+//    backups and temp files.
+const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
+function cmsGhSkipDir($relDir) {
+    $relDir = trim(str_replace('\\', '/', (string)$relDir), '/');
+    if ($relDir === '') return false;
+    foreach (FOURGE_GH_SKIP_DIRS as $d) { if (strcasecmp($relDir, $d) === 0) return true; }
+    $seg = basename($relDir);
+    return $seg === '' || $seg === '.' || $seg === '..' || ($seg[0] === '.' && $seg !== '.well-known');
+}
+function cmsGhShouldMirror($rel) {
+    $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+    if ($rel === '' || strpos($rel, "\0") !== false || substr($rel, -1) === '/') return false;
+    $parts = explode('/', $rel);
+    $base  = array_pop($parts);
+    $dir   = '';
+    foreach ($parts as $seg) {
+        $dir = ($dir === '' ? $seg : $dir . '/' . $seg);
+        if ($seg === '' || $seg === '.' || $seg === '..' || cmsGhSkipDir($dir)) return false;
+    }
+    $lb = strtolower($base);
+    if ($lb === '' || $lb === '.' || $lb === '..') return false;
+    if ($lb[0] === '.' && $lb !== '.htaccess') return false;
+    if (preg_match('~\.(db|sqlite|sqlite3|db-wal|db-shm|sqlite-wal|sqlite-shm|sqlite3-wal|sqlite3-shm|log|bak|tmp|swp)$~', $lb)) return false;
+    if (in_array($lb, ['error_log', 'php_errorlog', 'thumbs.db', 'config.secret.php', 'ga-service-account.json'], true)) return false;
+    if (preg_match('~^data/(users|entries|form-analytics|recaptcha-debug)\.json$~i', $rel)) return false;
+    return true;
+}
+// A file's path relative to the web root, forward-slashed — the path it has in the repo.
+function cmsGhRelPath($absPath) {
+    $abs = realpath($absPath) ?: (string)$absPath;
+    if (strpos($abs, PUBLIC_HTML) === 0) $abs = substr($abs, strlen(PUBLIC_HTML));
+    return ltrim(str_replace('\\', '/', $abs), '/');
+}
+// Biggest file the mirror will push. GitHub's Contents API stops at 100 MB, but
+// a PHP request has to hold the file, its base64 form and the JSON body at once,
+// so this also bows to memory_limit. 20 MB covers every image, PDF and short
+// clip the media library realistically stores; anything bigger stays server-only
+// and is reported as skipped rather than failing the save.
+const FOURGE_GH_MAX_BYTES = 20971520;
+function cmsGhMaxBytes() {
+    $ml = trim((string)ini_get('memory_limit'));
+    if ($ml === '' || $ml === '-1') return FOURGE_GH_MAX_BYTES;
+    $n = (float)$ml; $u = strtolower(substr($ml, -1));
+    if ($u === 'g') $n *= 1073741824; elseif ($u === 'm') $n *= 1048576; elseif ($u === 'k') $n *= 1024;
+    $room = (int)(($n - memory_get_usage(true)) / 4);
+    return max(1048576, min(FOURGE_GH_MAX_BYTES, $room));
+}
+// Local git blob id of a byte string — the very sha GitHub reports for a file,
+// so "does the repo already hold exactly these bytes?" needs no download.
+function cmsGhBlobSha($bytes) { return sha1('blob ' . strlen($bytes) . "\0" . $bytes); }
+function cmsGhContentsUrl($repo, $rel) {
+    $enc = ($rel === '') ? '' : '/' . implode('/', array_map('rawurlencode', explode('/', $rel)));
+    return 'https://api.github.com/repos/' . $repo . '/contents' . $enc;
+}
+function cmsGhFail($what, $c, $d, $e) {
+    return ['ok' => false, 'reason' => 'github', 'error' => $what . ' ' . (int)$c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))];
+}
+// The repo's blob sha for a path: a sha string, '' when the file isn't in the
+// repo, or false when GitHub couldn't be asked. The per-file lookup stops at
+// 1 MB (GitHub answers 403 "too large"); the parent folder's listing carries
+// every entry's sha whatever its size, so that is the fallback.
+function cmsGhRemoteSha($repo, $branch, $token, $rel) {
+    list($c, $d) = cmsGhApi('GET', cmsGhContentsUrl($repo, $rel) . '?ref=' . rawurlencode($branch), $token);
+    if ($c === 200 && isset($d['sha'])) return (string)$d['sha'];
+    if ($c === 404) return '';
+    if ($c === 403) {
+        $dir = dirname($rel); if ($dir === '.' || $dir === '/') $dir = '';
+        list($lc, $ld) = cmsGhApi('GET', cmsGhContentsUrl($repo, $dir) . '?ref=' . rawurlencode($branch), $token);
+        if ($lc === 200 && is_array($ld)) {
+            foreach ($ld as $ent) { if (is_array($ent) && ($ent['path'] ?? '') === $rel) return (string)($ent['sha'] ?? ''); }
+            return '';
+        }
+        if ($lc === 404) return '';
+    }
+    return false;
+}
+// Every blob in the branch as path => sha, from one call — or null when GitHub
+// couldn't give a complete listing (callers then look files up one at a time).
+// A repo with no commits yet has no tree (404/409): nothing is there, which is
+// an honest empty map.
+function cmsGhFetchTree($repo, $branch, $token) {
+    list($c, $d) = cmsGhApi('GET', 'https://api.github.com/repos/' . $repo . '/git/trees/' . rawurlencode($branch) . '?recursive=1', $token, null, 40);
+    if ($c === 404 || $c === 409) return [];
+    if ($c !== 200 || !is_array($d) || !empty($d['truncated']) || !isset($d['tree']) || !is_array($d['tree'])) return null;
+    $map = [];
+    foreach ($d['tree'] as $ent) { if (($ent['type'] ?? '') === 'blob' && isset($ent['path'], $ent['sha'])) $map[$ent['path']] = (string)$ent['sha']; }
+    return $map;
+}
+// Mirror one file's bytes into the repo — text or binary alike. Same result
+// shape the gh_mirror action has always returned: ['ok'=>true],
+// ['ok'=>true,'skipped'=>true] (the repo already holds these exact bytes) or
+// ['ok'=>false,'reason'=>…,'error'=>…]. $cfg lets a bulk run reuse one
+// cmsGhMirrorCfg() lookup; $remoteSha (a blob sha, or '' for "known absent")
+// lets it reuse one tree listing instead of a GET per file.
+function cmsGhMirrorBytes($rel, $bytes, $msg = '', $cfg = null, $remoteSha = null) {
+    $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+    $bytes = (string)$bytes;
+    if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'bad_path', 'error' => 'That file can’t be mirrored.'];
+    $max = cmsGhMaxBytes();
+    if (strlen($bytes) > $max) return ['ok' => false, 'reason' => 'too_big', 'error' => 'Too big to mirror (' . round(strlen($bytes) / 1048576, 1) . ' MB — the limit is ' . round($max / 1048576) . ' MB)'];
+    list($repo, $branch, $token) = is_array($cfg) ? $cfg : cmsGhMirrorCfg();
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) return ['ok' => false, 'reason' => 'no_repo'];
+    if ($token === '') return ['ok' => false, 'reason' => 'no_token'];
+    $msg = trim((string)$msg); if ($msg === '') $msg = 'Fourge: update ' . $rel;
+    if (!is_string($remoteSha)) {
+        $remoteSha = cmsGhRemoteSha($repo, $branch, $token, $rel);
+        if ($remoteSha === false) return ['ok' => false, 'reason' => 'github', 'error' => 'GitHub could not be reached to check ' . $rel];
+    }
+    $local = cmsGhBlobSha($bytes);
+    if ($remoteSha !== '' && $remoteSha === $local) return ['ok' => true, 'skipped' => true];
+    $url = cmsGhContentsUrl($repo, $rel);
+    $payload = ['message' => $msg, 'content' => base64_encode($bytes), 'branch' => $branch];
+    if ($remoteSha !== '') $payload['sha'] = $remoteSha;
+    $timeout = 25 + (int)ceil(strlen($bytes) / 262144);   // +1 s per 256 KB
+    list($c, $d, $e) = cmsGhApi('PUT', $url, $token, $payload, $timeout);
+    if ($c === 409 || $c === 422) {
+        // The sha we held was stale (someone pushed in between), or a tree
+        // listing said "absent" and the file is there after all: look it up
+        // fresh and try once more.
+        $fresh = cmsGhRemoteSha($repo, $branch, $token, $rel);
+        if (is_string($fresh) && $fresh !== $remoteSha) {
+            if ($fresh !== '' && $fresh === $local) return ['ok' => true, 'skipped' => true];
+            if ($fresh === '') unset($payload['sha']); else $payload['sha'] = $fresh;
+            list($c, $d, $e) = cmsGhApi('PUT', $url, $token, $payload, $timeout);
+        }
+    }
+    if ($c >= 200 && $c < 300) return ['ok' => true];
+    error_log('Fourge GitHub mirror failed for ' . $rel . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
+    return cmsGhFail('GitHub returned', $c, $d, $e);
+}
+function cmsGhDeletePath($rel, $msg = '', $cfg = null) {
+    $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+    if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'bad_path', 'error' => 'That file can’t be mirrored.'];
+    list($repo, $branch, $token) = is_array($cfg) ? $cfg : cmsGhMirrorCfg();
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) return ['ok' => false, 'reason' => 'no_repo'];
+    if ($token === '') return ['ok' => false, 'reason' => 'no_token'];
+    $msg = trim((string)$msg); if ($msg === '') $msg = 'Fourge: delete ' . $rel;
+    $sha = cmsGhRemoteSha($repo, $branch, $token, $rel);
+    if ($sha === false) return ['ok' => false, 'reason' => 'github', 'error' => 'GitHub could not be reached to check ' . $rel];
+    if ($sha === '') return ['ok' => true, 'skipped' => 'absent'];   // nothing to prune
+    list($c, $d, $e) = cmsGhApi('DELETE', cmsGhContentsUrl($repo, $rel), $token, ['message' => $msg, 'sha' => $sha, 'branch' => $branch]);
+    if ($c >= 200 && $c < 300) return ['ok' => true];
+    error_log('Fourge GitHub delete failed for ' . $rel . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
+    return cmsGhFail('GitHub delete failed', $c, $d, $e);
+}
+// The write_file / upload / delete_file hooks. GitHub trouble must never touch
+// a save that has already succeeded on disk: every outcome comes back as data
+// in the response's `gh` field, and a path the repo must not hold reports
+// 'excluded' (so the engine updater writing admin/ is a quiet no-op here).
+function cmsGhAfterWrite($rel, $bytes) {
+    try {
+        $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+        if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'excluded'];
+        return cmsGhMirrorBytes($rel, $bytes, 'Fourge: update ' . $rel);
+    } catch (Throwable $e) { return ['ok' => false, 'reason' => 'error', 'error' => $e->getMessage()]; }
+}
+function cmsGhAfterDelete($rel) {
+    try {
+        $rel = str_replace('\\', '/', ltrim((string)$rel, '/'));
+        if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'excluded'];
+        return cmsGhDeletePath($rel, 'Fourge: delete ' . $rel);
+    } catch (Throwable $e) { return ['ok' => false, 'reason' => 'error', 'error' => $e->getMessage()]; }
+}
 function fourgeApiGhMirror($me, $body) {
-    // Any signed-in user: mirroring rides along with saving. Path guards keep it
-    // to real site files (no traversal, never the secrets file or .git internals).
+    // Any signed-in user: mirroring rides along with saving. cmsGhShouldMirror()
+    // keeps it to real site files — no traversal, and never .git internals, the
+    // engine, credentials or form PII (see the policy above).
     $path = str_replace('\\', '/', (string)($body['path'] ?? ''));
     $del  = !empty($body['delete']);
-    $msg  = trim((string)($body['message'] ?? '')); if ($msg === '') $msg = 'Fourge: update ' . $path;
-    if ($path === '' || strpos($path, "\0") !== false || $path[0] === '/'
-        || preg_match('~(^|/)\.\.(/|$)~', $path) || preg_match('~(^|/)\.git(/|$)~i', $path)
-        || stripos($path, 'admin/config.secret') === 0) {
+    $msg  = trim((string)($body['message'] ?? ''));
+    if ($path === '' || $path[0] === '/' || !cmsGhShouldMirror($path)) {
         http_response_code(400); echo json_encode(['ok' => false, 'reason' => 'bad_path', 'error' => 'That file can’t be mirrored.']); return;
     }
-    list($repo, $branch, $token) = cmsGhMirrorCfg();
-    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo']); return; }
-    if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token']); return; }
-    $base = 'https://api.github.com/repos/' . $repo . '/contents/' . implode('/', array_map('rawurlencode', explode('/', $path)));
-    list($gc, $gd) = cmsGhApi('GET', $base . '?ref=' . rawurlencode($branch), $token);
-    $sha = ($gc === 200 && isset($gd['sha'])) ? $gd['sha'] : null;
-    if ($del) {
-        if (!$sha) { echo json_encode(['ok' => true, 'skipped' => 'absent']); return; }   // nothing to prune
-        list($c, $d, $e) = cmsGhApi('DELETE', $base, $token, ['message' => $msg, 'sha' => $sha, 'branch' => $branch]);
-        if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
-        echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub delete failed (' . $c . ')' . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]); return;
-    }
-    $newContent = (string)($body['content'] ?? '');
-    // The GET above already fetched the current blob — compare it before writing
-    // so a recurring bulk sync (e.g. every engine update) doesn't create a
-    // stream of no-op commits for files that haven't actually changed.
-    if ($sha && $gc === 200 && isset($gd['content']) && base64_decode(str_replace("\n", '', $gd['content'])) === $newContent) {
-        echo json_encode(['ok' => true, 'skipped' => true]); return;
-    }
-    $payload = ['message' => $msg, 'content' => base64_encode($newContent), 'branch' => $branch];
-    if ($sha) $payload['sha'] = $sha;
-    list($c, $d, $e) = cmsGhApi('PUT', $base, $token, $payload);
-    if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
-    error_log('Fourge GitHub mirror failed for ' . $path . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
-    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]);
+    echo json_encode($del ? cmsGhDeletePath($path, $msg) : cmsGhMirrorBytes($path, (string)($body['content'] ?? ''), $msg));
 }
 // A client site's own repo is source control for its business content — no
 // reason for it to be publicly readable. Idempotent: a GET first, so an
@@ -1133,11 +1491,75 @@ function fourgeApiGhSetPrivate($me, $body) {
     $base = 'https://api.github.com/repos/' . $repo;
     list($gc, $gd) = cmsGhApi('GET', $base, $token);
     if ($gc === 200 && !empty($gd['private'])) { echo json_encode(['ok' => true, 'already' => true]); return; }
-    if ($gc !== 200) { echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $gc . ' looking up the repo']); return; }
+    if ($gc !== 200) {
+        // 404 here is almost never "no such repo": GitHub answers 404 for a
+        // private repo the token can't see, so say what to check.
+        $hint = ($gc === 404) ? ' — check the repo name (owner/name) in Settings, and that this token was granted access to that repository' : '';
+        echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $gc . ' looking up the repo' . $hint]); return;
+    }
     list($c, $d, $e) = cmsGhApi('PATCH', $base, $token, ['private' => true]);
     if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
     error_log('Fourge GitHub set-private failed for ' . $repo . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
-    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))]);
+    // Pushing files needs only "Contents: write"; flipping visibility needs repo
+    // administration rights, which most tokens made for mirroring don't carry.
+    $hint = ($c === 403 || $c === 404) ? ' The token needs repository administration rights to change visibility: "Administration: Read and write" on a fine-grained token, or the full "repo" scope on a classic one.' : '';
+    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : '')) . $hint]);
+}
+// Every file under the web root that belongs in the repo, as sorted relative
+// paths — the same policy cmsGhShouldMirror() applies to single writes, with
+// whole folders pruned early so .git/ and admin/ are never even walked.
+// Symlinks are skipped: a link out of the web root must not pull outside files in.
+function cmsGhListSiteFiles() {
+    $root = PUBLIC_HTML; $out = [];
+    $walk = function ($dir, $relDir) use (&$walk, &$out) {
+        $items = @scandir($dir); if (!$items) return;
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') continue;
+            $full = $dir . '/' . $item; $rel = ($relDir === '' ? $item : $relDir . '/' . $item);
+            if (is_link($full)) continue;
+            if (is_dir($full)) { if (!cmsGhSkipDir($rel)) $walk($full, $rel); continue; }
+            if (is_file($full) && cmsGhShouldMirror($rel)) $out[] = $rel;
+        }
+    };
+    $walk($root, '');
+    sort($out, SORT_STRING);
+    return $out;
+}
+// Push EVERY site file to the repo, from the server, in time-boxed batches: the
+// client calls with {offset} and keeps calling while `next` isn't null. One
+// recursive tree listing per call gives every remote sha at once, so a file the
+// repo already holds byte-for-byte costs nothing — a repeat run over a caught-up
+// site is a few GETs and no commits. Admin+ only, like gh_set_private.
+// Response: {ok,total,done,next,pushed,upToDate,failed,skipped,errors}.
+function fourgeApiGhSyncAll($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin access required']); return; }
+    $cfg = cmsGhMirrorCfg(); list($repo, $branch, $token) = $cfg;
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo']); return; }
+    if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token']); return; }
+    @set_time_limit(90);
+    $files  = cmsGhListSiteFiles(); $total = count($files);
+    $offset = max(0, (int)($body['offset'] ?? 0));
+    $limit  = min(100, max(1, (int)($body['batch'] ?? 50)));
+    $budget = 18.0; $t0 = microtime(true);
+    $tree   = ($offset < $total) ? cmsGhFetchTree($repo, $branch, $token) : [];
+    $max    = cmsGhMaxBytes();
+    $pushed = 0; $upToDate = 0; $failed = 0; $skipped = 0; $errors = []; $i = $offset;
+    for (; $i < $total && $i < $offset + $limit; $i++) {
+        if ($i > $offset && (microtime(true) - $t0) > $budget) break;   // the client continues from `next`
+        $rel  = $files[$i];
+        $size = @filesize(PUBLIC_HTML . '/' . $rel);
+        if ($size === false) { $skipped++; continue; }
+        if ($size > $max) { $skipped++; if (count($errors) < 12) $errors[] = $rel . ': too big to mirror (' . round($size / 1048576, 1) . ' MB)'; continue; }
+        $bytes = @file_get_contents(PUBLIC_HTML . '/' . $rel);
+        if ($bytes === false) { $skipped++; continue; }
+        $remote = ($tree === null) ? null : ($tree[$rel] ?? '');
+        $r = cmsGhMirrorBytes($rel, $bytes, 'Fourge: sync ' . $rel . ' to GitHub', $cfg, $remote);
+        unset($bytes);
+        if (!empty($r['ok'])) { if (!empty($r['skipped'])) $upToDate++; else $pushed++; }
+        else { $failed++; if (count($errors) < 12) $errors[] = $rel . ': ' . ($r['error'] ?? $r['reason'] ?? 'failed'); }
+    }
+    echo json_encode(['ok' => true, 'total' => $total, 'done' => $i, 'next' => ($i < $total ? $i : null),
+                      'pushed' => $pushed, 'upToDate' => $upToDate, 'failed' => $failed, 'skipped' => $skipped, 'errors' => $errors]);
 }
 
 // Validate token + location with a lightweight read. Returns [bool ok, string message].
@@ -1413,14 +1835,155 @@ function cmsSmtpFrom($mgFrom) {
     return [$fromEmail, $fromName];
 }
 
+// data/uploads/ holds files visitors attach to a form submission. Never
+// execute anything in it (a renamed/disguised script must stay inert even if
+// a hosting config ignores php_flag) and never let it be browsed/listed —
+// each file's URL is an unguessable token, not something to enumerate.
+function fourgeWriteUploadsHtaccess() {
+    $dir = PUBLIC_HTML . '/data/uploads';
+    if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+    $htPath   = $dir . '/.htaccess';
+    $existing = is_file($htPath) ? (string)file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Uploads Guard';
+    $end   = '# END Fourge Uploads Guard';
+    $rules = <<<'HT'
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<FilesMatch "\.(php\d?|phtml|phar|cgi|pl|py|sh|exe)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+Options -Indexes
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+// data/entries.json holds every submitted lead (name/email/phone/message, and
+// now file-upload paths) — unlike pages/posts/site.json, no legitimate visitor
+// page ever fetches it, so (like users.json) it has no business being
+// publicly readable. Same managed-marker splice as fourgeWriteAdminHtaccess.
+function fourgeWriteEntriesHtaccess() {
+    $dir = PUBLIC_HTML . '/data';
+    if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+    $htPath   = $dir . '/.htaccess';
+    $existing = is_file($htPath) ? (string)file_get_contents($htPath) : '';
+    $begin = '# BEGIN Fourge Entries Guard';
+    $end   = '# END Fourge Entries Guard';
+    $rules = <<<'HT'
+<FilesMatch "^entries\.json$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+HT;
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $existing = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    } else {
+        $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    }
+    return file_put_contents($htPath, $existing) !== false;
+}
+// Extensions allowed through a form's File Upload field — common document/
+// image types a lead-gen form realistically needs (resumes, photos, quotes).
+// Anything else (scripts, executables, disguised extensions) is refused.
+const FOURGE_UPLOAD_ALLOWED_EXT = ['pdf','doc','docx','xls','xlsx','ppt','pptx','png','jpg','jpeg','gif','webp','txt','csv','zip'];
+const FOURGE_UPLOAD_MAX_BYTES = 10485760; // 10MB per file
+// Moves one $_FILES entry into data/uploads/<formId>/, validated and safely
+// renamed (random token + sanitized basename — never the caller's own
+// filename verbatim). Returns a site-relative URL on success, or null on any
+// failure (bad extension, too large, upload error); the caller just omits the
+// field rather than failing the whole submission over one bad attachment.
+function fourgeStoreFormUpload($formId, $file) {
+    if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) return null;
+    if (!is_uploaded_file($file['tmp_name'] ?? '')) return null;
+    $size = (int)($file['size'] ?? 0);
+    if ($size <= 0 || $size > FOURGE_UPLOAD_MAX_BYTES) return null;
+    $orig = (string)($file['name'] ?? 'file');
+    $ext  = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+    if (!in_array($ext, FOURGE_UPLOAD_ALLOWED_EXT, true)) return null;
+    $base = trim((string)preg_replace('~[^A-Za-z0-9_-]+~', '-', pathinfo($orig, PATHINFO_FILENAME)), '-');
+    if ($base === '') $base = 'file';
+    $base = substr($base, 0, 60);
+    $formSlug = trim((string)preg_replace('~[^A-Za-z0-9_-]+~', '-', (string)$formId), '-');
+    if ($formSlug === '') $formSlug = 'form';
+    $dir = PUBLIC_HTML . '/data/uploads/' . $formSlug;
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $name = bin2hex(random_bytes(8)) . '-' . $base . '.' . $ext;
+    if (!move_uploaded_file($file['tmp_name'], $dir . '/' . $name)) return null;
+    return 'data/uploads/' . $formSlug . '/' . $name;
+}
 function cmsSendForm($body) {
-    $mg      = cmsMailgun();
+    $mg = cmsMailgun();
+    // A submission carrying a file upload arrives as multipart/form-data (see
+    // ffSubmit's hasFile branch) instead of JSON, so $body is empty here —
+    // fall back to $_POST/$_FILES, the same way $action already does above
+    // when there's no JSON body to read.
+    if (empty($body) && (!empty($_POST) || !empty($_FILES))) {
+        $formId  = (string)($_POST['formId']  ?? '');
+        $subject = (string)($_POST['subject'] ?? 'New Form Submission');
+        $toEmail = (string)($_POST['to']      ?? $mg['notify']);
+        $siteUrl = (string)($_POST['siteUrl'] ?? '');
+        $rcToken = (string)($_POST['recaptcha'] ?? '');
+        $hcToken = (string)($_POST['hcaptcha'] ?? '');
+        $formPassword = (string)($_POST['formPassword'] ?? '');
+        $metaKeys = ['action', 'formId', 'subject', 'to', 'siteUrl', 'recaptcha', 'hcaptcha', 'formPassword'];
+        $fields = [];
+        foreach ($_POST as $k => $v) {
+            if (in_array($k, $metaKeys, true)) continue;
+            $fields[$k] = is_array($v) ? implode(', ', $v) : $v;
+        }
+        foreach ($_FILES as $k => $file) {
+            $url = fourgeStoreFormUpload($formId, $file);
+            if ($url) $fields[$k] = $url;
+        }
+    } else {
     $fields  = $body['fields']  ?? [];
     $subject = $body['subject'] ?? 'New Form Submission';
     $toEmail = $body['to']      ?? $mg['notify'];
     $siteUrl = $body['siteUrl'] ?? '';
     $formId  = $body['formId']  ?? '';
     $rcToken = $body['recaptcha'] ?? '';
+    $hcToken = $body['hcaptcha'] ?? '';
+    $formPassword = $body['formPassword'] ?? '';
+    }
+
+    // Response limit / close date / password protection — checked first, since
+    // there's no point verifying a captcha (below) for a submission that can't
+    // be accepted anyway. $formDef is looked up again later by
+    // cmsFormWebhookConfig()/cmsGhlFormMapping(); that's an accepted small
+    // redundancy rather than threading one more parameter through both.
+    $formDef = cmsFormById($formId);
+    if ($formDef) {
+        $closedReason = cmsFormClosedReason($formDef);
+        if ($closedReason !== '') {
+            http_response_code(403);
+            echo json_encode(['error' => $closedReason]); return;
+        }
+        if (!cmsFormPasswordOk($formDef, $formPassword)) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Incorrect password.']); return;
+        }
+    }
 
     // reCAPTCHA (only when a secret is configured in site.json). The check ALWAYS
     // runs so its outcome is recorded for the diagnostic, but a submission is blocked
@@ -1436,6 +1999,16 @@ function cmsSendForm($body) {
             echo json_encode(['error' => 'Your submission looked automated and was blocked. Please try again.']); return;
         }
     }
+    // hCaptcha: an alternative to reCAPTCHA, same non-losing philosophy — but it
+    // has no score to threshold against, so (like reCAPTCHA v2) it never actively
+    // blocks, only verifies-and-logs. If reCAPTCHA already produced a verdict above,
+    // that one stays authoritative on the stored entry; hCaptcha's only fills in
+    // when reCAPTCHA isn't configured.
+    $hcSecret = cmsHcaptchaSecret();
+    if ($hcSecret) {
+        $hcVerdict = cmsVerifyHcaptcha($hcSecret, $hcToken);
+        if (!$rcVerdict) $rcVerdict = $hcVerdict;
+    }
 
     // Store the submission in data/entries.json (best-effort, non-fatal). The
     // verdict rides along so the score is on the entry itself, not just a
@@ -1445,6 +2018,19 @@ function cmsSendForm($body) {
     // Push into GoHighLevel as a lead (best-effort; never blocks the form or email)
     $ghl = cmsGhlConfig();
     if ($ghl) { try { cmsGhlPushLead($ghl['token'], $ghl['locationId'], $fields, $subject, $siteUrl, $formId); } catch (Throwable $e) { /* non-fatal */ } }
+
+    // Generic outbound webhook: a per-form URL (Settings → this form → Outbound
+    // Webhook) gets the raw submission as signed JSON — Zapier/Make/Slack/your own
+    // endpoint, the operator's choice. Best-effort; never blocks the form or email.
+    try {
+        $webhook = cmsFormWebhookConfig($formId);
+        if ($webhook && $webhook['url']) {
+            cmsSendWebhook($webhook['url'], $webhook['secret'], [
+                'formId' => $formId, 'subject' => $subject, 'siteUrl' => $siteUrl,
+                'fields' => $fields, 'date' => date('c'),
+            ]);
+        }
+    } catch (Throwable $e) { /* non-fatal */ }
 
     if (!$toEmail) {
         // Entry already stored; report success even without email config
@@ -2313,8 +2899,9 @@ HT;
 // branding story, broken pages the day the source reorganizes its files, and
 // a per-pageview dependency on someone else's server. Only files ON the sync
 // source's own host are fetched (same trust boundary as posts.json itself;
-// a third-party CDN URL inside a post is left alone), redirects are never
-// followed (same rule as the feed fetch), and a failed download degrades to
+// a third-party CDN URL inside a post is left alone), the download itself never
+// follows a redirect — it runs on the origin the feed fetch already resolved, so
+// a www-canonical source works — and a failed download degrades to
 // the absolute source URL so the post still renders.
 function fourgeWriteBlogSyncApiHtaccess() {
     $htPath   = PUBLIC_HTML . '/.htaccess';
@@ -2362,38 +2949,116 @@ function fourgeBlogSyncAuthorized($me, $body) {
     if ($stored === '') return false;
     return hash_equals($stored, $tok);
 }
-// Network half: fetch the source site's posts.json and keep only what its own
-// blog runtime would treat as live right now (published, or scheduled with a
-// publishAt that has already passed) — the exact same rule loadBlog() uses.
-function fourgeBlogSyncFetchRemotePosts($sourceUrl) {
+// Same site? The source is configured as an origin (https://44idigital.com), and
+// many sites 301 their apex to www. (or back). Following that one hop is the
+// difference between a working sync and "could not reach the source blog" — but a
+// redirect to any OTHER host is refused: the SSRF guard only vetted the configured
+// one, and a look-alike suffix (44idigital.com.evil.example) is not the same site.
+function fourgeBlogSyncSameSite($hostA, $hostB) {
+    $a = strtolower(preg_replace('~^www\.~i', '', trim((string)$hostA)));
+    $b = strtolower(preg_replace('~^www\.~i', '', trim((string)$hostB)));
+    return $a !== '' && $a === $b;
+}
+// Network half: fetch <source>/data/posts.json, following up to 4 same-site https
+// redirects (apex ↔ www), and keep only what the source's own blog runtime would
+// show right now (published, or scheduled with a publishAt that has passed — the
+// exact rule loadBlog() uses). Returns
+//   ['ok'=>true,  'posts'=>[…], 'base'=>'https://www.example.com']   the origin that actually served the list
+//   ['ok'=>false, 'error'=>'why, in plain words', 'base'=>…]          for lastResult / "Check now"
+function fourgeBlogSyncFetchRemote($sourceUrl) {
     $sourceUrl = rtrim(trim((string)$sourceUrl), '/');
-    if ($sourceUrl === '' || !fourgeTlpUrlOk($sourceUrl)) return null;
-    $ch = curl_init($sourceUrl . '/data/posts.json');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_FOLLOWLOCATION => false,   // a redirect could aim this at a different host
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
-        CURLOPT_USERAGENT => 'FourgeCMS Blog Sync',
-    ]);
-    $raw  = curl_exec($ch);
-    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if ($code !== 200 || $raw === false) return null;
-    $posts = json_decode((string)$raw, true);
-    if (!is_array($posts)) return null;
-
-    $now = time();
-    $live = [];
-    foreach ($posts as $p) {
-        if (!is_array($p) || empty($p['id'])) continue;
-        if (!empty($p['published'])) { $live[] = $p; continue; }
-        $publishAt = $p['publishAt'] ?? null;
-        if ($publishAt) {
-            $t = strtotime((string)$publishAt);
-            if ($t !== false && $t <= $now) $live[] = $p;
+    $p = @parse_url($sourceUrl);
+    if ($sourceUrl === '' || !$p || empty($p['host'])) return ['ok' => false, 'error' => 'no source address is configured', 'base' => ''];
+    if (($p['scheme'] ?? '') !== 'https') return ['ok' => false, 'error' => 'the source address must start with https://', 'base' => $sourceUrl];
+    if (!fourgeTlpUrlOk($sourceUrl)) return ['ok' => false, 'error' => 'the source address is not one this server is allowed to fetch', 'base' => $sourceUrl];
+    $origHost = (string)$p['host'];
+    $base = $sourceUrl;
+    $url  = $sourceUrl . '/data/posts.json';
+    for ($hop = 0; $hop <= 4; $hop++) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_FOLLOWLOCATION => false,   // every hop is vetted by hand below
+            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+            CURLOPT_USERAGENT => 'FourgeCMS Blog Sync',
+        ]);
+        $raw  = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $loc  = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+        $err  = (string)curl_error($ch);
+        curl_close($ch);
+        if ($code >= 300 && $code < 400) {
+            if ($loc === '') return ['ok' => false, 'error' => 'the source redirected (HTTP ' . $code . ') without saying where', 'base' => $base];
+            $lp = @parse_url($loc);
+            if ($lp && empty($lp['host'])) {   // a relative Location — resolve against the address just fetched
+                $cur = @parse_url($url);
+                $loc = ($cur['scheme'] ?? 'https') . '://' . ($cur['host'] ?? $origHost) . (isset($cur['port']) ? ':' . $cur['port'] : '') . (substr($loc, 0, 1) === '/' ? $loc : '/' . $loc);
+                $lp  = @parse_url($loc);
+            }
+            if (!$lp || empty($lp['host'])) return ['ok' => false, 'error' => 'the source redirected to an address that could not be understood (' . $loc . ')', 'base' => $base];
+            if (($lp['scheme'] ?? '') !== 'https') return ['ok' => false, 'error' => 'the source redirected to a non-https address (' . $loc . ')', 'base' => $base];
+            if (!fourgeBlogSyncSameSite($origHost, $lp['host'])) return ['ok' => false, 'error' => 'the source redirected to a different site (https://' . $lp['host'] . ') — if that is the right address, use it as the source', 'base' => $base];
+            if (!fourgeTlpUrlOk($loc)) return ['ok' => false, 'error' => 'the source redirected to an address this server is not allowed to fetch', 'base' => $base];
+            $url  = $loc;
+            $base = 'https://' . $lp['host'] . (isset($lp['port']) ? ':' . $lp['port'] : '');
+            continue;
+        }
+        if ($code === 200 && $raw !== false) {
+            $data = json_decode((string)$raw, true);
+            if (is_array($data) && isset($data['posts']) && is_array($data['posts'])) $data = $data['posts'];   // a {posts:[…]} wrapper is fine too
+            $isList = is_array($data) && ($data === [] || array_keys($data) === range(0, count($data) - 1));
+            if (!$isList) return ['ok' => false, 'error' => $base . '/data/posts.json is not a list of posts', 'base' => $base];
+            $now = time(); $live = [];
+            foreach ($data as $post) {
+                if (!is_array($post) || empty($post['id'])) continue;
+                if (!empty($post['published'])) { $live[] = $post; continue; }
+                $publishAt = $post['publishAt'] ?? null;
+                if ($publishAt) {
+                    $t = strtotime((string)$publishAt);
+                    if ($t !== false && $t <= $now) $live[] = $post;
+                }
+            }
+            return ['ok' => true, 'posts' => $live, 'base' => $base];
+        }
+        if ($code === 0) return ['ok' => false, 'error' => 'could not connect to ' . $base . ($err !== '' ? ' (' . $err . ')' : ''), 'base' => $base];
+        return ['ok' => false, 'error' => 'HTTP ' . $code . ' for ' . $base . '/data/posts.json' . ($code === 404 ? ' — is the source a Fourge site with a blog?' : ''), 'base' => $base];
+    }
+    return ['ok' => false, 'error' => 'the source redirected too many times', 'base' => $base];
+}
+// The older shape (the live post list, or null): kept for callers and tests.
+function fourgeBlogSyncFetchRemotePosts($sourceUrl) {
+    $r = fourgeBlogSyncFetchRemote($sourceUrl);
+    return !empty($r['ok']) ? $r['posts'] : null;
+}
+// Media on the source is usually stored as a relative path (assets/blog/x.jpg —
+// 40 of 44idigital's 49 posts). Copied to another domain that would 404, so every
+// relative URL is rewritten against the source: the featured image, image/video
+// block URLs, and src/href attributes inside HTML-carrying blocks.
+function fourgeBlogSyncAbsUrl($u, $base) {
+    $u = (string)$u; $base = rtrim((string)$base, '/');
+    if ($u === '' || $base === '') return $u;
+    if (preg_match('~^(?:[a-z][a-z0-9+.-]*:|//|#)~i', $u)) return $u;   // absolute, protocol-relative, data:/mailto:/tel:, fragment
+    return $base . (substr($u, 0, 1) === '/' ? '' : '/') . $u;
+}
+function fourgeBlogSyncAbsolutize($post, $base) {
+    $base = rtrim((string)$base, '/');
+    if (!is_array($post) || $base === '') return $post;
+    if (!empty($post['featured']) && is_string($post['featured'])) $post['featured'] = fourgeBlogSyncAbsUrl($post['featured'], $base);
+    if (!empty($post['blocks']) && is_array($post['blocks'])) {
+        foreach ($post['blocks'] as $i => $b) {
+            if (!is_array($b)) continue;
+            $type = (string)($b['type'] ?? '');
+            if (($type === 'image' || $type === 'video') && !empty($b['url']) && is_string($b['url'])) $b['url'] = fourgeBlogSyncAbsUrl($b['url'], $base);
+            if (!empty($b['poster']) && is_string($b['poster'])) $b['poster'] = fourgeBlogSyncAbsUrl($b['poster'], $base);
+            if (!empty($b['html']) && is_string($b['html']) && strpos($b['html'], '<') !== false) {
+                $b['html'] = preg_replace_callback('~\b(src|href)=(["\'])([^"\']*)\2~i', function ($m) use ($base) {
+                    return $m[1] . '=' . $m[2] . fourgeBlogSyncAbsUrl($m[3], $base) . $m[2];
+                }, $b['html']);
+            }
+            $post['blocks'][$i] = $b;
         }
     }
-    return $live;
+    return $post;
 }
 // ── media localization ──────────────────────────────────────────────────────
 // Resolve a post-media reference to the absolute source-site URL it should be
@@ -2503,20 +3168,25 @@ function fourgeBlogSyncLocalizePostMedia($post, $sourceUrl, $localize, $isBackfi
 // post list, decide what's new, copy it into local posts.json, and return
 // updated blogSync bookkeeping for the caller to persist into site.json.
 // No network access of its own — media downloads go through the injected
-// $fetchMedia(absUrl) → local-path|null callable (null = don't localize,
-// keep source URLs), so the merge/dedupe/rewrite logic stays fully
-// unit-testable with a stubbed $remotePosts array and a stubbed downloader.
-function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $fetchMedia = null) {
+// $fetchMedia(absUrl) → local-path|null callable (null = don't localize, keep
+// source URLs), so the merge/dedupe/rewrite logic stays fully unit-testable with
+// a stubbed $remotePosts array and a stubbed downloader. $base is the origin the
+// list was really served from (after redirects) — canonical links, absolute
+// media and the downloads all use it; $error is the fetch's plain-words reason
+// when $remotePosts is null, so "Check now" says what actually went wrong.
+function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $base = '', $error = '', $fetchMedia = null) {
     $blogSync  = is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
     $syncedIds = is_array($blogSync['syncedIds'] ?? null) ? $blogSync['syncedIds'] : [];
     $syncedSet = array_flip(array_map('strval', $syncedIds));
     $sourceUrl = rtrim(trim((string)($blogSync['sourceUrl'] ?? '')), '/');
+    $srcBase   = rtrim(trim((string)$base), '/'); if ($srcBase === '') $srcBase = $sourceUrl;
 
     if (!is_array($remotePosts)) {
         $blogSync['lastCheckedAt'] = gmdate('c');
-        $blogSync['lastResult']    = 'Could not reach the source blog — check the source address.';
+        $blogSync['lastResult']    = 'Could not reach the source blog — ' . (trim((string)$error) !== '' ? trim((string)$error) : 'check the source address.');
         return ['blogSync' => $blogSync, 'added' => 0];
     }
+    if ($srcBase !== '') $blogSync['resolvedBase'] = $srcBase;
 
     $posts = cmsPkgReadJson('posts.json', []);
     if (!is_array($posts)) $posts = [];
@@ -2529,9 +3199,16 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $fetchMedia = null)
         $rid = (string)($rp['id'] ?? '');
         if ($rid === '' || isset($syncedSet[$rid])) continue;
 
-        $post  = $rp;                      // whole-object copy — see note above
-        if (is_callable($fetchMedia)) {
-            list($post, $n) = fourgeBlogSyncLocalizePostMedia($post, $sourceUrl, $fetchMedia);
+        // Whole-object copy — see note above — with two passes over its media:
+        // every relative URL is first made absolute on the RESOLVED source origin,
+        // then the localizer downloads what it can from there. The resolved origin
+        // is what makes that download work on a www-canonical source, since the
+        // downloader itself never follows a redirect. Anything it can't fetch — or
+        // inline <img src>/<a href> inside paragraph HTML, which it doesn't handle
+        // — stays an absolute source URL and still renders.
+        $post  = fourgeBlogSyncAbsolutize($rp, $srcBase);
+        if (is_callable($fetchMedia) && $srcBase !== '') {
+            list($post, $n) = fourgeBlogSyncLocalizePostMedia($post, $srcBase, $fetchMedia);
             $mediaLocalized += $n;
         }
         $newId = fourgeBlogSyncUid();
@@ -2540,7 +3217,7 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $fetchMedia = null)
 
         $post['id']             = $newId;
         $post['slug']           = $slug;
-        $post['canonicalUrl']   = $sourceUrl !== '' ? ($sourceUrl . '/posts.html?p=' . rawurlencode((string)($rp['slug'] ?? ''))) : null;
+        $post['canonicalUrl']   = $srcBase !== '' ? ($srcBase . '/posts.html?p=' . rawurlencode((string)($rp['slug'] ?? ''))) : null;
         $post['syncedFrom']     = $sourceUrl;
         $post['syncedSourceId'] = $rid;
 
@@ -2563,6 +3240,18 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $fetchMedia = null)
 // Combines fetch+apply and persists site.json. Silent, cheap no-op when Blog
 // Sync isn't enabled or has no source configured — safe to call from both the
 // explicit tick endpoint and the opportunistic login rider below.
+// One sync at a time. Two blog visitors arriving together right as the cooldown
+// lapses would otherwise both fetch and both append the same new post.
+// Returns a lock handle, false when another sync holds it, null if no lock file
+// could be made (then the sync simply runs unlocked, as it always did).
+function fourgeBlogSyncLock() {
+    $dir = PUBLIC_HTML . '/data';
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $fh = @fopen($dir . '/.blog-sync.lock', 'c');
+    if (!$fh) return null;
+    if (!flock($fh, LOCK_EX | LOCK_NB)) { fclose($fh); return false; }
+    return $fh;
+}
 // Backfill: posts synced BEFORE media localization existed (1.14.120) sit in
 // posts.json with their media still hotlinking the source domain, and the
 // normal sync never revisits them (syncedIds skips anything already copied).
@@ -2595,22 +3284,40 @@ function fourgeBlogSyncDoSync($site) {
     $sourceUrl = trim((string)($blogSync['sourceUrl'] ?? ''));
     if ($sourceUrl === '') return ['ok' => true, 'added' => 0, 'skipped' => 'No source URL configured.'];
 
-    $remote = fourgeBlogSyncFetchRemotePosts($sourceUrl);
-    $result = fourgeBlogSyncApplyRemotePosts($site, $remote, 'fourgeBlogSyncDownloadMedia');
-    $site['blogSync'] = $result['blogSync'];
-    $backfilled = fourgeBlogSyncBackfillLocalMedia($sourceUrl, 'fourgeBlogSyncDownloadMedia');
-    if ($backfilled > 0) {
-        $site['blogSync']['lastResult'] = rtrim((string)$site['blogSync']['lastResult'], '.')
-            . ' — localized ' . $backfilled . ' media file' . ($backfilled === 1 ? '' : 's') . ' in previously synced posts';
+    $lock = fourgeBlogSyncLock();
+    if ($lock === false) return ['ok' => true, 'added' => 0, 'skipped' => 'A sync is already running.'];
+    try {
+        $remote = fourgeBlogSyncFetchRemote($sourceUrl);
+        $base   = (string)($remote['base'] ?? '');
+        $result = fourgeBlogSyncApplyRemotePosts($site, !empty($remote['ok']) ? $remote['posts'] : null, $base, (string)($remote['error'] ?? ''), 'fourgeBlogSyncDownloadMedia');
+        $bs = $result['blogSync'];
+        // Media in posts synced before localization existed (main line 1.14.120)
+        // is still hotlinked: walk them while the source is known to be reachable.
+        // Downloads run on the resolved origin, so a www-canonical source works.
+        if (!empty($remote['ok']) && $base !== '') {
+            $backfilled = fourgeBlogSyncBackfillLocalMedia($base, 'fourgeBlogSyncDownloadMedia');
+            if ($backfilled > 0) {
+                $bs['lastResult'] = rtrim((string)$bs['lastResult'], '.')
+                    . ' — localized ' . $backfilled . ' media file' . ($backfilled === 1 ? '' : 's') . ' in previously synced posts';
+            }
+        }
+        // Persist into a FRESH read of site.json: the record handed in was read a
+        // moment ago, and another save (a settings change, a page's nav update)
+        // may have landed since — only the blogSync bookkeeping is ours to write.
+        $persist = cmsPkgReadJson('site.json', null);
+        if (!is_array($persist)) $persist = is_array($site) ? $site : [];
+        $persist['blogSync'] = $bs;
+        cmsPkgWriteJson('site.json', $persist);
+        return ['ok' => !empty($remote['ok']), 'added' => $result['added'], 'lastResult' => $bs['lastResult']];
+    } finally {
+        if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
     }
-    cmsPkgWriteJson('site.json', $site);
-    return ['ok' => $remote !== null, 'added' => $result['added'], 'lastResult' => $site['blogSync']['lastResult']];
 }
-// Opportunistic rider on the login self-heal chain (fourgeApiInstallCleanUrls):
-// gives sites that are actively logged into a reasonably fresh sync with zero
-// setup. A site nobody logs into for weeks still needs a real external
-// scheduler hitting blog_sync_tick for a guaranteed ~10-minute cadence —
-// Fourge itself has no cron of its own to fall back on.
+// The cooldown-gated check. Reached from the login self-heal chain
+// (fourgeApiInstallCleanUrls) and from the public blog_sync_poke that the blog
+// pages fire on every view — so a site stays within ~10 minutes of its source
+// for as long as anyone at all reads its blog, with zero setup. A site nobody
+// visits or logs into can still point an external scheduler at blog_sync_tick.
 function fourgeBlogSyncTickIfDue() {
     $site = cmsPkgReadJson('site.json', []);
     if (!is_array($site)) return null;
@@ -2626,6 +3333,17 @@ function fourgeApiBlogSyncTick($me, $body) {
     if (!is_array($site)) $site = [];
     $result = fourgeBlogSyncDoSync($site);
     echo json_encode($result + ['checked_at' => date('c')]);
+}
+// Public, unauthenticated and deliberately boring: it can only run the sync the
+// admin already configured, and only once TickIfDue's 10-minute cooldown has
+// passed — so the blog pages firing it on every view keep a partner site current
+// within ~10 minutes of a publish, with no cron, and nobody can make it do more
+// than one source fetch per ten minutes. Says nothing but whether posts arrived
+// (the page re-renders its list when they did).
+function fourgeApiBlogSyncPoke() {
+    $r = null;
+    try { $r = fourgeBlogSyncTickIfDue(); } catch (Throwable $e) { $r = null; }
+    echo json_encode(['ok' => true, 'checked' => $r !== null, 'added' => (int)($r['added'] ?? 0)]);
 }
 function fourgeApiBlogSyncAdmin($me, $body) {
     if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
@@ -3984,6 +4702,11 @@ function fourgeApiInstallCleanUrls($me) {
     // before admin/.htaccess existed have had no protection at all.
     $sec = false;
     try { $sec    = fourgeWriteAdminHtaccess();    } catch (Throwable $e) { $sec = false; }
+    // Same reasoning as admin/.htaccess above: a site that had form entries or
+    // uploads before these guards existed has had no protection at all.
+    $entriesGuard = false; $uploadsGuard = false;
+    try { $entriesGuard = fourgeWriteEntriesHtaccess(); } catch (Throwable $e) { $entriesGuard = false; }
+    try { $uploadsGuard = fourgeWriteUploadsHtaccess(); } catch (Throwable $e) { $uploadsGuard = false; }
     // The four safe security headers, and an llms.txt if the site has none.
     $hdr = false; $llms = false;
     try { $hdr    = fourgeWriteDefaultHeaders();   } catch (Throwable $e) { $hdr = false; }
@@ -4002,7 +4725,8 @@ function fourgeApiInstallCleanUrls($me) {
     try { $blogSync     = fourgeBlogSyncTickIfDue();       } catch (Throwable $e) { $blogSync = null; }
     echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
-        'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync]);
+        'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
+        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
