@@ -2691,7 +2691,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.130';
+const CMS_VERSION='1.14.131';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6022,7 +6022,13 @@ function blogSyncShownHtml(){
 async function blogSyncDisplayRefresh(){
   if(!document.getElementById('s-blogsync-shown')) return;
   if(canCallApi()){ try{ await loadPages(); }catch(e){} }   // fresh scan: pages gain/lose the list in the editor too
-  const el=document.getElementById('s-blogsync-shown'); if(el) el.innerHTML=blogSyncShownHtml();
+  const el=document.getElementById('s-blogsync-shown'); if(!el) return;
+  if(canCallApi() && (_postsHtmlExists===null || _postListPageIds===null)){
+    // loadPages() could not reach list_pages (timeout, server error): say so instead of "Checking…" forever.
+    el.innerHTML='<span style="color:#b45309;font-weight:600">Could not read this site\'s page list</span>, so it is unknown where posts are shown. Reload the admin to try again; if it keeps failing, the Pages tab will show the same problem.';
+    return;
+  }
+  el.innerHTML=blogSyncShownHtml();
 }
 function blogSyncAddonHtml(){
   const bs=(_site&&_site.blogSync)||{};
@@ -7009,11 +7015,11 @@ function ffSigStop(){_ffSigActive=null;_ffSigLast=null;}
 document.addEventListener('mousedown',ffSigStart);document.addEventListener('mousemove',ffSigMove);document.addEventListener('mouseup',ffSigStop);
 document.addEventListener('touchstart',ffSigStart,{passive:false});document.addEventListener('touchmove',ffSigMove,{passive:false});document.addEventListener('touchend',ffSigStop);
 document.addEventListener('click',function(e){var b=e.target.closest('.ff-sig-clear');if(!b)return;var c=b.previousElementSibling;if(c&&c.classList.contains('ff-sig')){c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.hasInk='';}});
-async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]')||!!form.querySelector('canvas.ff-sig');var badSig=null;form.querySelectorAll('canvas.ff-sig[data-required]').forEach(function(c){if(!c.dataset.hasInk)badSig=c;});if(badSig){msg.className='ff-msg err';msg.style.display='';msg.textContent='Please provide a signature.';return false;}var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});delete data['g-recaptcha-response'];delete data['h-captcha-response'];}btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}var hcTok=(form.querySelector('[name=h-captcha-response]')||{}).value||'';if(_hcSiteKey&&!hcTok){btn.disabled=false;btn.textContent='Submit';var m3=form.querySelector('.ff-msg');m3.className='ff-msg err';m3.style.display='';m3.textContent='Please complete the captcha.';return false;}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('hcaptcha',hcTok);fd.append('formPassword',form.dataset.unlockedPassword||'');fd.append('subject',document.title);fd.append('siteUrl',location.href);var sigs=form.querySelectorAll('canvas.ff-sig');for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,'image/png');});if(blob)fd.append(sc.getAttribute('name')||'signature',blob,'signature.png');}res=await fetch('admin/api.php',{method:'POST',body:fd});}else{res=await fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,hcaptcha:hcTok,formPassword:form.dataset.unlockedPassword||'',subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
+async function ffSubmit(e,form){e.preventDefault();var msg=form.querySelector('.ff-msg');var btn=form.querySelector('.ff-submit');var hasFile=!!form.querySelector('input[type=file]')||!!form.querySelector('canvas.ff-sig');var badSig=null;form.querySelectorAll('canvas.ff-sig[data-required]').forEach(function(c){if(!c.dataset.hasInk)badSig=c;});if(badSig){msg.className='ff-msg err';msg.style.display='';msg.textContent='Please provide a signature.';return false;}var data={};if(!hasFile){new FormData(form).forEach(function(v,k){if(data[k])data[k]+=', '+v;else data[k]=v;});delete data['g-recaptcha-response'];delete data['h-captcha-response'];}btn.disabled=true;btn.textContent='Sending…';var rcTok='';var rcV3=form.getAttribute('data-rc-v3')||(window.__fourgeRcV3&&window.__fourgeRcSiteKey)||'';if(rcV3&&window.grecaptcha&&grecaptcha.execute&&grecaptcha.ready){try{rcTok=await Promise.race([new Promise(function(res){try{grecaptcha.ready(function(){grecaptcha.execute(rcV3,{action:'submit'}).then(res).catch(function(){res('');});});}catch(_e){res('');}}),new Promise(function(res){setTimeout(function(){res('');},4000);})]);}catch(e){rcTok='';}}else{rcTok=(form.querySelector('[name=g-recaptcha-response]')||{}).value||'';if(_rcSiteKey&&!_rcV3&&!rcTok){btn.disabled=false;btn.textContent='Submit';var m2=form.querySelector('.ff-msg');m2.className='ff-msg err';m2.style.display='';m2.textContent='Please complete the reCAPTCHA.';return false;}}var hcTok=(form.querySelector('[name=h-captcha-response]')||{}).value||'';if(_hcSiteKey&&!hcTok){btn.disabled=false;btn.textContent='Submit';var m3=form.querySelector('.ff-msg');m3.className='ff-msg err';m3.style.display='';m3.textContent='Please complete the captcha.';return false;}try{var res;if(hasFile){var fd=new FormData(form);fd.append('action','send_form');fd.append('formId',form.getAttribute('data-form-id'));fd.append('recaptcha',rcTok);fd.append('hcaptcha',hcTok);fd.append('formPassword',form.dataset.unlockedPassword||'');fd.append('subject',document.title);fd.append('siteUrl',location.href);var sigs=form.querySelectorAll('canvas.ff-sig');for(var si=0;si<sigs.length;si++){var sc=sigs[si];if(!sc.dataset.hasInk)continue;var blob=await new Promise(function(res){sc.toBlob(res,'image/png');});if(blob)fd.append(sc.getAttribute('name')||'signature',blob,'signature.png');}res=await fetch('/admin/api.php',{method:'POST',body:fd});}else{res=await fetch('/admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'send_form',formId:form.getAttribute('data-form-id'),fields:data,recaptcha:rcTok,hcaptcha:hcTok,formPassword:form.dataset.unlockedPassword||'',subject:document.title,siteUrl:location.href})});}var d=await res.json();if(d.error)throw new Error(d.error);msg.className='ff-msg ok';msg.style.display='';msg.textContent=form.getAttribute('data-confirm');form.querySelectorAll('.ff-page,.ff-nav,.ff-submit').forEach(function(x){x.style.display='none';});}catch(err){msg.className='ff-msg err';msg.style.display='';msg.textContent='Something went wrong: '+err.message;btn.disabled=false;btn.textContent='Submit';}return false;}
 function ffFmtPhone(v){if(/^\\s*\\+/.test(v))return v;var d=String(v).replace(/\\D/g,'');if(d.length>11)return v;var p='';if(d.length===11){if(d[0]!=='1')return v;p='1 ';d=d.slice(1);}if(!d.length)return '';if(d.length<4)return p+'('+d;if(d.length<7)return p+'('+d.slice(0,3)+') '+d.slice(3);return p+'('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);}
 function ffFormInit(form){
   var fid=form.getAttribute('data-form-id');
-  if(fid){try{var payload=JSON.stringify({action:'form_view',formId:fid});if(navigator.sendBeacon){navigator.sendBeacon('admin/api.php',new Blob([payload],{type:'application/json'}));}else{fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:payload}).catch(function(){});}}catch(e){}}
+  if(fid){try{var payload=JSON.stringify({action:'form_view',formId:fid});if(navigator.sendBeacon){navigator.sendBeacon('/admin/api.php',new Blob([payload],{type:'application/json'}));}else{fetch('/admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:payload}).catch(function(){});}}catch(e){}}
   var cd=form.getAttribute('data-close-date');
   if(cd){
     var closeAt=new Date(cd+'T23:59:59');
@@ -7027,7 +7033,7 @@ function ffFormInit(form){
 function ffCheckFormPassword(btn){
   var gate=btn.closest('.ff-gate');var form=btn.closest('.foundry-form');var input=gate.querySelector('.ff-gate-input');var err=gate.querySelector('.ff-gate-err');
   var pw=input.value;btn.disabled=true;btn.textContent='Checking…';
-  fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'check_form_password',formId:form.getAttribute('data-form-id'),password:pw})})
+  fetch('/admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'check_form_password',formId:form.getAttribute('data-form-id'),password:pw})})
     .then(function(res){return res.json();}).then(function(d){
       if(d.ok){form.dataset.unlockedPassword=pw;gate.style.display='none';var content=form.querySelector('.ff-gated-content');if(content)content.style.display='';}
       else{err.style.display='';err.textContent=d.error||'Incorrect password.';btn.disabled=false;btn.textContent='Unlock';}
@@ -7036,8 +7042,8 @@ function ffCheckFormPassword(btn){
 }
 function ffInitForms(){document.querySelectorAll('.foundry-form').forEach(function(f){ffEvalCond(f);ffFormInit(f);});document.addEventListener('input',function(e){var t=e.target;if(t&&t.type==='tel'){var pf=t.closest('.foundry-form');if(pf&&pf.hasAttribute('data-phone-us'))t.value=ffFmtPhone(t.value);}var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('change',function(e){var f=e.target.closest('.foundry-form');if(f)ffEvalCond(f);});document.addEventListener('click',function(e){var b=e.target.closest('.ff-prev,.ff-next');if(b){var f=b.closest('.foundry-form');if(f)ffPage(f,parseInt(b.getAttribute('data-dir'))); }});}
 var _blogForms=[];var _rcSiteKey='';var _rcV3=false;var _hcSiteKey='';
-async function loadForms(){try{var r=await fetch('data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
-try{var rs=await fetch('data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}if(sj&&sj.hcaptcha&&sj.hcaptcha.enabled){_hcSiteKey=sj.hcaptcha.siteKey||'';}}}catch(e){}
+async function loadForms(){try{var r=await fetch('/data/forms.json?t='+Date.now());if(r.ok)_blogForms=await r.json();}catch(e){}
+try{var rs=await fetch('/data/site.json?t='+Date.now());if(rs.ok){var sj=await rs.json();if(sj&&sj.recaptcha&&sj.recaptcha.enabled){_rcSiteKey=sj.recaptcha.siteKey||'';_rcV3=sj.recaptcha.version==='v3';}if(sj&&sj.hcaptcha&&sj.hcaptcha.enabled){_hcSiteKey=sj.hcaptcha.siteKey||'';}}}catch(e){}
 if(_rcSiteKey){var s=document.createElement('script');s.src='https://www.google.com/recaptcha/api.js'+(_rcV3?'?render='+encodeURIComponent(_rcSiteKey):'');s.async=true;s.defer=true;document.head.appendChild(s);}
 if(_hcSiteKey){var hs=document.createElement('script');hs.src='https://js.hcaptcha.com/1/api.js';hs.async=true;hs.defer=true;document.head.appendChild(hs);}}
 function renderShortcodes(html){
@@ -7054,7 +7060,7 @@ var _blogSyncPoked=false;
 function pokeBlogSync(rerender){
   if(_blogSyncPoked) return; _blogSyncPoked=true;
   try{
-    fetch('admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'blog_sync_poke'}),keepalive:true})
+    fetch('/admin/api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'blog_sync_poke'}),keepalive:true})
       .then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0&&rerender) loadBlog(); }).catch(function(){});
   }catch(e){}
 }
@@ -7062,7 +7068,7 @@ async function loadBlog(){
   var root=document.getElementById('blog-root');
   await loadForms();
   var posts=[];
-  try{var r=await fetch('data/posts.json?t='+Date.now());if(r.ok)posts=await r.json();}catch(e){}
+  try{var r=await fetch('/data/posts.json?t='+Date.now());if(r.ok)posts=await r.json();}catch(e){}
   // Scheduled posts (from a 44i deploy package) become visible at their time.
   var NOW=Date.now();
   posts=posts.filter(function(p){ if(!p) return false; if(p.published) return true; var t=p.publishAt?Date.parse(p.publishAt):NaN; return !isNaN(t)&&t<=NOW; });
@@ -7070,7 +7076,7 @@ async function loadBlog(){
   var slug=params.get('p');
   if(slug){
     var post=posts.find(function(p){return p.slug===slug;});
-    if(!post){root.innerHTML='<div class="empty-state"><h2>Post not found</h2><p><a href="posts.html">&larr; Back to all posts</a></p></div>';return;}
+    if(!post){root.innerHTML='<div class="empty-state"><h2>Post not found</h2><p><a href="/posts.html">&larr; Back to all posts</a></p></div>';return;}
     document.title=decodeEntities(post.title)+' — ${siteName}';
     // Per-post SEO: meta description from the excerpt (posts already have
     // well-shaped excerpts), OG/Twitter tags, canonical, and Article schema.
@@ -7097,7 +7103,7 @@ async function loadBlog(){
     })();
     var body=renderShortcodes((post.blocks||[]).map(blockToHtml).join(''));
     root.innerHTML='<article class="single">'
-      +'<a class="back" href="posts.html">&larr; All posts</a>'
+      +'<a class="back" href="/posts.html">&larr; All posts</a>'
       +'<div class="s-date">'+fmtDate(post.date)+'</div>'
       +'<h1>'+esc(decodeEntities(post.title))+'</h1>'
       +(post.author?'<div class="s-author">By '+esc(decodeEntities(post.author))+'</div>':'')
@@ -7110,7 +7116,7 @@ async function loadBlog(){
     if(!posts.length){root.innerHTML='<div class="archive-head"><h1>Blog</h1></div><div class="empty-state"><p>No posts published yet. Check back soon!</p></div>';pokeBlogSync(true);return;}
     posts.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
     var cards=posts.map(function(p){
-      return '<a class="post-card" href="posts.html?p='+encodeURIComponent(p.slug)+'">'
+      return '<a class="post-card" href="/posts.html?p='+encodeURIComponent(p.slug)+'">'
         +(p.featured?'<div class="thumb"><img src="'+esc(p.featured)+'" alt=""></div>':'<div class="thumb"></div>')
         +'<div class="pc-body"><div class="pc-date">'+fmtDate(p.date)+'</div>'
         +'<h2>'+esc(decodeEntities(p.title))+'</h2>'
@@ -7231,13 +7237,17 @@ function ensurePostsRuntime(html){
 // once — posts.html only while it is still the generated shell (never a custom
 // page someone renamed to posts.html), plus any page carrying a
 // [data-fourge-posts] list. Bump the version to sweep again after a later change.
-const POSTS_RUNTIME_SWEEP_VERSION=1;
+const POSTS_RUNTIME_SWEEP_VERSION=2;   // 2: posts.html fetches root-absolute (works at /posts/ too)
 async function postsRuntimeSweepIfStale(){
   if(!canCallApi() || (_site&&_site.postsRuntimeSweptVersion===POSTS_RUNTIME_SWEEP_VERSION)) return;
   try{
     const d=await apiCall('read_file',{path:'posts.html'});
     const html=d.content||'';
-    if(/id="blog-root"/.test(html) && /function loadBlog\(\)/.test(html) && !/blog_sync_poke/.test(html)) await ensurePostsHtml();
+    // Still the generated shell (never a custom page renamed to posts.html), but an
+    // older stamp: missing the Blog Sync poke, or fetching its data RELATIVELY
+    // (data/posts.json), which resolves to /posts/data/posts.json when the host
+    // serves the page at /posts/ and shows "No posts published yet".
+    if(/id="blog-root"/.test(html) && /function loadBlog\(\)/.test(html) && (!/blog_sync_poke/.test(html) || /fetch\('data\/posts\.json/.test(html))) await ensurePostsHtml();
   }catch(e){ /* no posts.html on this site — nothing to refresh */ }
   if(!Object.keys(_pages).length) await loadPages();
   for(const pg of getPageList()){
@@ -9475,7 +9485,8 @@ async function openPostListPlacer(){
     +'<input id="plp-src" type="url" placeholder="https://44idigital.com" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box">'
     +'<div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.5">Great for white-label sites that should auto-publish the flagship blog. The source site must run engine v1.14.75+ and have been signed into once (that enables cross-site reading of its posts). Cards link to the article on the source site.</div></div>'
     +(pages.length?pages.map(pg=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
-      +'<div style="min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(decodeHtml(pg.label||pg.id))+'</div>'
+      +'<div style="min-width:0"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(decodeHtml(pg.label||pg.id))+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(pg.path||pg.file||'')+'</div></div>'
       +((_postListPageIds&&_postListPageIds.has(pg.id))?'<span style="flex-shrink:0;font-size:12px;font-weight:600;color:#1E8A5B">Shows the post list ✓</span>':'<button class="fd-btn-primary" style="flex-shrink:0;font-size:12.5px;padding:7px 12px" onclick="placePostListOnPage(\''+esc(pg.id)+'\')">Add here →</button>')
       +'</div>').join(''):'<div class="empty" style="padding:20px"><h3>No pages found</h3></div>')
     +'</div></div>';
