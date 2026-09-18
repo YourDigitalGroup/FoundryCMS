@@ -3160,6 +3160,16 @@ function fourgeBlogSyncAbsolutize($post, $base) {
 // Resolve a post-media reference to the absolute source-site URL it should be
 // downloaded from — or null when it is not ours to localize (empty, data:,
 // or hosted somewhere other than the sync source). Pure; unit-testable.
+// Percent-encode what the source left raw in a media path — spaces, quotes,
+// non-ASCII ("/uploads/44iD Full/x.png" is refused by curl outright, so such a
+// file never localized and stayed a hotlink) — without double-encoding
+// sequences that are already encoded. Slashes and RFC 3986 path characters stay.
+function fourgeBlogSyncEncodePath($path) {
+    return preg_replace_callback('#%[0-9A-Fa-f]{2}|[^A-Za-z0-9\-._~!$&\'()*+,;=:@/]#', function ($m) {
+        return strlen($m[0]) === 3 ? $m[0] : rawurlencode($m[0]);
+    }, (string)$path);
+}
+
 function fourgeBlogSyncMediaSourceUrl($raw, $sourceUrl) {
     $raw = trim((string)$raw);
     $sourceUrl = rtrim(trim((string)$sourceUrl), '/');
@@ -3177,16 +3187,18 @@ function fourgeBlogSyncMediaSourceUrl($raw, $sourceUrl) {
         if ($host === '' || preg_replace('~^www\.~', '', $host) !== $bare) return null;
         $path = (string)parse_url($abs, PHP_URL_PATH);
         if ($path === '' || $path === '/') return null;
-        return $sourceUrl . $path;
+        return $sourceUrl . fourgeBlogSyncEncodePath($path);
     }
-    return $sourceUrl . '/' . ltrim($raw, '/');
+    $rel = preg_replace('~[?#].*$~s', '', ltrim($raw, '/'));   // path only, like the absolute branch
+    if ($rel === '') return null;
+    return $sourceUrl . '/' . fourgeBlogSyncEncodePath($rel);
 }
 // Deterministic local filename for a source URL: re-syncing (or two posts
 // sharing one image) reuses the already-downloaded file instead of stacking
 // copies. Pure; unit-testable.
 function fourgeBlogSyncMediaLocalPath($absUrl) {
     $path = (string)parse_url((string)$absUrl, PHP_URL_PATH);
-    $base = strtolower(basename($path));
+    $base = strtolower(basename(rawurldecode($path)));   // "My%20Photo.jpg" → my-photo.jpg, not my-20photo.jpg
     if (!preg_match('~^(?<name>.+)\.(?<ext>jpe?g|png|webp|gif|svg|ico|avif|mp4|m4v|mov|webm|ogv|ogg|mp3|wav|m4a)$~', $base, $m)) return null;
     $name = preg_replace('~[^a-z0-9._-]+~', '-', $m['name']);
     $name = trim(preg_replace('~-{2,}~', '-', $name), '-.');
