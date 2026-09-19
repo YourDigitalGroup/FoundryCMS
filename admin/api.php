@@ -201,7 +201,7 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //  • 'check_form_password' / 'form_view' are public for the same reason as
 //    'send_form': a site visitor has no token or session. Neither exposes
 //    anything beyond a single form's own pass/fail check or view counter.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke'];
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe'];
 $SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
@@ -276,7 +276,8 @@ try {
         case 'seo_pkg_admin':   ob_end_clean(); fourgeApiSeoPkgAdmin($authUser, $body); break;
         case 'seo_pkg_publish_all': ob_end_clean(); fourgeApiSeoPkgPublishAll($authUser, $body); break;
         case 'blog_sync_tick':  ob_end_clean(); fourgeApiBlogSyncTick($authUser, $body); break;
-        case 'blog_sync_poke':  ob_end_clean(); fourgeApiBlogSyncPoke(); break;
+        case 'blog_sync_poke':  ob_end_clean(); fourgeApiBlogSyncPoke($body); break;
+        case 'blog_sync_subscribe': ob_end_clean(); fourgeApiBlogSyncSubscribe($body); break;
         case 'blog_sync_admin': ob_end_clean(); fourgeApiBlogSyncAdmin($authUser, $body); break;
         case 'set_page_password': ob_end_clean(); fourgeApiSetPagePassword($authUser, $body); break;
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
@@ -590,6 +591,9 @@ function cmsWriteFile($body) {
         ? ['ok' => false, 'reason' => 'opted_out']
         : cmsGhAfterWrite(cmsGhRelPath($dest), $content);
     echo json_encode(['ok' => true, 'path' => $relPath, 'size' => strlen($content), 'gh' => $gh]);
+    // A publish just landed in data/posts.json: push it to every partner site
+    // that syndicates this blog (see fourgeBlogSyncAfterPostsWrite).
+    if (ltrim(str_replace('\\', '/', (string)$relPath), '/') === 'data/posts.json') fourgeBlogSyncAfterPostsWrite();
 }
 
 // Plain words for a PHP upload error code (cmsWriteFile's multipart channel).
@@ -3408,6 +3412,9 @@ function fourgeBlogSyncDoSync($site) {
                 $bs['lastResult'] = rtrim((string)$bs['lastResult'], '.')
                     . ' — localized ' . $backfilled . ' media file' . ($backfilled === 1 ? '' : 's') . ' in previously synced posts';
             }
+            // The source is reachable: (re)register for pushes so the next publish
+            // there reaches this site within seconds instead of at its next visitor.
+            try { $bs = fourgeBlogSyncMaybeSubscribe($bs, $base); } catch (Throwable $e) {}
         }
         // Persist into a FRESH read of site.json: the record handed in was read a
         // moment ago, and another save (a settings change, a page's nav update)
@@ -3448,10 +3455,193 @@ function fourgeApiBlogSyncTick($me, $body) {
 // within ~10 minutes of a publish, with no cron, and nobody can make it do more
 // than one source fetch per ten minutes. Says nothing but whether posts arrived
 // (the page re-renders its list when they did).
-function fourgeApiBlogSyncPoke() {
-    $r = null;
-    try { $r = fourgeBlogSyncTickIfDue(); } catch (Throwable $e) { $r = null; }
-    echo json_encode(['ok' => true, 'checked' => $r !== null, 'added' => (int)($r['added'] ?? 0)]);
+function fourgeApiBlogSyncPoke($body = []) {
+    $push = is_array($body) && !empty($body['push']);
+    $r = null; $pushed = false;
+    try {
+        if ($push) {
+            // A push from the SOURCE ("I just published"): sync now instead of waiting
+            // for the 10-minute visitor cooldown. Only honoured when the claimed source
+            // is the one this site is configured to sync from (www/apex tolerant), and
+            // at most every 30 seconds — anyone can send the request, but all it can
+            // ever do is make this site re-read the source it already trusts.
+            $site = cmsPkgReadJson('site.json', []);
+            $bs   = is_array($site) && is_array($site['blogSync'] ?? null) ? $site['blogSync'] : [];
+            $srcHost = (string)parse_url((string)($body['source'] ?? ''), PHP_URL_HOST);
+            $cfgHost = (string)parse_url((string)($bs['sourceUrl'] ?? ''), PHP_URL_HOST);
+            $resHost = (string)parse_url((string)($bs['resolvedBase'] ?? ''), PHP_URL_HOST);
+            $lastPush = strtotime((string)($bs['lastPushAt'] ?? ''));
+            $fromSource = $srcHost !== '' && (fourgeBlogSyncSameSite($srcHost, $cfgHost) || ($resHost !== '' && fourgeBlogSyncSameSite($srcHost, $resHost)));
+            if (!empty($bs['enabled']) && $fromSource && ($lastPush === false || (time() - $lastPush) >= 30)) {
+                $site['blogSync'] = $bs; $site['blogSync']['lastPushAt'] = gmdate('c');
+                cmsPkgWriteJson('site.json', $site);               // DoSync re-reads site.json before it persists, so the stamp survives
+                $r = fourgeBlogSyncDoSync($site); $pushed = true;
+            } else {
+                $r = fourgeBlogSyncTickIfDue();                     // not our source, or too soon: behave like an ordinary visitor poke
+            }
+        } else {
+            $r = fourgeBlogSyncTickIfDue();
+        }
+    } catch (Throwable $e) { $r = null; }
+    $out = ['ok' => true, 'checked' => $r !== null, 'added' => (int)($r['added'] ?? 0)];
+    if ($push) $out['pushed'] = $pushed;
+    echo json_encode($out);
+}
+
+// ── Push on publish: "every time a post is published, every partner updates" ──
+// Polling alone leaves a partner site nobody visits or signs into behind until
+// someone does. So: after each successful sync the PARTNER registers itself with
+// its source (blog_sync_subscribe, verified by the source reading the partner's
+// public site.json — it must really say it syncs from that source), and the
+// SOURCE pokes every registered partner the moment its data/posts.json is
+// written (cmsWriteFile hook). Either side being an older engine degrades to the
+// old behaviour: the subscribe call is answered with an error and retried later,
+// and a push poke on an old partner is treated as an ordinary visitor poke.
+
+// This site's own origin (https://host), from the configured Website URL, else the request host.
+function fourgeBlogSyncOwnBase() {
+    $site = cmsPkgReadJson('site.json', []);
+    $w = is_array($site) ? trim((string)($site['website'] ?? '')) : '';
+    if ($w !== '' && !preg_match('~^https?://~i', $w)) $w = 'https://' . $w;
+    if ($w === '' && !empty($_SERVER['HTTP_HOST'])) $w = (fourgeIsHttps() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
+    $p = @parse_url($w);
+    if (!$p || empty($p['host'])) return '';
+    $host = strtolower(preg_replace('/:\d+$/', '', $p['host']));
+    return ($p['scheme'] ?? 'https') . '://' . $host;
+}
+
+// One JSON POST to another Fourge site's api.php. Address is vetted like every
+// other operator-influenced URL (https, public host); redirects are not followed.
+function fourgeBlogSyncPostJson($url, $payload, $timeout = 5) {
+    if (!fourgeTlpUrlOk($url)) return ['ok' => false, 'code' => 0, 'json' => null, 'error' => 'refused address'];
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true, CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => max(1, (int)$timeout), CURLOPT_CONNECTTIMEOUT => min(3, max(1, (int)$timeout)),
+        CURLOPT_SSL_VERIFYPEER => true, CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_USERAGENT => 'FourgeCMS Blog Sync',
+    ]);
+    $raw  = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = (string)curl_error($ch);
+    curl_close($ch);
+    $j = is_string($raw) ? json_decode($raw, true) : null;
+    return ['ok' => $code === 200 && is_array($j) && !empty($j['ok']), 'code' => $code, 'json' => is_array($j) ? $j : null, 'error' => $err];
+}
+
+// PARTNER: after a successful sync, tell the source we exist so it can push.
+// Re-registers daily while it works, hourly while it does not (an older source
+// answers "unknown action" — harmless, we simply keep polling as before).
+function fourgeBlogSyncMaybeSubscribe(array $blogSync, $base) {
+    $base = rtrim(trim((string)$base), '/');
+    $own  = fourgeBlogSyncOwnBase();
+    if ($base === '' || $own === '' || !preg_match('~^https://~i', $own)) return $blogSync;
+    $last = strtotime((string)($blogSync['subscribedAt'] ?? ''));
+    $same = (($blogSync['subscribedTo'] ?? '') === $base) && (($blogSync['subscribedAs'] ?? '') === $own);
+    $wait = !empty($blogSync['pushSubscribed']) ? 86400 : 3600;
+    if ($same && $last !== false && (time() - $last) < $wait) return $blogSync;
+    $r = fourgeBlogSyncPostJson($base . '/admin/api.php', ['action' => 'blog_sync_subscribe', 'site' => $own], 6);
+    $blogSync['subscribedAt']   = gmdate('c');
+    $blogSync['subscribedTo']   = $base;
+    $blogSync['subscribedAs']   = $own;
+    $blogSync['pushSubscribed'] = !empty($r['ok']);
+    return $blogSync;
+}
+
+function fourgeBlogSyncSubscribersRead() {
+    $reg = cmsPkgReadJson('blog-sync-subscribers.json', []);
+    if (!is_array($reg)) $reg = [];
+    $reg['subscribers'] = array_values(array_filter(is_array($reg['subscribers'] ?? null) ? $reg['subscribers'] : [], function ($s) { return is_array($s) && !empty($s['site']); }));
+    return $reg;
+}
+function fourgeBlogSyncSubscribersWrite(array $reg) { return cmsPkgWriteJson('blog-sync-subscribers.json', $reg); }
+
+// SOURCE: a partner asks to be pushed. Verified, never taken on its word: the
+// partner's PUBLIC data/site.json must say Blog Sync is on and points at us.
+function fourgeApiBlogSyncSubscribe($body) {
+    $site = rtrim(trim((string)(is_array($body) ? ($body['site'] ?? '') : '')), '/');
+    $p = @parse_url($site);
+    if (!$p || strtolower((string)($p['scheme'] ?? '')) !== 'https' || empty($p['host']) || (!empty($p['path']) && $p['path'] !== '/') || !empty($p['query']) || !fourgeTlpUrlOk($site)) {
+        echo json_encode(['ok' => false, 'reason' => 'bad_site']); return;
+    }
+    $site    = 'https://' . strtolower(preg_replace('/:\d+$/', '', $p['host']));
+    $ownHost = (string)parse_url(fourgeBlogSyncOwnBase(), PHP_URL_HOST);
+    if ($ownHost === '') { echo json_encode(['ok' => false, 'reason' => 'no_own_host']); return; }
+    if (fourgeBlogSyncSameSite((string)$p['host'], $ownHost)) { echo json_encode(['ok' => false, 'reason' => 'self']); return; }
+    $ch = curl_init($site . '/data/site.json');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4, CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_FOLLOWLOCATION => false, CURLOPT_MAXFILESIZE => 1048576,
+        CURLOPT_HTTPHEADER => ['Accept: application/json'], CURLOPT_USERAGENT => 'FourgeCMS Blog Sync',
+    ]);
+    $raw  = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    $j  = (is_string($raw) && strlen($raw) <= 1048576) ? json_decode($raw, true) : null;
+    $bs = is_array($j) && is_array($j['blogSync'] ?? null) ? $j['blogSync'] : null;
+    $cfgHost = $bs ? (string)parse_url((string)($bs['sourceUrl'] ?? ''), PHP_URL_HOST) : '';
+    $resHost = $bs ? (string)parse_url((string)($bs['resolvedBase'] ?? ''), PHP_URL_HOST) : '';
+    if ($code !== 200 || !$bs || empty($bs['enabled']) || !(fourgeBlogSyncSameSite($cfgHost, $ownHost) || ($resHost !== '' && fourgeBlogSyncSameSite($resHost, $ownHost)))) {
+        echo json_encode(['ok' => false, 'reason' => $code !== 200 ? 'unreachable' : 'not_a_subscriber']); return;
+    }
+    $reg  = fourgeBlogSyncSubscribersRead();
+    $subs = $reg['subscribers']; $found = false;
+    foreach ($subs as &$s) {
+        if (fourgeBlogSyncSameSite((string)parse_url((string)$s['site'], PHP_URL_HOST), (string)$p['host'])) { $s['site'] = $site; $s['verifiedAt'] = gmdate('c'); $found = true; }
+    }
+    unset($s);
+    if (!$found) $subs[] = ['site' => $site, 'verifiedAt' => gmdate('c')];
+    if (count($subs) > 200) $subs = array_slice($subs, -200);
+    $reg['subscribers'] = $subs;
+    fourgeBlogSyncSubscribersWrite($reg);
+    echo json_encode(['ok' => true, 'subscribers' => count($subs)]);
+}
+
+// SOURCE: poke every registered partner. Bounded (25 partners / 40 s per run;
+// the rest are caught by their own cooldown and the next publish) and serialised
+// by a lock so two saves in a row do not double up.
+function fourgeBlogSyncNotifySubscribers($reason = 'publish') {
+    $reg  = fourgeBlogSyncSubscribersRead();
+    $subs = $reg['subscribers'];
+    if (!$subs) return ['notified' => 0, 'confirmed' => 0];
+    $own  = fourgeBlogSyncOwnBase();
+    if ($own === '') return ['notified' => 0, 'confirmed' => 0, 'skipped' => 'no own host'];
+    $dir = PUBLIC_HTML . '/data'; if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $lock = @fopen($dir . '/.blog-sync-notify.lock', 'c');
+    if ($lock && !flock($lock, LOCK_EX | LOCK_NB)) { fclose($lock); return ['notified' => 0, 'confirmed' => 0, 'skipped' => 'busy']; }
+    @set_time_limit(90);
+    $n = 0; $okN = 0; $start = time();
+    foreach ($subs as &$s) {
+        if ($n >= 25 || (time() - $start) > 40) break;
+        $n++;
+        $r = fourgeBlogSyncPostJson(rtrim((string)$s['site'], '/') . '/admin/api.php', ['action' => 'blog_sync_poke', 'push' => 1, 'source' => $own, 'reason' => $reason], 5);
+        $s['lastNotifiedAt']    = gmdate('c');
+        $s['lastNotifyOk']      = !empty($r['ok']);
+        $s['lastNotifyResult']  = !empty($r['ok'])
+            ? ('checked:' . (int)!empty($r['json']['checked']) . ' added:' . (int)($r['json']['added'] ?? 0) . (isset($r['json']['pushed']) ? ' pushed:' . (int)!empty($r['json']['pushed']) : ''))
+            : trim('HTTP ' . $r['code'] . ' ' . $r['error']);
+        if (!empty($r['ok'])) $okN++;
+    }
+    unset($s);
+    $reg['subscribers']     = $subs;
+    $reg['lastNotifiedAt']  = gmdate('c');
+    $reg['lastNotifyCount'] = $n;
+    $reg['lastNotifyOk']    = $okN;
+    fourgeBlogSyncSubscribersWrite($reg);
+    if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
+    return ['notified' => $n, 'confirmed' => $okN];
+}
+
+// cmsWriteFile hook: data/posts.json just changed (a publish, edit or unpublish).
+// The response is already on its way; with php-fpm it is flushed first so the
+// editor never waits on partner sites, elsewhere the pokes run inline (5 s each,
+// bounded above).
+function fourgeBlogSyncAfterPostsWrite() {
+    $reg = fourgeBlogSyncSubscribersRead();
+    if (!$reg['subscribers']) return;
+    if (function_exists('fastcgi_finish_request')) { @fastcgi_finish_request(); } else { @ignore_user_abort(true); @flush(); }
+    try { fourgeBlogSyncNotifySubscribers('publish'); } catch (Throwable $e) { /* never surfaces to the save */ }
 }
 function fourgeApiBlogSyncAdmin($me, $body) {
     if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['error' => 'Admin access required']); return; }
@@ -3479,7 +3669,15 @@ function fourgeApiBlogSyncAdmin($me, $body) {
         echo json_encode(['ok' => true, 'hasToken' => false, 'endpoint' => $endpoint]);
         return;
     }
-    echo json_encode(['ok' => true, 'hasToken' => $has, 'endpoint' => $endpoint]);
+    $reg = fourgeBlogSyncSubscribersRead();
+    if ($op === 'notify') {
+        $r = fourgeBlogSyncNotifySubscribers('manual');
+        echo json_encode(['ok' => true] + $r + ['subscribers' => count($reg['subscribers'])]);
+        return;
+    }
+    echo json_encode(['ok' => true, 'hasToken' => $has, 'endpoint' => $endpoint,
+        'subscribers' => count($reg['subscribers']), 'subscriberSites' => array_map(function ($s) { return (string)$s['site']; }, $reg['subscribers']),
+        'lastNotifiedAt' => $reg['lastNotifiedAt'] ?? null, 'lastNotifyOk' => $reg['lastNotifyOk'] ?? null, 'lastNotifyCount' => $reg['lastNotifyCount'] ?? null]);
 }
 // ── GOOGLE REVIEWS ──────────────────────────────────────────────────────────
 // Reviews are fetched HERE, on the server, because the Places API key is

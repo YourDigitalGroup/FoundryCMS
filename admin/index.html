@@ -2691,7 +2691,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.131';
+const CMS_VERSION='1.14.132';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3563,6 +3563,9 @@ async function initApp(){
   // Same idea for the blog runtimes (posts.html + post lists on pages) — see
   // postsRuntimeSweepIfStale().
   try{ postsRuntimeSweepIfStale().catch(()=>{}); }catch(e){}
+  // Blog Sync's promise is "synced posts appear on this site's blog" — make sure
+  // something on the site actually shows them (see blogSyncAutoPlaceIfNeeded).
+  try{ blogSyncAutoPlaceIfNeeded().catch(()=>{}); }catch(e){}
   // First Admin+ login of the day: mirror the site's content to its GitHub repo
   // and make sure that repo is private — no longer tied to an engine update
   // happening to install (see ghDailySyncTick).
@@ -6019,6 +6022,44 @@ function blogSyncShownHtml(){
     +'<button type="button" class="fd-btn-ghost" onclick="publishBlogPage()">Publish the built-in blog page</button>'
     +'</div>';
 }
+// Blog Sync is on, posts have arrived, and NOTHING on the site displays them —
+// the state digitalmarketingmonterey.com sat in for days ("synced but not
+// showing"). Put the live post list on the site's own blog page automatically,
+// but only when that page is unambiguous (blog.html or blog/index.html), once,
+// announced in a toast and reversible in the page editor. Any other layout gets
+// the picker opened right after login instead of a silent guess. Never touches
+// a site where posts already show somewhere, or where Blog Sync is off.
+async function blogSyncAutoPlaceIfNeeded(){
+  if(!canCallApi()) return;
+  if(!Object.keys(_site).length || _postListPageIds===null || _postsHtmlExists===null){ try{ await loadPages(); }catch(e){} }
+  const bs=_site&&_site.blogSync;
+  if(!bs || !bs.enabled || bs.autoPlaced) return;
+  if(_postListPageIds===null || _postListPageIds.size>0) return;     // unknown (scan failed), or already shown somewhere
+  const cand=Object.keys(_pages).find(id=>{ const f=String(_pages[id]?.path||_pages[id]?.file||'').toLowerCase().replace(/^\.?\//,''); return f==='blog.html'||f==='blog/index.html'; });
+  if(cand){
+    await placePostListOnPage(cand,{auto:true});
+    if(_postListPageIds && _postListPageIds.has(cand)){
+      _site.blogSync.autoPlaced={page:_pages[cand].path||_pages[cand].file, at:new Date().toISOString()};
+      try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+    }
+    return;
+  }
+  if(sessionStorage.getItem('fourge_bs_place_prompted')==='1') return;   // once per sign-in, not on every tab switch
+  sessionStorage.setItem('fourge_bs_place_prompted','1');
+  try{ await openPostListPlacer(); }catch(e){}
+  toast('Blog Sync is on, but no page on this site shows the posts yet — pick the page that should list them','err');
+}
+// Source side: poke every registered partner site right now (the publish hook
+// does this automatically; this is for "I edited posts.json by other means").
+async function blogSyncNotifyNow(){
+  if(!canCallApi()){ toast('Sign in again','err'); return; }
+  try{
+    const r=await apiCall('blog_sync_admin',{op:'notify'});
+    if(!r.subscribers) toast('No partner sites are registered for pushes yet — they register themselves on their next sync','ok');
+    else toast('Notified '+r.notified+' partner site'+(r.notified===1?'':'s')+' ('+r.confirmed+' confirmed the push)','ok');
+    blogSyncTokenRefresh();
+  }catch(e){ toast('Could not notify: '+(e.message||e),'err'); }
+}
 async function blogSyncDisplayRefresh(){
   if(!document.getElementById('s-blogsync-shown')) return;
   if(canCallApi()){ try{ await loadPages(); }catch(e){} }   // fresh scan: pages gain/lose the list in the editor too
@@ -6044,6 +6085,10 @@ function blogSyncAddonHtml(){
         <div style="font-size:12px;font-weight:700;margin-bottom:6px">External scheduler (optional)</div>
         <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">For a true every-10-minute cadence even on a site nobody logs into, point your own crontab or a free service like cron-job.org at this address, with the key below as a Bearer token.</div>
         <div id="blogsync-endpoint" style="font-size:12px;font-family:var(--font-mono);color:var(--muted);line-height:1.7"></div>
+        <div style="font-size:12px;font-weight:700;margin:14px 0 6px">Partner sites (push on publish)</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">Sites that sync <em>from</em> this blog register themselves here on their next sync. Every time a post is published or changed, they are told to pull it right away.</div>
+        <div id="blogsync-subs" style="font-size:12px;color:var(--muted);line-height:1.7">Loading…</div>
+        <div style="margin-top:8px"><button type="button" class="fd-btn-secondary" onclick="blogSyncNotifyNow()"><i class="fa-solid fa-paper-plane"></i> Notify partners now</button></div>
         ${rank>=3 ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
           <button type="button" class="fd-btn-secondary" onclick="blogSyncTokenOp('regenerate')"><i class="fa-solid fa-key"></i> Generate / rotate key</button>
           <button type="button" class="fd-btn-secondary" onclick="blogSyncTokenOp('revoke')">Revoke key</button>
@@ -6112,6 +6157,13 @@ async function blogSyncTokenRefresh(){
     const r=await apiCall('blog_sync_admin',{op:'status'});
     ep.innerHTML='Tick address: '+esc(r.endpoint||'')
       +'<br>Key: '+(r.hasToken?'<span style="color:#1E8A5B">installed</span>':'<span style="color:#b45309">not set</span>');
+    const sb=document.getElementById('blogsync-subs');
+    if(sb){
+      const sites=Array.isArray(r.subscriberSites)?r.subscriberSites:[];
+      if(!sites.length) sb.innerHTML='No partner sites registered yet.';
+      else sb.innerHTML=sites.map(u=>esc(String(u).replace(/^https?:\/\//,''))).join(', ')
+        +(r.lastNotifiedAt?'<br>Last push '+esc(new Date(r.lastNotifiedAt).toLocaleString())+' — '+esc(String(r.lastNotifyOk??0))+' of '+esc(String(r.lastNotifyCount??sites.length))+' confirmed':'');
+    }
   }catch(e){}
 }
 async function blogSyncTokenOp(op){
@@ -9492,7 +9544,8 @@ async function openPostListPlacer(){
     +'</div></div>';
   m.style.display='flex';
 }
-async function placePostListOnPage(pid){
+async function placePostListOnPage(pid, opts){
+  opts=opts||{};
   const pg=_pages[pid]; const fp=pg&&(pg.path||pg.file);
   if(!fp){ toast('Page not found','err'); return; }
   if(!canCallApi()){ toast('Sign in again first','err'); return; }
@@ -9529,7 +9582,8 @@ async function placePostListOnPage(pid){
     try{ ghMirror(fp,html,'Fourge: add post list to '+fp,{serverResult:wd&&wd.gh}); }catch(e){}
     const mm=document.getElementById('postlist-placer'); if(mm) mm.style.display='none';
     if(_postListPageIds) _postListPageIds.add(pid);
-    toast('Post list added to “'+decodeHtml(pg.title||pid)+'” — it now shows every published post, newest first'+(publishedBlogPage?'. The built-in blog page (posts.html) was published too, so each card opens the full post':'')+' ✓','ok');
+    if(opts.auto) toast('Blog Sync: synced posts now show on “'+decodeHtml(pg.title||pid)+'” ('+fp+'), newest first. Move or remove the block in the page editor if you want it elsewhere'+(publishedBlogPage?'. The built-in blog page (posts.html) was published too, so each card opens the full post':'')+' ✓','ok');
+    else toast('Post list added to “'+decodeHtml(pg.title||pid)+'” — it now shows every published post, newest first'+(publishedBlogPage?'. The built-in blog page (posts.html) was published too, so each card opens the full post':'')+' ✓','ok');
     blogSyncDisplayRefresh();
   }catch(e){ toast('Could not add: '+e.message,'err'); }
 }
