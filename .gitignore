@@ -31,3 +31,6 @@ fleet-dashboard/data/sites.json
 .DS_Store
 Thumbs.db
 *.swp
+
+# Browser-test scratch folders (created and removed by the regression suites under the web root)
+_test_scratch_*/
