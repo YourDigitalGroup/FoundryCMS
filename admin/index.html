@@ -2691,7 +2691,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.132';
+const CMS_VERSION='1.14.133';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -7199,72 +7199,67 @@ loadBlog();
 // page defines one (--brand-color-primary / --brand-primary), falling back to
 // the engine accent. Long excerpts clamp to four lines so cards stay even.
 function postsRuntimeCss(){
-  return '<style id="fourge-posts-css">'
-    +'.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px;margin:24px 0}'
-    +'.fourge-posts .fp-card{display:flex;flex-direction:column;background:#fff;border:1px solid rgba(0,0,0,.07);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:transform .15s,box-shadow .15s}'
-    +'.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(0,0,0,.10);text-decoration:none}'
-    +'.fourge-posts .fp-thumb{aspect-ratio:16/9;background:rgba(0,0,0,.05);overflow:hidden}'
-    +'.fourge-posts .fp-thumb img{width:100%;height:100%;object-fit:cover;display:block}'
-    +'.fourge-posts .fp-body{padding:22px 24px 24px;display:flex;flex-direction:column;flex:1}'
-    +'.fourge-posts .fp-date{font-size:12px;opacity:.6;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}'
-    +'.fourge-posts .fp-title{font-size:21px;font-weight:700;line-height:1.3;margin:0 0 10px}'
-    +'.fourge-posts .fp-x{font-size:14.5px;opacity:.72;line-height:1.6;margin:0 0 14px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}'
-    +'.fourge-posts .fp-more{margin-top:auto;font-size:14.5px;font-weight:600;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)))}'
-    +'.fourge-posts .fp-empty{grid-column:1/-1;text-align:center;opacity:.65;padding:40px 0}'
-    +'</style>';
+  // KEEP IN STEP with fourgePostsRuntimeCss() in api.php (the server places the same
+  // runtime during sync ticks) — posts_runtime_parity.mjs fails the build on any drift.
+  return '<style id="fourge-posts-css">'+String.raw`.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px;margin:24px 0}.fourge-posts .fp-card{display:flex;flex-direction:column;background:#fff;border:1px solid rgba(0,0,0,.07);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:transform .15s,box-shadow .15s}.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(0,0,0,.10);text-decoration:none}.fourge-posts .fp-thumb{aspect-ratio:16/9;background:rgba(0,0,0,.05);overflow:hidden}.fourge-posts .fp-thumb img{width:100%;height:100%;object-fit:cover;display:block}.fourge-posts .fp-body{padding:22px 24px 24px;display:flex;flex-direction:column;flex:1}.fourge-posts .fp-date{font-size:12px;opacity:.6;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}.fourge-posts .fp-title{font-size:21px;font-weight:700;line-height:1.3;margin:0 0 10px}.fourge-posts .fp-x{font-size:14.5px;opacity:.72;line-height:1.6;margin:0 0 14px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.fourge-posts .fp-more{margin-top:auto;font-size:14.5px;font-weight:600;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)))}.fourge-posts .fp-empty{grid-column:1/-1;text-align:center;opacity:.65;padding:40px 0}.fourge-posts .fp-more-wrap{grid-column:1/-1;text-align:center;padding:8px 0 4px}.fourge-posts .fp-viewmore{display:inline-block;font:inherit;font-size:15px;font-weight:700;padding:13px 28px;border-radius:999px;border:2px solid var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));background:transparent;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));cursor:pointer;transition:background .15s,color .15s}.fourge-posts .fp-viewmore:hover{background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff}.fourge-posts .fp-viewmore .fp-count{font-weight:500;opacity:.75}`+'</style>';
 }
 function postsRuntimeAssets(){
+  // KEEP IN STEP with fourgePostsRuntimeJs() in api.php — see postsRuntimeCss().
+  // data-limit="N": never more than N posts. data-show="N": the newest N first, then a
+  // "View more posts" button reveals N more per click; the block always leads with the
+  // newest post. data-src="https://other-site.com" points a block at ANOTHER site's
+  // feed (syndication): grouped per source, one fetch each, links to the source's
+  // article pages, relative images resolved against it. The own-site block also fires
+  // one blog_sync_poke per page view and repaints once when posts arrived.
   const sc='<'+'script', ec='<'+'/script>';
-  const js=sc+' id="fourge-posts-js">\n'
-    +'(function(){\n'
-    +'function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}\n'
-    +'function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}\n'
-    +'function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}\n'
-    +'function media(u,src){ if(!u) return ""; if(/^https?:\\/\\//i.test(u)||u.indexOf("data:")===0) return u; if(u.charAt(0)==="/") return src+u; return src?(src+"/"+u):u; }\n'
-    +'function paint(box,posts,src){\n'
-    +'  var lim=parseInt(box.getAttribute("data-limit")||"0",10);\n'
-    +'  var list=(lim>0)?posts.slice(0,lim):posts;\n'
-    +'  if(!list.length){box.innerHTML="<div class=\\"fp-empty\\">No posts published yet — check back soon.</div>";return;}\n'
-    +'  box.innerHTML=list.map(function(p){\n'
-    +'    return "<a class=\\"fp-card\\" href=\\""+esc(src)+"/posts.html?p="+encodeURIComponent(p.slug||"")+"\\">"\n'
-    +'      +(p.featured?"<div class=\\"fp-thumb\\"><img src=\\""+esc(media(p.featured,src))+"\\" alt=\\""+esc(dec(p.title))+"\\" loading=\\"lazy\\"></div>":"")\n'
-    +'      +"<div class=\\"fp-body\\"><div class=\\"fp-date\\">"+esc(fd(p.date))+"</div>"\n'
-    +'      +"<h3 class=\\"fp-title\\">"+esc(dec(p.title))+"</h3>"\n'
-    +'      +(p.excerpt?"<p class=\\"fp-x\\">"+esc(dec(p.excerpt))+"</p>":"")\n'
-    +'      +"<span class=\\"fp-more\\">Read more \\u2192</span>"\n'
-    +'      +"</div></a>";\n'
-    +'  }).join("");\n'
-    +'}\n'
-    // data-src="https://other-site.com" points a block at ANOTHER site's posts
-    // feed (syndication) — boxes are grouped per source so each feed is fetched
-    // once, links go to the source site's article pages, and relative featured
-    // images are resolved against the source. No data-src = this site (as before).
-    +'async function run(){\n'
-    +'  var boxes=[].slice.call(document.querySelectorAll("[data-fourge-posts]")); if(!boxes.length) return;\n'
-    +'  var groups={};\n'
-    +'  boxes.forEach(function(b){ var s=(b.getAttribute("data-src")||"").replace(/\\/+$/,""); (groups[s]=groups[s]||[]).push(b); });\n'
-    +'  for(var src in groups){\n'
-    +'    var posts=[]; var u=src+"/data/posts.json?t="+Date.now();\n'
-    +'    try{var r=await fetch(u);if(r.ok)posts=await r.json();}catch(e){ if(src) console.warn("Fourge posts: could not load "+u+" — the source site must allow cross-site reads (sign in to its CMS once on engine 1.14.75+ to enable).", e); }\n'
-    // A post scheduled by a 44i deploy package carries publishAt: it goes live
-    // the moment that time passes, evaluated at view time so no cron is needed.
-    +'    var NOW=Date.now();\n'
-    +'    posts=(Array.isArray(posts)?posts:[]).filter(function(p){ if(!p) return false; if(p.published) return true; var t=p.publishAt?Date.parse(p.publishAt):NaN; return !isNaN(t)&&t<=NOW; });\n'
-    +'    posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});\n'
-    +'    var bs=groups[src];\n'
-    +'    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);\n'
-    +'  }\n'
-    // Blog Sync: ask the server to pull any new posts from the partner blog — a
-    // cheap no-op unless the sync is enabled and 10+ minutes have passed. When
-    // posts did arrive, the list repaints once so this very visitor sees them.
-    +'  if(groups[""]&&!window.__fourgePostsPoked){ window.__fourgePostsPoked=true;\n'
-    +'    try{ fetch("/admin/api.php",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"blog_sync_poke"}),keepalive:true}).then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0) run(); }).catch(function(){}); }catch(e){}\n'
-    +'  }\n'
-    +'}\n'
-    +'window.fourgePostsRefresh=run;\n'
-    +'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();\n'
-    +'})();\n'
-    +ec;
+  const js=sc+' id="fourge-posts-js">\n'+String.raw`(function(){
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}
+function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}
+function media(u,src){ if(!u) return ""; if(/^https?:\/\//i.test(u)||u.indexOf("data:")===0) return u; if(u.charAt(0)==="/") return src+u; return src?(src+"/"+u):u; }
+function card(p,src){
+  return "<a class=\"fp-card\" href=\""+esc(src)+"/posts.html?p="+encodeURIComponent(p.slug||"")+"\">"
+    +(p.featured?"<div class=\"fp-thumb\"><img src=\""+esc(media(p.featured,src))+"\" alt=\""+esc(dec(p.title))+"\" loading=\"lazy\"></div>":"")
+    +"<div class=\"fp-body\"><div class=\"fp-date\">"+esc(fd(p.date))+"</div>"
+    +"<h3 class=\"fp-title\">"+esc(dec(p.title))+"</h3>"
+    +(p.excerpt?"<p class=\"fp-x\">"+esc(dec(p.excerpt))+"</p>":"")
+    +"<span class=\"fp-more\">Read more \u2192</span>"
+    +"</div></a>";
+}
+function paint(box,posts,src){
+  var lim=parseInt(box.getAttribute("data-limit")||"0",10);
+  var all=(lim>0)?posts.slice(0,lim):posts;
+  if(!all.length){box.innerHTML="<div class=\"fp-empty\">No posts published yet — check back soon.</div>";return;}
+  var step=parseInt(box.getAttribute("data-show")||"0",10);
+  var shown=(step>0)?Math.min(all.length,Math.max(step,box.__fpShown||0)):all.length;
+  box.__fpShown=shown;
+  var html=all.slice(0,shown).map(function(p){return card(p,src);}).join("");
+  if(shown<all.length) html+="<div class=\"fp-more-wrap\"><button type=\"button\" class=\"fp-viewmore\">View more posts <span class=\"fp-count\">("+(all.length-shown)+" more)</span></button></div>";
+  box.innerHTML=html;
+  var btn=box.querySelector(".fp-viewmore");
+  if(btn) btn.addEventListener("click",function(){ box.__fpShown=shown+step; paint(box,posts,src); });
+}
+async function run(){
+  var boxes=[].slice.call(document.querySelectorAll("[data-fourge-posts]")); if(!boxes.length) return;
+  var groups={};
+  boxes.forEach(function(b){ var s=(b.getAttribute("data-src")||"").replace(/\/+$/,""); (groups[s]=groups[s]||[]).push(b); });
+  for(var src in groups){
+    var posts=[]; var u=src+"/data/posts.json?t="+Date.now();
+    try{var r=await fetch(u);if(r.ok)posts=await r.json();}catch(e){ if(src) console.warn("Fourge posts: could not load "+u+" — the source site must allow cross-site reads (sign in to its CMS once on engine 1.14.75+ to enable).", e); }
+    var NOW=Date.now();
+    posts=(Array.isArray(posts)?posts:[]).filter(function(p){ if(!p) return false; if(p.published) return true; var t=p.publishAt?Date.parse(p.publishAt):NaN; return !isNaN(t)&&t<=NOW; });
+    posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});
+    var bs=groups[src];
+    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);
+  }
+  if(groups[""]&&!window.__fourgePostsPoked){ window.__fourgePostsPoked=true;
+    try{ fetch("/admin/api.php",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"blog_sync_poke"}),keepalive:true}).then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0) run(); }).catch(function(){}); }catch(e){}
+  }
+}
+window.fourgePostsRefresh=run;
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();
+})();
+`+ec;
   return postsRuntimeCss()+'\n'+js;
 }
 // Keep the runtime current on every save: strip any prior copy, then re-insert
@@ -7289,7 +7284,7 @@ function ensurePostsRuntime(html){
 // once — posts.html only while it is still the generated shell (never a custom
 // page someone renamed to posts.html), plus any page carrying a
 // [data-fourge-posts] list. Bump the version to sweep again after a later change.
-const POSTS_RUNTIME_SWEEP_VERSION=2;   // 2: posts.html fetches root-absolute (works at /posts/ too)
+const POSTS_RUNTIME_SWEEP_VERSION=3;   // 3: post lists gain data-show / "View more posts"; 2: posts.html fetches root-absolute
 async function postsRuntimeSweepIfStale(){
   if(!canCallApi() || (_site&&_site.postsRuntimeSweptVersion===POSTS_RUNTIME_SWEEP_VERSION)) return;
   try{
@@ -9489,9 +9484,10 @@ function veVideoFlags(){
 // The insertable block. The preview card inside is what you see in the editor;
 // on the live page the runtime replaces the container's contents with the real
 // post list.
-function postListSnippet(src){
+function postListSnippet(src, show){
   src=String(src||'').trim().replace(/\/+$/,'');
-  return '<div data-fourge-posts class="fourge-posts"'+(src?' data-src="'+esc(src)+'"':'')+'>'
+  show=(show===undefined)?3:(parseInt(show,10)||0);   // newest 3 first + "View more posts"; 0 = all at once
+  return '<div data-fourge-posts class="fourge-posts"'+(src?' data-src="'+esc(src)+'"':'')+(show>0?' data-show="'+show+'"':'')+'>'
     +'<div class="fp-card" style="pointer-events:none"><div class="fp-thumb"></div><div class="fp-body"><div class="fp-date">Post date</div><h3 class="fp-title">'+(src?'Posts from '+esc(src.replace(/^https?:\/\//i,''))+' appear here automatically':'Your published posts appear here automatically')+'</h3><p class="fp-x">Newest first, straight from the '+(src?'source site’s':'')+' Blog tab. This preview is replaced by the live list on the published page.</p></div></div>'
     +'</div>';
 }

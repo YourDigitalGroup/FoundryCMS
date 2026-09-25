@@ -561,6 +561,8 @@ function cmsWriteFile($body) {
     // version doesn't know, would otherwise replace a working api.php with one
     // that answers every request with an error page — and a CMS whose API is dead
     // can't even update itself back), and the admin page must at least be whole.
+    // data/site.json from the admin: keep the server's own Blog Sync bookkeeping (see fourgeBlogSyncMergeSiteBookkeeping).
+    if (ltrim(str_replace('\\', '/', (string)$relPath), '/') === 'data/site.json') { try { $content = fourgeBlogSyncMergeSiteBookkeeping($content, $dest); } catch (Throwable $e) {} }
     $guard = cmsWriteFilePreflight($dest, $content);
     if ($guard !== '') { http_response_code(409); echo json_encode(['error' => $guard]); return; }
     // Atomic write: the whole file lands under a temp name first and is renamed
@@ -3302,6 +3304,29 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $base = '', $error 
 
     $posts = cmsPkgReadJson('posts.json', []);
     if (!is_array($posts)) $posts = [];
+    // Self-healing: the synced set is what site.json remembers PLUS what posts.json
+    // already holds from this source (syncedSourceId) — a lost or stale syncedIds can
+    // never make the same posts import again. Copies that already slipped in (the
+    // same source id more than once) are dropped here, keeping the one with the
+    // original slug (duplicates were saved with a -xxxx suffix) so links stay valid.
+    $srcHost = preg_replace('~^www\.~', '', strtolower((string)parse_url($srcBase !== '' ? $srcBase : $sourceUrl, PHP_URL_HOST)));
+    $keeper = []; $dropped = 0;
+    foreach ($posts as $i => $p) {
+        if (!is_array($p) || empty($p['syncedSourceId']) || empty($p['syncedFrom']) || $srcHost === '') continue;
+        if (preg_replace('~^www\.~', '', strtolower((string)parse_url((string)$p['syncedFrom'], PHP_URL_HOST))) !== $srcHost) continue;
+        $sid = (string)$p['syncedSourceId'];
+        $syncedSet[$sid] = true;
+        if (!isset($keeper[$sid]) || strlen((string)$p['slug']) < strlen((string)$posts[$keeper[$sid]]['slug'])) $keeper[$sid] = $i;
+    }
+    if ($keeper) {
+        $keep = array_flip($keeper); $clean = [];
+        foreach ($posts as $i => $p) {
+            $sid = (is_array($p) && !empty($p['syncedSourceId']) && !empty($p['syncedFrom'])) ? (string)$p['syncedSourceId'] : '';
+            if ($sid !== '' && isset($keeper[$sid]) && !isset($keep[$i])) { $dropped++; continue; }
+            $clean[] = $p;
+        }
+        $posts = $clean;
+    }
     $existingSlugs = [];
     foreach ($posts as $p) { if (is_array($p) && !empty($p['slug'])) $existingSlugs[$p['slug']] = true; }
 
@@ -3339,15 +3364,16 @@ function fourgeBlogSyncApplyRemotePosts($site, $remotePosts, $base = '', $error 
         $added++;
     }
 
-    if ($added > 0) cmsPkgWriteJson('posts.json', $posts);
+    if ($added > 0 || $dropped > 0) cmsPkgWriteJson('posts.json', $posts);
 
     $blogSync['syncedIds']     = array_values(array_keys($syncedSet));
     $blogSync['lastCheckedAt'] = gmdate('c');
-    $blogSync['lastResult']    = $added > 0
+    $blogSync['lastResult']    = ($added > 0
         ? ($added . ' new post' . ($added === 1 ? '' : 's') . ' synced'
            . ($mediaLocalized > 0 ? ' (' . $mediaLocalized . ' media file' . ($mediaLocalized === 1 ? '' : 's') . ' copied to the media library)' : ''))
-        : 'Up to date — no new posts';
-    return ['blogSync' => $blogSync, 'added' => $added];
+        : 'Up to date — no new posts')
+        . ($dropped > 0 ? ' — removed ' . $dropped . ' duplicate cop' . ($dropped === 1 ? 'y' : 'ies') : '');
+    return ['blogSync' => $blogSync, 'added' => $added, 'dropped' => $dropped];
 }
 // Combines fetch+apply and persists site.json. Silent, cheap no-op when Blog
 // Sync isn't enabled or has no source configured — safe to call from both the
@@ -3415,6 +3441,8 @@ function fourgeBlogSyncDoSync($site) {
             // The source is reachable: (re)register for pushes so the next publish
             // there reaches this site within seconds instead of at its next visitor.
             try { $bs = fourgeBlogSyncMaybeSubscribe($bs, $base); } catch (Throwable $e) {}
+            // Make sure the site actually shows what it syncs (see fourgeBlogSyncAutoPlaceServer).
+            try { $bs = fourgeBlogSyncAutoPlaceServer($bs); } catch (Throwable $e) {}
         }
         // Persist into a FRESH read of site.json: the record handed in was read a
         // moment ago, and another save (a settings change, a page's nav update)
@@ -3631,6 +3659,163 @@ function fourgeBlogSyncNotifySubscribers($reason = 'publish') {
     fourgeBlogSyncSubscribersWrite($reg);
     if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
     return ['notified' => $n, 'confirmed' => $okN];
+}
+
+// ── The public post-list runtime, server copy ───────────────────────────────
+// The admin (postsRuntimeAssets/postsRuntimeCss in index.html) and this file emit the
+// SAME bytes — posts_runtime_parity.mjs fails the build on any drift. The server
+// needs its own copy to place the list on a partner site's blog page during a sync
+// tick, with no admin session involved (see fourgeBlogSyncAutoPlaceServer).
+function fourgePostsRuntimeCss() {
+    return '<style id="fourge-posts-css">' . <<<'CSS'
+.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px;margin:24px 0}.fourge-posts .fp-card{display:flex;flex-direction:column;background:#fff;border:1px solid rgba(0,0,0,.07);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:transform .15s,box-shadow .15s}.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(0,0,0,.10);text-decoration:none}.fourge-posts .fp-thumb{aspect-ratio:16/9;background:rgba(0,0,0,.05);overflow:hidden}.fourge-posts .fp-thumb img{width:100%;height:100%;object-fit:cover;display:block}.fourge-posts .fp-body{padding:22px 24px 24px;display:flex;flex-direction:column;flex:1}.fourge-posts .fp-date{font-size:12px;opacity:.6;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}.fourge-posts .fp-title{font-size:21px;font-weight:700;line-height:1.3;margin:0 0 10px}.fourge-posts .fp-x{font-size:14.5px;opacity:.72;line-height:1.6;margin:0 0 14px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.fourge-posts .fp-more{margin-top:auto;font-size:14.5px;font-weight:600;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)))}.fourge-posts .fp-empty{grid-column:1/-1;text-align:center;opacity:.65;padding:40px 0}.fourge-posts .fp-more-wrap{grid-column:1/-1;text-align:center;padding:8px 0 4px}.fourge-posts .fp-viewmore{display:inline-block;font:inherit;font-size:15px;font-weight:700;padding:13px 28px;border-radius:999px;border:2px solid var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));background:transparent;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));cursor:pointer;transition:background .15s,color .15s}.fourge-posts .fp-viewmore:hover{background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff}.fourge-posts .fp-viewmore .fp-count{font-weight:500;opacity:.75}
+CSS
+    . '</style>';
+}
+function fourgePostsRuntimeJs() {
+    return <<<'JS'
+(function(){
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}
+function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}
+function media(u,src){ if(!u) return ""; if(/^https?:\/\//i.test(u)||u.indexOf("data:")===0) return u; if(u.charAt(0)==="/") return src+u; return src?(src+"/"+u):u; }
+function card(p,src){
+  return "<a class=\"fp-card\" href=\""+esc(src)+"/posts.html?p="+encodeURIComponent(p.slug||"")+"\">"
+    +(p.featured?"<div class=\"fp-thumb\"><img src=\""+esc(media(p.featured,src))+"\" alt=\""+esc(dec(p.title))+"\" loading=\"lazy\"></div>":"")
+    +"<div class=\"fp-body\"><div class=\"fp-date\">"+esc(fd(p.date))+"</div>"
+    +"<h3 class=\"fp-title\">"+esc(dec(p.title))+"</h3>"
+    +(p.excerpt?"<p class=\"fp-x\">"+esc(dec(p.excerpt))+"</p>":"")
+    +"<span class=\"fp-more\">Read more \u2192</span>"
+    +"</div></a>";
+}
+function paint(box,posts,src){
+  var lim=parseInt(box.getAttribute("data-limit")||"0",10);
+  var all=(lim>0)?posts.slice(0,lim):posts;
+  if(!all.length){box.innerHTML="<div class=\"fp-empty\">No posts published yet — check back soon.</div>";return;}
+  var step=parseInt(box.getAttribute("data-show")||"0",10);
+  var shown=(step>0)?Math.min(all.length,Math.max(step,box.__fpShown||0)):all.length;
+  box.__fpShown=shown;
+  var html=all.slice(0,shown).map(function(p){return card(p,src);}).join("");
+  if(shown<all.length) html+="<div class=\"fp-more-wrap\"><button type=\"button\" class=\"fp-viewmore\">View more posts <span class=\"fp-count\">("+(all.length-shown)+" more)</span></button></div>";
+  box.innerHTML=html;
+  var btn=box.querySelector(".fp-viewmore");
+  if(btn) btn.addEventListener("click",function(){ box.__fpShown=shown+step; paint(box,posts,src); });
+}
+async function run(){
+  var boxes=[].slice.call(document.querySelectorAll("[data-fourge-posts]")); if(!boxes.length) return;
+  var groups={};
+  boxes.forEach(function(b){ var s=(b.getAttribute("data-src")||"").replace(/\/+$/,""); (groups[s]=groups[s]||[]).push(b); });
+  for(var src in groups){
+    var posts=[]; var u=src+"/data/posts.json?t="+Date.now();
+    try{var r=await fetch(u);if(r.ok)posts=await r.json();}catch(e){ if(src) console.warn("Fourge posts: could not load "+u+" — the source site must allow cross-site reads (sign in to its CMS once on engine 1.14.75+ to enable).", e); }
+    var NOW=Date.now();
+    posts=(Array.isArray(posts)?posts:[]).filter(function(p){ if(!p) return false; if(p.published) return true; var t=p.publishAt?Date.parse(p.publishAt):NaN; return !isNaN(t)&&t<=NOW; });
+    posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});
+    var bs=groups[src];
+    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);
+  }
+  if(groups[""]&&!window.__fourgePostsPoked){ window.__fourgePostsPoked=true;
+    try{ fetch("/admin/api.php",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"blog_sync_poke"}),keepalive:true}).then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0) run(); }).catch(function(){}); }catch(e){}
+  }
+}
+window.fourgePostsRefresh=run;
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();
+})();
+JS;
+}
+function fourgePostsRuntimeHtml() {
+    return fourgePostsRuntimeCss() . "\n" . '<script id="fourge-posts-js">' . "\n" . fourgePostsRuntimeJs() . "\n" . '</script>';
+}
+// Mirror of the admin's postListSnippet(src, show): the block markup with its preview card.
+function fourgePostListSnippet($show = 3, $src = '') {
+    $src  = rtrim(trim((string)$src), '/'); $show = (int)$show;
+    $attr = ($src !== '' ? ' data-src="' . htmlspecialchars($src, ENT_QUOTES) . '"' : '') . ($show > 0 ? ' data-show="' . $show . '"' : '');
+    return '<div data-fourge-posts class="fourge-posts"' . $attr . '>'
+        . '<div class="fp-card" style="pointer-events:none"><div class="fp-thumb"></div><div class="fp-body"><div class="fp-date">Post date</div><h3 class="fp-title">'
+        . ($src !== '' ? 'Posts from ' . htmlspecialchars(preg_replace('~^https?://~i', '', $src), ENT_QUOTES) . ' appear here automatically' : 'Your published posts appear here automatically')
+        . '</h3><p class="fp-x">Newest first, straight from the ' . ($src !== '' ? 'source site’s' : '') . ' Blog tab. This preview is replaced by the live list on the published page.</p></div></div>'
+        . '</div>';
+}
+// Mirror of the admin's ensurePostsRuntime(html): one copy of the runtime, css before </head>, js before </body>.
+function fourgeEnsurePostsRuntime($html) {
+    $html = (string)$html;
+    $html = preg_replace('~<style id="fourge-posts-css">[\s\S]*?</style>\s*~i', '', $html);
+    $html = preg_replace('~<script id="fourge-posts-js">[\s\S]*?</script>\s*~i', '', $html);
+    if (strpos($html, 'data-fourge-posts') === false) return $html;
+    $assets = fourgePostsRuntimeHtml();
+    $cut = strpos($assets, '</style>') + strlen('</style>');
+    $css = substr($assets, 0, $cut); $js = ltrim(substr($assets, $cut));
+    $html = fourgeInsertBefore($html, '~</head>~i', $css . "\n") ?? ($css . "\n" . $html);
+    $html = fourgeInsertBefore($html, '~</body>~i', $js . "\n") ?? ($html . "\n" . $js);
+    return $html;
+}
+// Insert $ins right before the first match of $pattern; null when there is no match.
+function fourgeInsertBefore($html, $pattern, $ins) {
+    if (!preg_match($pattern, $html, $m, PREG_OFFSET_CAPTURE)) return null;
+    $pos = $m[0][1];
+    return substr($html, 0, $pos) . $ins . substr($html, $pos);
+}
+
+// ── Server-side placement ──────────────────────────────────────────────────
+// The sign-in placement (blogSyncAutoPlaceIfNeeded in the admin) needs an admin
+// session that reaches it; on two partner sites it never did. So a sync tick does
+// the same thing here, with the same guards: Blog Sync on, never placed before, a
+// page literally named blog.html (or blog/index.html) that does not carry the live
+// list, and no other page carrying it either. Appends the list (newest 3 + "View
+// more posts") before </main> / <footer> / </body>, adds the runtime, writes
+// atomically, mirrors to GitHub, and records blogSync.autoPlaced so it is once only.
+function fourgeBlogSyncAutoPlaceServer(array $blogSync) {
+    if (empty($blogSync['enabled']) || !empty($blogSync['autoPlaced'])) return $blogSync;
+    $root = PUBLIC_HTML; $rel = null;
+    foreach (['blog.html', 'blog/index.html'] as $cand) { if (is_file($root . '/' . $cand)) { $rel = $cand; break; } }
+    if ($rel === null) return $blogSync;
+    $html = (string)@file_get_contents($root . '/' . $rel);
+    if ($html === '' || strpos($html, 'data-fourge-posts') !== false || !preg_match('~</body>~i', $html)) return $blogSync;
+    $pages = [];
+    scanHtml($root, $root, ['preview.html', '404.html', '500.html', 'maintenance.html', 'coming-soon.html', 'offline.html'], $pages);
+    foreach ($pages as $pg) { if (!empty($pg['has_post_list'])) return $blogSync; }   // shown elsewhere on purpose — not ours to guess
+    $sec = "\n" . '<section class="fourge-posts-wrap" style="max-width:1180px;margin:0 auto;padding:40px 24px">' . fourgePostListSnippet(3) . '</section>' . "\n";
+    $out = fourgeInsertBefore($html, '~</main>~i', $sec) ?? fourgeInsertBefore($html, '~<footer\b~i', $sec) ?? fourgeInsertBefore($html, '~</body>~i', $sec);
+    if ($out === null) return $blogSync;
+    $out = fourgeEnsurePostsRuntime($out);
+    $dest = $root . '/' . $rel; $tmp = $dest . '.tmp-' . bin2hex(random_bytes(4));
+    if (@file_put_contents($tmp, $out) !== strlen($out) || !@rename($tmp, $dest)) { @unlink($tmp); return $blogSync; }
+    try { cmsGhAfterWrite($rel, $out); } catch (Throwable $e) {}
+    $blogSync['autoPlaced'] = ['page' => $rel, 'at' => gmdate('c'), 'by' => 'server'];
+    return $blogSync;
+}
+
+// ── site.json bookkeeping guard ────────────────────────────────────────────
+// A save of data/site.json from the admin is the WHOLE object as that browser last
+// loaded it. The server keeps its own Blog Sync bookkeeping in there (which posts
+// were synced, when, where it registered, what it placed), written by sync ticks
+// that browser never saw. A stale copy used to wipe syncedIds, and the next tick
+// imported every post again (thelakedigital.com: 50 posts, three times over). The
+// server-owned keys are taken from the file on disk; the operator-owned ones
+// (enabled, sourceUrl) are whatever the admin sent. syncedIds is the union.
+function fourgeBlogSyncMergeSiteBookkeeping($content, $dest) {
+    $incoming = json_decode((string)$content, true);
+    if (!is_array($incoming) || !is_file($dest)) return $content;
+    $current = json_decode((string)@file_get_contents($dest), true);
+    $cur = (is_array($current) && is_array($current['blogSync'] ?? null)) ? $current['blogSync'] : null;
+    if (!$cur) return $content;
+    $bs = is_array($incoming['blogSync'] ?? null) ? $incoming['blogSync'] : [];
+    $changed = false;
+    foreach (['syncedIds', 'lastCheckedAt', 'lastResult', 'resolvedBase', 'lastPushAt', 'subscribedAt', 'subscribedTo', 'subscribedAs', 'pushSubscribed', 'autoPlaced'] as $k) {
+        if (!array_key_exists($k, $cur)) continue;
+        if ($k === 'syncedIds') {
+            $a = is_array($bs['syncedIds'] ?? null) ? array_map('strval', $bs['syncedIds']) : [];
+            $u = array_values(array_unique(array_merge(array_map('strval', is_array($cur['syncedIds']) ? $cur['syncedIds'] : []), $a)));
+            if ($u !== $a) { $bs['syncedIds'] = $u; $changed = true; }
+            continue;
+        }
+        if (!array_key_exists($k, $bs) || $bs[$k] !== $cur[$k]) { $bs[$k] = $cur[$k]; $changed = true; }
+    }
+    if (!$changed) return $content;
+    $incoming['blogSync'] = $bs;
+    $out = json_encode($incoming, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($out)) return $content;
+    return preg_replace_callback('/^( +)/m', function ($m) { return str_repeat(' ', intdiv(strlen($m[1]), 2)); }, $out);   // the admin's 2-space style
 }
 
 // cmsWriteFile hook: data/posts.json just changed (a publish, edit or unpublish).
