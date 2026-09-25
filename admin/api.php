@@ -75,6 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
+define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
 define('MG_DOMAIN',    (string)($__secret['mg_domain']    ?? 'mg.example.com'));
@@ -3443,6 +3444,7 @@ function fourgeBlogSyncDoSync($site) {
             try { $bs = fourgeBlogSyncMaybeSubscribe($bs, $base); } catch (Throwable $e) {}
             // Make sure the site actually shows what it syncs (see fourgeBlogSyncAutoPlaceServer).
             try { $bs = fourgeBlogSyncAutoPlaceServer($bs); } catch (Throwable $e) {}
+            try { $bs = fourgeBlogSyncRefreshRuntimeServer($bs); } catch (Throwable $e) {}
         }
         // Persist into a FRESH read of site.json: the record handed in was read a
         // moment ago, and another save (a settings change, a page's nav update)
@@ -3668,7 +3670,7 @@ function fourgeBlogSyncNotifySubscribers($reason = 'publish') {
 // tick, with no admin session involved (see fourgeBlogSyncAutoPlaceServer).
 function fourgePostsRuntimeCss() {
     return '<style id="fourge-posts-css">' . <<<'CSS'
-.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px;margin:24px 0}.fourge-posts .fp-card{display:flex;flex-direction:column;background:#fff;border:1px solid rgba(0,0,0,.07);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:transform .15s,box-shadow .15s}.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(0,0,0,.10);text-decoration:none}.fourge-posts .fp-thumb{aspect-ratio:16/9;background:rgba(0,0,0,.05);overflow:hidden}.fourge-posts .fp-thumb img{width:100%;height:100%;object-fit:cover;display:block}.fourge-posts .fp-body{padding:22px 24px 24px;display:flex;flex-direction:column;flex:1}.fourge-posts .fp-date{font-size:12px;opacity:.6;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}.fourge-posts .fp-title{font-size:21px;font-weight:700;line-height:1.3;margin:0 0 10px}.fourge-posts .fp-x{font-size:14.5px;opacity:.72;line-height:1.6;margin:0 0 14px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.fourge-posts .fp-more{margin-top:auto;font-size:14.5px;font-weight:600;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)))}.fourge-posts .fp-empty{grid-column:1/-1;text-align:center;opacity:.65;padding:40px 0}.fourge-posts .fp-more-wrap{grid-column:1/-1;text-align:center;padding:8px 0 4px}.fourge-posts .fp-viewmore{display:inline-block;font:inherit;font-size:15px;font-weight:700;padding:13px 28px;border-radius:999px;border:2px solid var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));background:transparent;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));cursor:pointer;transition:background .15s,color .15s}.fourge-posts .fp-viewmore:hover{background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff}.fourge-posts .fp-viewmore .fp-count{font-weight:500;opacity:.75}
+.fourge-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px;margin:24px 0}.fourge-posts .fp-card{display:flex;flex-direction:column;background:#fff;border:1px solid rgba(0,0,0,.07);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:transform .15s,box-shadow .15s}.fourge-posts .fp-card:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(0,0,0,.10);text-decoration:none}.fourge-posts .fp-thumb{aspect-ratio:16/9;background:rgba(0,0,0,.05);overflow:hidden}.fourge-posts .fp-thumb img{width:100%;height:100%;object-fit:cover;display:block}.fourge-posts .fp-body{padding:22px 24px 24px;display:flex;flex-direction:column;flex:1}.fourge-posts .fp-date{font-size:12px;opacity:.6;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}.fourge-posts .fp-title{font-size:21px;font-weight:700;line-height:1.3;margin:0 0 10px}.fourge-posts .fp-x{font-size:14.5px;opacity:.72;line-height:1.6;margin:0 0 14px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.fourge-posts .fp-more{margin-top:auto;font-size:14.5px;font-weight:600;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)))}.fourge-posts .fp-empty{grid-column:1/-1;text-align:center;opacity:.65;padding:40px 0}.fourge-posts .fp-more-wrap{grid-column:1/-1;text-align:center;padding:8px 0 4px}.fourge-posts .fp-viewmore{display:inline-block;font:inherit;font-size:15px;font-weight:700;padding:13px 28px;border-radius:999px;border:2px solid var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));background:transparent;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));cursor:pointer;transition:background .15s,color .15s}.fourge-posts .fp-viewmore:hover{background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff}.fourge-posts .fp-viewmore .fp-count{font-weight:500;opacity:.75}.fourge-posts.fp-single{display:block}.fourge-posts .fp-article{max-width:760px;margin:0 auto;padding:8px 0 40px}.fourge-posts .fp-back{display:inline-block;font-size:15px;font-weight:600;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));text-decoration:none;margin:0 0 22px}.fourge-posts .fp-back-end{margin:36px 0 0}.fourge-posts .fp-meta{font-size:12.5px;opacity:.65;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}.fourge-posts .fp-h1{font-size:clamp(30px,4.6vw,44px);line-height:1.15;font-weight:800;margin:0 0 18px;letter-spacing:-.01em}.fourge-posts .fp-hero{margin:24px 0 32px;border-radius:14px;overflow:hidden}.fourge-posts .fp-hero img{width:100%;height:auto;display:block}.fourge-posts .fp-content{font-size:18px;line-height:1.75}.fourge-posts .fp-content p{margin:0 0 1.25em}.fourge-posts .fp-content h2{font-size:1.6em;line-height:1.25;margin:1.6em 0 .6em}.fourge-posts .fp-content h3{font-size:1.3em;line-height:1.3;margin:1.4em 0 .5em}.fourge-posts .fp-content h4{font-size:1.1em;margin:1.2em 0 .4em}.fourge-posts .fp-content ul,.fourge-posts .fp-content ol{margin:0 0 1.25em 1.4em}.fourge-posts .fp-content li{margin:0 0 .5em}.fourge-posts .fp-content img,.fourge-posts .fp-content video{max-width:100%;height:auto;border-radius:10px;display:block}.fourge-posts .fp-content figure{margin:1.6em 0}.fourge-posts .fp-content figcaption{font-size:14px;opacity:.65;margin-top:8px;text-align:center}.fourge-posts .fp-content blockquote{margin:1.6em 0;padding:4px 0 4px 22px;border-left:4px solid var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));font-size:1.15em;font-style:italic}.fourge-posts .fp-content blockquote cite{display:block;font-size:.8em;font-style:normal;opacity:.7;margin-top:8px}.fourge-posts .fp-content .fp-embed{position:relative;padding-top:56.25%}.fourge-posts .fp-content .fp-embed iframe{position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:10px}.fourge-posts .fp-content a{color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)))}.fourge-posts .fp-content hr{border:0;border-top:1px solid rgba(0,0,0,.1);margin:2em 0}.fp-hidden{display:none !important}
 CSS
     . '</style>';
 }
@@ -3679,8 +3681,11 @@ function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"
 function dec(s){var t=document.createElement("textarea");t.innerHTML=s==null?"":String(s);return t.value;}
 function fd(d){if(!d)return"";try{return new Date(d+"T00:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}catch(e){return d;}}
 function media(u,src){ if(!u) return ""; if(/^https?:\/\//i.test(u)||u.indexOf("data:")===0) return u; if(u.charAt(0)==="/") return src+u; return src?(src+"/"+u):u; }
-function card(p,src){
-  return "<a class=\"fp-card\" href=\""+esc(src)+"/posts.html?p="+encodeURIComponent(p.slug||"")+"\">"
+function here(box){ var s=box.getAttribute("data-single"); return s?s.replace(/[?#].*$/,""):location.pathname; }
+function slugParam(){ try{ return new URLSearchParams(location.search).get("p")||""; }catch(e){ return ""; } }
+function href(box,p,src){ return src?(src+"/posts.html?p="+encodeURIComponent(p.slug||"")):(here(box)+"?p="+encodeURIComponent(p.slug||"")); }
+function card(box,p,src){
+  return "<a class=\"fp-card\" href=\""+esc(href(box,p,src))+"\">"
     +(p.featured?"<div class=\"fp-thumb\"><img src=\""+esc(media(p.featured,src))+"\" alt=\""+esc(dec(p.title))+"\" loading=\"lazy\"></div>":"")
     +"<div class=\"fp-body\"><div class=\"fp-date\">"+esc(fd(p.date))+"</div>"
     +"<h3 class=\"fp-title\">"+esc(dec(p.title))+"</h3>"
@@ -3688,14 +3693,61 @@ function card(p,src){
     +"<span class=\"fp-more\">Read more \u2192</span>"
     +"</div></a>";
 }
+function block(b,src){
+  if(!b||typeof b!=="object") return "";
+  var t=b.type||"";
+  if(t==="paragraph") return b.html?"<p>"+b.html+"</p>":"";
+  if(t==="heading"){ var lv=String(b.level||"h2").toLowerCase().replace(/[^h1-6]/g,"")||"h2"; if(lv==="h1") lv="h2"; return "<"+lv+">"+esc(b.text||"")+"</"+lv+">"; }
+  if(t==="image"){ if(!b.url) return ""; return "<figure><img src=\""+esc(media(b.url,src))+"\" alt=\""+esc(b.alt||"")+"\" loading=\"lazy\">"+(b.caption?"<figcaption>"+esc(b.caption)+"</figcaption>":"")+"</figure>"; }
+  if(t==="video"){ if(!b.url) return ""; return "<figure><video src=\""+esc(media(b.url,src))+"\""+(b.poster?" poster=\""+esc(media(b.poster,src))+"\"":"")+" controls playsinline preload=\"metadata\"></video>"+(b.caption?"<figcaption>"+esc(b.caption)+"</figcaption>":"")+"</figure>"; }
+  if(t==="quote") return "<blockquote><p>"+esc(b.text||"")+"</p>"+(b.cite?"<cite>"+esc(b.cite)+"</cite>":"")+"</blockquote>";
+  if(t==="list"){ var tag=b.ordered?"ol":"ul"; var items=Array.isArray(b.items)?b.items:String(b.items||"").split("\n"); return "<"+tag+">"+items.filter(function(x){return String(x).trim();}).map(function(x){return "<li>"+esc(String(x).trim())+"</li>";}).join("")+"</"+tag+">"; }
+  if(t==="embed"){ if(!b.url) return ""; var u=String(b.url), yt=u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/), vm=u.match(/vimeo\.com\/(\d+)/); if(yt) u="https://www.youtube.com/embed/"+yt[1]; else if(vm) u="https://player.vimeo.com/video/"+vm[1]; else return "<p><a href=\""+esc(b.url)+"\" target=\"_blank\" rel=\"noopener\">"+esc(b.url)+"</a></p>"; return "<figure class=\"fp-embed\"><iframe src=\""+esc(u)+"\" loading=\"lazy\" allowfullscreen allow=\"autoplay; encrypted-media; picture-in-picture\"></iframe></figure>"; }
+  if(t==="divider") return "<hr>";
+  if(t==="html") return b.html||"";
+  return "";
+}
+function article(box,p,src){
+  var back=esc(here(box)); var meta=[fd(p.date)]; if(p.author) meta.push("By "+dec(p.author)); if(p.readMins) meta.push(p.readMins+" min read");
+  return "<article class=\"fp-article\">"
+    +"<a class=\"fp-back\" href=\""+back+"\">\u2190 All posts</a>"
+    +"<div class=\"fp-meta\">"+esc(meta.join(" \u00b7 "))+"</div>"
+    +"<h1 class=\"fp-h1\">"+esc(dec(p.title))+"</h1>"
+    +(p.featured?"<figure class=\"fp-hero\"><img src=\""+esc(media(p.featured,src))+"\" alt=\""+esc(dec(p.title))+"\"></figure>":"")
+    +"<div class=\"fp-content\">"+(Array.isArray(p.blocks)?p.blocks.map(function(b){return block(b,src);}).join(""):"")+"</div>"
+    +"<a class=\"fp-back fp-back-end\" href=\""+back+"\">\u2190 All posts</a>"
+    +"</article>";
+}
+function headMeta(name,val){ var m=document.head.querySelector("meta[name=\""+name+"\"]"); if(!m){ m=document.createElement("meta"); m.setAttribute("name",name); document.head.appendChild(m); } m.setAttribute("content",val); }
+function seo(p){
+  var t=document.title, cut=t.lastIndexOf(" | "); if(cut<0) cut=t.lastIndexOf(" \u2014 "); var site=cut>=0?t.slice(cut):"";
+  document.title=dec(p.title)+site;
+  if(p.excerpt) headMeta("description",dec(p.excerpt));
+  var canon=p.canonicalUrl||(location.origin+location.pathname+"?p="+encodeURIComponent(p.slug||""));
+  var lk=document.head.querySelector("link[rel=\"canonical\"]"); if(!lk){ lk=document.createElement("link"); lk.setAttribute("rel","canonical"); document.head.appendChild(lk); } lk.setAttribute("href",canon);
+}
+function focus(box){
+  var wrap=box.closest("main")||document.body, keep=box;
+  while(keep.parentElement&&keep.parentElement!==wrap) keep=keep.parentElement;
+  [].slice.call(wrap.children).forEach(function(el){ if(el===keep) return; var tag=el.tagName.toLowerCase(); if(tag==="header"||tag==="nav"||tag==="footer"||tag==="script"||tag==="style"||tag==="link") return; el.classList.add("fp-hidden"); });
+}
 function paint(box,posts,src){
   var lim=parseInt(box.getAttribute("data-limit")||"0",10);
   var all=(lim>0)?posts.slice(0,lim):posts;
+  var slug=src?"":slugParam();
+  if(slug){
+    var p=null; for(var k=0;k<posts.length;k++){ if(posts[k].slug===slug){ p=posts[k]; break; } }
+    box.classList.add("fp-single");
+    box.innerHTML=p?article(box,p,src):"<article class=\"fp-article\"><a class=\"fp-back\" href=\""+esc(here(box))+"\">\u2190 All posts</a><h1 class=\"fp-h1\">Post not found</h1><p>This post is not available here any more.</p></article>";
+    if(p) seo(p);
+    focus(box);
+    return;
+  }
   if(!all.length){box.innerHTML="<div class=\"fp-empty\">No posts published yet — check back soon.</div>";return;}
   var step=parseInt(box.getAttribute("data-show")||"0",10);
   var shown=(step>0)?Math.min(all.length,Math.max(step,box.__fpShown||0)):all.length;
   box.__fpShown=shown;
-  var html=all.slice(0,shown).map(function(p){return card(p,src);}).join("");
+  var html=all.slice(0,shown).map(function(p){return card(box,p,src);}).join("");
   if(shown<all.length) html+="<div class=\"fp-more-wrap\"><button type=\"button\" class=\"fp-viewmore\">View more posts <span class=\"fp-count\">("+(all.length-shown)+" more)</span></button></div>";
   box.innerHTML=html;
   var btn=box.querySelector(".fp-viewmore");
@@ -3711,8 +3763,8 @@ async function run(){
     var NOW=Date.now();
     posts=(Array.isArray(posts)?posts:[]).filter(function(p){ if(!p) return false; if(p.published) return true; var t=p.publishAt?Date.parse(p.publishAt):NaN; return !isNaN(t)&&t<=NOW; });
     posts.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});
-    var bs=groups[src];
-    for(var i=0;i<bs.length;i++) paint(bs[i],posts,src);
+    var bs=groups[src], single=!src&&slugParam();
+    for(var i=0;i<bs.length;i++){ if(single&&i>0){ bs[i].classList.add("fp-hidden"); continue; } paint(bs[i],posts,src); }
   }
   if(groups[""]&&!window.__fourgePostsPoked){ window.__fourgePostsPoked=true;
     try{ fetch("/admin/api.php",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"blog_sync_poke"}),keepalive:true}).then(function(r){return r.json();}).then(function(d){ if(d&&d.added>0) run(); }).catch(function(){}); }catch(e){}
@@ -3785,6 +3837,29 @@ function fourgeBlogSyncAutoPlaceServer(array $blogSync) {
     return $blogSync;
 }
 
+// During a tick: every page carrying the list gets the CURRENT runtime when its copy
+// is older — so a change like "posts open inside the page" reaches live sites at
+// their next visitor, no sign-in needed. Once per runtime version, bounded per tick.
+function fourgeBlogSyncRefreshRuntimeServer(array $blogSync) {
+    if ((int)($blogSync['runtimeSweptVersion'] ?? 0) === FOURGE_POSTS_RUNTIME_VERSION) return $blogSync;
+    $root = PUBLIC_HTML; $pages = []; $n = 0; $left = 0;
+    scanHtml($root, $root, ['preview.html', '404.html', '500.html', 'maintenance.html', 'coming-soon.html', 'offline.html'], $pages);
+    foreach ($pages as $pg) {
+        if (empty($pg['has_post_list'])) continue;
+        if ($n >= 20) { $left++; continue; }
+        $rel = (string)$pg['path']; $file = $root . '/' . $rel;
+        $html = (string)@file_get_contents($file); if ($html === '') continue;
+        $out = fourgeEnsurePostsRuntime($html);
+        if ($out === $html) continue;                                   // already current
+        $tmp = $file . '.tmp-' . bin2hex(random_bytes(4));
+        if (@file_put_contents($tmp, $out) !== strlen($out) || !@rename($tmp, $file)) { @unlink($tmp); $left++; continue; }
+        try { cmsGhAfterWrite($rel, $out); } catch (Throwable $e) {}
+        $n++;
+    }
+    if ($left === 0) $blogSync['runtimeSweptVersion'] = FOURGE_POSTS_RUNTIME_VERSION;
+    return $blogSync;
+}
+
 // ── site.json bookkeeping guard ────────────────────────────────────────────
 // A save of data/site.json from the admin is the WHOLE object as that browser last
 // loaded it. The server keeps its own Blog Sync bookkeeping in there (which posts
@@ -3801,7 +3876,7 @@ function fourgeBlogSyncMergeSiteBookkeeping($content, $dest) {
     if (!$cur) return $content;
     $bs = is_array($incoming['blogSync'] ?? null) ? $incoming['blogSync'] : [];
     $changed = false;
-    foreach (['syncedIds', 'lastCheckedAt', 'lastResult', 'resolvedBase', 'lastPushAt', 'subscribedAt', 'subscribedTo', 'subscribedAs', 'pushSubscribed', 'autoPlaced'] as $k) {
+    foreach (['syncedIds', 'lastCheckedAt', 'lastResult', 'resolvedBase', 'lastPushAt', 'subscribedAt', 'subscribedTo', 'subscribedAs', 'pushSubscribed', 'autoPlaced', 'runtimeSweptVersion'] as $k) {
         if (!array_key_exists($k, $cur)) continue;
         if ($k === 'syncedIds') {
             $a = is_array($bs['syncedIds'] ?? null) ? array_map('strval', $bs['syncedIds']) : [];
