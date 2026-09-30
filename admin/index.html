@@ -1676,6 +1676,7 @@ textarea.fb-input{resize:vertical}
           <div class="si-sec"><h2>Site Identity</h2><div class="desc">Basic information about this website.</div>
             <div class="fr"><div class="fg"><label>Site Name</label><input type="text" id="si-name"></div><div class="fg"><label>Tagline</label><input type="text" id="si-tagline"></div></div>
             <div class="fr"><div class="fg"><label>Website URL</label><input type="text" id="si-website"></div><div class="fg"><label>Notify Email</label><input type="text" id="si-notify"></div></div>
+            <div id="si-identity-hint" style="font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:-4px">Site Name and Website URL are read from your site itself (its title tags, logo and canonical address) — nothing to type. <a href="#" onclick="siteIdentityRedetect();return false;" style="color:var(--ember);font-weight:600">Detect again</a></div>
           </div>
         </div>
         <div class="tab-panel" id="si-design">
@@ -2691,7 +2692,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.134';
+const CMS_VERSION='1.14.135';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3566,6 +3567,8 @@ async function initApp(){
   // Blog Sync's promise is "synced posts appear on this site's blog" — make sure
   // something on the site actually shows them (see blogSyncAutoPlaceIfNeeded).
   try{ blogSyncAutoPlaceIfNeeded().catch(()=>{}); }catch(e){}
+  // Site Name + Website URL come from the site itself, not the keyboard (see siteIdentityAutofillOnce).
+  try{ siteIdentityAutofillOnce().catch(()=>{}); }catch(e){}
   // First Admin+ login of the day: mirror the site's content to its GitHub repo
   // and make sure that repo is private — no longer tied to an engine update
   // happening to install (see ghDailySyncTick).
@@ -10804,9 +10807,104 @@ async function loadSiteInfo(){
   const ccEl=document.getElementById('si-customcss'); if(ccEl) ccEl.value=_site.customCss||'';
   designAutofill();   // fill brand colors + any empty contact/social from the site's HTML
 }
+// ── Site identity, read from the site itself ─────────────────────────────────
+// The name and the address are all over the site already: og:site_name, the
+// JSON-LD Organization, the header logo's alt text, the "| Site Name" every page
+// title ends with, the canonical / og:url on the home page. So they are detected,
+// not typed. Both fills only ever touch blanks; "Detect again" is the explicit way
+// to overwrite. Sources are reported so the operator can see where a value came from.
+const SITE_NAME_GENERIC=/^(logo|site logo|brand|brand logo|home|homepage|company logo|image|img|icon)$/i;
+function siteIdentityHost(u){ try{ return new URL(String(u), location.origin).host.toLowerCase(); }catch(e){ return ''; } }
+function siteIdentityProductionOrigin(){
+  // The admin usually runs on the site's own domain — but never trust a dev, staging,
+  // local or numeric host as the public address (canonicals and sitemaps would be wrong).
+  const h=location.hostname.toLowerCase();
+  if(location.protocol!=='https:' || location.port) return '';
+  if(!h.includes('.') || /^(\d{1,3}\.){3}\d{1,3}$/.test(h) || /\.(local|test|localhost|internal|lan)$/.test(h)) return '';
+  if(/^(dev|staging|stage|test|testing|preview|beta|demo|sandbox|uat|qa|tmp|temp|old|new|cms|admin)\d*\./.test(h) || /^[a-z0-9-]+\.(pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)$/.test(h)) return '';
+  return 'https://'+location.host;
+}
+function siteIdentityFromHtml(html){
+  html=String(html||''); const out={};
+  const unesc=x=>decodeHtml(String(x||'').trim());
+  const meta=(attr,val)=>{ const re1=new RegExp('<meta[^>]+'+attr+'=["\']'+val+'["\'][^>]+content=["\']([^"\']*)',"i"), re2=new RegExp('<meta[^>]+content=["\']([^"\']*)["\'][^>]+'+attr+'=["\']'+val+'["\']',"i"); const m=html.match(re1)||html.match(re2); return m?unesc(m[1]):''; };
+  out.ogSiteName=meta('property','og:site_name'); out.appName=meta('name','application-name'); out.ogUrl=meta('property','og:url');
+  const can=html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']*)/i)||html.match(/<link[^>]+href=["']([^"']*)["'][^>]+rel=["']canonical["']/i); out.canonical=can?unesc(can[1]):'';
+  out.ldName=''; out.ldUrl='';
+  const lds=html.match(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)||[];
+  for(const blk of lds){ try{ const j=JSON.parse(blk.replace(/^<script[^>]*>/i,'').replace(/<\/script>$/i,'')); const items=Array.isArray(j)?j:(j&&j['@graph']?j['@graph']:[j]); for(const it of items){ if(!it||typeof it!=='object') continue; const t=String(it['@type']||''); if(/Organization|LocalBusiness|WebSite|Corporation|Store|Agency|Company/i.test(t)){ if(!out.ldName&&it.name) out.ldName=unesc(it.name); if(!out.ldUrl&&it.url) out.ldUrl=unesc(it.url); } } }catch(e){} }
+  const head=(html.match(/<(?:header|nav)[\s\S]*?<\/(?:header|nav)>/i)||[''])[0];
+  const logo=(head.match(/<img[^>]+alt=["']([^"']+)["']/i)||html.match(/<a[^>]+href=["'](?:\/|index\.html|\.\/)["'][^>]*>[\s\S]{0,400}?<img[^>]+alt=["']([^"']+)["']/i)||html.match(/<img[^>]+class=["'][^"']*logo[^"']*["'][^>]+alt=["']([^"']+)["']/i)||html.match(/<img[^>]+alt=["']([^"']+)["'][^>]+class=["'][^"']*logo/i));
+  out.logoAlt=logo?unesc(logo[1]):''; if(SITE_NAME_GENERIC.test(out.logoAlt)) out.logoAlt='';
+  const t=html.match(/<title[^>]*>([^<]*)<\/title>/i); out.title=t?unesc(t[1]):'';
+  return out;
+}
+// The site name most page titles end with ("… | The Lake Digital"): needs at least
+// two pages agreeing and a real share of the titled pages — noisy titles lose.
+function siteIdentityTitleSuffix(titles){
+  const counts={}; let titled=0;
+  for(const raw of titles){ const t=decodeHtml(String(raw||'')).trim(); if(!t) continue; titled++; const parts=t.split(/\s+[|\u2014\u2013\-\u00b7:]{1,2}\s+|\s+::\s+/); if(parts.length<2) continue; const suf=parts[parts.length-1].trim(); if(suf.length>=3 && suf.length<=60) counts[suf]=(counts[suf]||0)+1; }
+  let best='', bestN=0; for(const k in counts){ if(counts[k]>bestN){ best=k; bestN=counts[k]; } }
+  return (bestN>=2 && bestN>=Math.ceil(titled*0.4)) ? best : '';
+}
+async function detectSiteIdentity(){
+  const res={name:'', nameSource:'', website:'', websiteSource:''};
+  if(!Object.keys(_pages).length && canCallApi()){ try{ await loadPages(); }catch(e){} }
+  let html='';
+  try{
+    const list=getPageList(); const home=list.find(p=>p.id==='home')||list.find(p=>/(^|\/)index\.html?$/i.test(p.path||p.file||''));
+    if(home && canCallApi()){ const d=await apiCall('read_file',{path:home.path||home.file}); html=d.content||''; }
+    if(!html){ const r=await fetch('../index.html?t='+Date.now()); if(r.ok) html=await r.text(); }
+  }catch(e){}
+  const h=siteIdentityFromHtml(html);
+  const titles=getPageList().map(p=>_pages[p.id]&&_pages[p.id].title).filter(Boolean);
+  const suffix=siteIdentityTitleSuffix(titles);
+  const pick=(val,src)=>{ if(!res.name && val && val.length<=80){ res.name=val; res.nameSource=src; } };
+  pick(h.ogSiteName,'og:site_name'); pick(h.ldName,'structured data'); pick(h.logoAlt,'the logo'); pick(suffix,'page titles'); pick(h.appName,'application-name');
+  if(!res.name && h.title){ const parts=h.title.split(/\s+[|\u2014\u2013\-\u00b7:]{1,2}\s+/); if(parts.length>=2){ res.name=parts[parts.length-1].trim(); res.nameSource='the home page title'; } }
+  const origin=u=>{ try{ const x=new URL(String(u), location.origin); return /^https?:$/.test(x.protocol)&&x.host&&!/^(localhost|127\.0\.0\.1)/.test(x.host)?(x.protocol+'//'+x.host):''; }catch(e){ return ''; } };
+  const pw=(val,src)=>{ const o=origin(val); if(!res.website && o){ res.website=o; res.websiteSource=src; } };
+  pw(h.canonical,'the canonical address'); pw(h.ogUrl,'og:url'); pw(h.ldUrl,'structured data');
+  if(!res.website){ const o=siteIdentityProductionOrigin(); if(o){ res.website=o; res.websiteSource='this address'; } }
+  if(!res.name && res.website){ const host=siteIdentityHost(res.website).replace(/^www\./,''); const base=host.split('.')[0]; if(base){ res.name=base.charAt(0).toUpperCase()+base.slice(1); res.nameSource='the domain name'; } }
+  return res;
+}
+// Design tab: fill the blanks (or everything, when forced by "Detect again") and save.
+async function siteIdentityFillForm(force){
+  const nameEl=document.getElementById('si-name'), webEl=document.getElementById('si-website'), hint=document.getElementById('si-identity-hint');
+  if(!nameEl||!webEl) return;
+  const needName=force||!nameEl.value.trim(), needWeb=force||!webEl.value.trim();
+  if(!needName && !needWeb) return;
+  const d=await detectSiteIdentity(); const got=[];
+  if(needName && d.name){ nameEl.value=d.name; got.push('Site Name from '+d.nameSource); }
+  if(needWeb && d.website){ webEl.value=d.website; got.push('Website URL from '+d.websiteSource); }
+  if(!got.length){ if(hint&&force) hint.firstChild.textContent='Nothing to detect yet — the site has no title, logo or canonical address to read. '; return; }
+  if(hint) hint.firstChild.textContent='Detected from your site: '+got.join(', ')+'. ';
+  await saveSiteInfo();
+}
+async function siteIdentityRedetect(){ if(!canCallApi()){ toast('Sign in again first','err'); return; } try{ await siteIdentityFillForm(true); }catch(e){ toast('Could not detect: '+(e.message||e),'err'); } }
+// Sign-in: make sure site.json carries the name and the address even if nobody
+// opens the Design tab — the sitemap, canonical links, the login panel and Blog
+// Sync's push registration all read them. Blanks only; once per sign-in.
+async function siteIdentityAutofillOnce(){
+  if(!canCallApi()) return;
+  if(!Object.keys(_site).length){ try{ const d=await apiCall('read_file',{path:F_SITE}); if(d.content){ const j=JSON.parse(d.content); if(j&&typeof j==='object') _site=j; } }catch(e){} }
+  const needName=!String(_site.name||'').trim(), needWeb=!String(_site.website||'').trim();
+  if(!needName && !needWeb) return;
+  const d=await detectSiteIdentity(); const got=[];
+  if(needName && d.name){ _site.name=d.name; got.push('name “'+d.name+'” from '+d.nameSource); }
+  if(needWeb && d.website){ _site.website=d.website; got.push('address '+d.website+' from '+d.websiteSource); }
+  if(!got.length) return;
+  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); toast('Site identity read from your site: '+got.join('; ')+' ✓','ok'); applyLoginFooter&&applyLoginFooter(); }catch(e){}
+  const nameEl=document.getElementById('si-name'), webEl=document.getElementById('si-website');
+  if(_siteInfoLoaded){ if(nameEl&&!nameEl.value.trim()) nameEl.value=_site.name||''; if(webEl&&!webEl.value.trim()) webEl.value=_site.website||''; }
+}
+
 // Pull what we can from the live site HTML: brand-color CSS variables, and any
 // contact/social fields that aren't set yet. Only fills blanks — never overwrites.
 async function designAutofill(){
+  // Site Name + Website URL: read from the site, never typed (see detectSiteIdentity).
+  try{ await siteIdentityFillForm(false); }catch(e){}
   let brandP=(_site.brand&&_site.brand.primary)||'', brandS=(_site.brand&&_site.brand.secondary)||'';
   let html='';
   try{ const donor=pickDonorPath(); if(donor && canCallApi()){ const d=await apiCall('read_file',{path:donor}); html=d.content||''; } }catch{}
