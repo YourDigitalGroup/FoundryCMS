@@ -531,6 +531,57 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 #ve-code-wrap{flex:1;display:none;min-height:0;min-width:0;background:#212121;position:relative}
 #ve-code-wrap.on{display:flex;flex-direction:column}
 #ve-code-wrap .CodeMirror{height:100%;font-size:13px;line-height:1.5;font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
+/* Code editor: in-editor search dialog (CodeMirror dialog addon), active line, clickable line numbers, key hint */
+#ve-code-wrap .CodeMirror-dialog{padding:8px 12px;font-size:13px;background:#1b1b1b;border-bottom:1px solid #333;color:#ddd;font-family:var(--font-sans)}
+#ve-code-wrap .CodeMirror-dialog input{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:13px;background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:4px 8px;color:#fff;width:24em;max-width:60%;margin:0 6px}
+#ve-code-wrap .CodeMirror-dialog input:focus{border-color:var(--ember)}
+#ve-code-wrap .CodeMirror-dialog button{font:inherit;font-size:12px;padding:3px 9px;margin-left:4px;border-radius:6px;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
+#ve-code-wrap .CodeMirror-search-hint{color:#8a8a8a}
+#ve-code-wrap .cm-searching{background:rgba(255,213,79,.32);outline:1px solid rgba(255,213,79,.55)}
+#ve-code-wrap .CodeMirror-activeline-background{background:rgba(255,255,255,.06)}
+#ve-code-wrap .CodeMirror-linenumber{cursor:pointer}
+#ve-code-wrap .CodeMirror-linenumber:hover{color:#fff}
+.ve-code-hint{position:absolute;right:18px;bottom:10px;z-index:5;font-size:11px;color:#a0a0a0;background:rgba(33,33,33,.9);border:1px solid #3a3a3a;border-radius:8px;padding:5px 9px;pointer-events:none;letter-spacing:.01em;font-family:var(--font-sans)}
+.ve-code-hint kbd{font-family:inherit;font-size:10.5px;background:#333;border:1px solid #4a4a4a;border-radius:4px;padding:0 5px;color:#eee;margin:0 1px}
+/* Media library: drop-anywhere upload */
+#media-drop{position:absolute;inset:0;z-index:40;display:none;align-items:center;justify-content:center;background:rgba(26,24,20,.42);pointer-events:none}
+#p-media.dragging #media-drop{display:flex}
+.media-drop-box{background:var(--surface);border:2px dashed var(--ember);border-radius:16px;padding:34px 44px;text-align:center;color:var(--text);box-shadow:var(--sh-lg);max-width:420px}
+.media-drop-box svg{display:block;margin:0 auto 12px;color:var(--ember)}
+.media-drop-title{font-size:20px;font-weight:800;letter-spacing:-.02em;margin-bottom:6px}
+.media-drop-sub{font-size:13px;color:var(--muted);line-height:1.5}
+#media-dnd-hint{font-size:12px;color:var(--muted);margin:-8px 0 16px;display:flex;align-items:center;gap:6px}
+/* Element CSS window */
+#elcss-body{padding:16px 18px;background:var(--bg)}
+.elcss-section{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:16px 0 8px}
+.elcss-section:first-child{margin-top:0}
+.elcss-count{font-family:var(--font-mono);font-size:10px;background:var(--surface-3);color:var(--muted);border-radius:999px;padding:1px 7px;letter-spacing:0}
+.elcss-card{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;background:var(--surface);overflow:hidden}
+.elcss-card.ro{opacity:.85}
+.elcss-head{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:var(--surface-2);flex-wrap:wrap}
+.elcss-sel{font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:var(--text);word-break:break-all;line-height:1.5;flex:1;min-width:140px}
+.elcss-badges{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;max-width:100%}
+.elcss-badge{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--surface-3);color:var(--muted);border:1px solid var(--border);white-space:nowrap;line-height:1.5}
+.elcss-badge.src,.elcss-badge.media,.elcss-badge.state,.elcss-badge.inh{text-transform:none;letter-spacing:0;font-weight:600;font-family:var(--font-mono);font-size:10.5px}
+.elcss-badge.media{background:#EEF3FF;border-color:#BDD0FF;color:#3B5BDB}
+.elcss-badge.state{background:#FDF0E8;border-color:#F3C8AD;color:#9A3B12}
+.elcss-badge.inh{background:#EEF8F1;border-color:#BFE3CB;color:#1E6B3A}
+.elcss-badge.src.link{background:#FFF7E6;border-color:#F3DDA8;color:#8A5A00}
+.elcss-badge.ro{background:var(--surface-3);color:var(--muted)}
+.elcss-decls{display:block;width:100%;box-sizing:border-box;border:none;background:var(--surface);color:var(--text);font-family:var(--font-mono);font-size:12.5px;line-height:1.6;padding:10px 12px;min-height:58px;resize:vertical;outline:none;tab-size:2;white-space:pre}
+.elcss-decls:focus{box-shadow:inset 3px 0 0 var(--ember)}
+.elcss-decls[readonly]{color:var(--muted);background:var(--surface-2)}
+.elcss-foot{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--border);background:var(--surface-2)}
+.elcss-note{font-size:11.5px;color:var(--muted);flex:1;line-height:1.45;min-width:0}
+.elcss-foot .fd-btn-primary,.elcss-foot .fd-btn-ghost{padding:6px 12px;font-size:12px;white-space:nowrap}
+.elcss-card.dirty .elcss-apply{box-shadow:0 0 0 3px rgba(219,53,22,.2)}
+.elcss-add{border:1px dashed var(--border);border-radius:10px;padding:12px;margin-top:6px;background:var(--surface)}
+.elcss-add .elcss-section{margin-top:0}
+.elcss-add-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(0,1fr);gap:10px;margin-bottom:8px;align-items:center}
+.elcss-add-row input{font-family:var(--font-mono);font-size:12.5px;width:100%;box-sizing:border-box}
+.elcss-add .elcss-decls{border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
+.elcss-empty,.elcss-loading{font-size:13px;color:var(--muted);padding:18px;text-align:center}
+.elcss-footnote{font-size:11.5px;color:var(--muted);margin:10px 2px 0;line-height:1.5}
 /* Flash the selected element's markup when switching Visual → Code. */
 .ve-code-hl{background:rgba(217,106,48,.34);border-radius:2px;box-shadow:0 0 0 1px rgba(217,106,48,.55)}
 .ve-code-hl-line{background:rgba(217,106,48,.16)!important;animation:veCodeHlFade 1.8s ease-out}
@@ -1322,6 +1373,10 @@ textarea.fb-input{resize:vertical}
           <button class="fd-btn-secondary" id="ve-redo-btn" onclick="veRedo()" disabled title="Redo (Ctrl+Shift+Z)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 014-4h12"/></svg>
           </button>
+          <button class="fd-btn-secondary" id="ve-elcss-btn" onclick="veElementCssOpen()" title="See and edit every CSS rule that applies to the selected element">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 00-2 2v5a2 2 0 01-2 2 2 2 0 012 2v5a2 2 0 002 2h1"/><path d="M16 3h1a2 2 0 012 2v5a2 2 0 002 2 2 2 0 00-2 2v5a2 2 0 01-2 2h-1"/></svg>
+            Element CSS
+          </button>
           <button class="fd-btn-secondary" onclick="veAiPageModal()" title="General Markup" id="tb-ai-edit" data-perm="aiEdit">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
             General Markup
@@ -1368,7 +1423,7 @@ textarea.fb-input{resize:vertical}
               </div>
             </div>
             <!-- Code view (CodeMirror enhances this textarea on first switch) -->
-            <div id="ve-code-wrap"><textarea id="ve-code-area" spellcheck="false"></textarea></div>
+            <div id="ve-code-wrap"><textarea id="ve-code-area" spellcheck="false"></textarea><div class="ve-code-hint" id="ve-code-hint"><kbd>⌘/Ctrl</kbd>+<kbd>F</kbd> find &nbsp;·&nbsp; <kbd>⌘/Ctrl</kbd>+<kbd>S</kbd> save &nbsp;·&nbsp; click a line number to select the line</div></div>
           </div>
 
           <!-- Properties panel -->
@@ -1612,7 +1667,13 @@ textarea.fb-input{resize:vertical}
       <!-- ══════════════════════════════════════════════════════
            MEDIA LIBRARY
       ═══════════════════════════════════════════════════════ -->
-      <div class="panel" id="p-media" style="padding:0;overflow:hidden">
+      <div class="panel" id="p-media" style="padding:0;overflow:hidden;position:relative">
+        <!-- Drop target: shown while files are dragged over the panel (see mediaDndInit) -->
+        <div id="media-drop" aria-hidden="true"><div class="media-drop-box">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <div class="media-drop-title">Drop to upload</div>
+          <div class="media-drop-sub">Images, video, PDF and SVG files go straight into the media library.</div>
+        </div></div>
         <div style="display:flex;flex:1;min-height:0;overflow:hidden">
           <div style="flex:1;overflow-y:auto;padding:32px 44px 48px">
             <div style="margin-bottom:28px">
@@ -1647,6 +1708,7 @@ textarea.fb-input{resize:vertical}
                 </button>
               </div>
             </div>
+            <div id="media-dnd-hint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Drag files from your computer and drop them anywhere on this page to upload.</div>
             <div id="media-body" style="flex:1"><div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><h3>No media yet</h3><p>Upload images, video, and documents.</p></div></div>
           </div>
           <!-- Detail panel -->
@@ -2491,8 +2553,29 @@ textarea.fb-input{resize:vertical}
 <div class="mw" id="m-uiconfirm">
   <div class="modal" style="width:420px">
     <div class="mh"><h2 id="uiconfirm-title">Please confirm</h2><button class="ib" onclick="uiConfirmResolve(false)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
-    <div class="mb"><p id="uiconfirm-msg" style="font-size:14px;color:var(--text);line-height:1.55;margin:0"></p></div>
+    <div class="mb"><p id="uiconfirm-msg" style="font-size:14px;color:var(--text);line-height:1.55;margin:0;white-space:pre-line"></p></div>
     <div class="mf"><button class="fd-btn-secondary" onclick="uiConfirmResolve(false)">Cancel</button><button class="fd-btn-primary" id="uiconfirm-ok" onclick="uiConfirmResolve(true)">Confirm</button></div>
+  </div>
+</div>
+<div class="mw" id="m-uiprompt">
+  <div class="modal" style="width:440px">
+    <div class="mh"><h2 id="uiprompt-title">Enter a value</h2><button class="ib" onclick="uiPromptResolve(null)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb"><p id="uiprompt-msg" style="font-size:14px;color:var(--text);line-height:1.55;margin:0 0 10px;white-space:pre-line"></p><input type="text" id="uiprompt-input" class="fd-input" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box"></div>
+    <div class="mf"><button class="fd-btn-secondary" onclick="uiPromptResolve(null)">Cancel</button><button class="fd-btn-primary" id="uiprompt-ok" onclick="uiPromptResolve(document.getElementById('uiprompt-input').value)">OK</button></div>
+  </div>
+</div>
+<div class="mw" id="m-uialert">
+  <div class="modal" style="width:420px">
+    <div class="mh"><h2 id="uialert-title">Notice</h2><button class="ib" onclick="uiAlertResolve()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb"><p id="uialert-msg" style="font-size:14px;color:var(--text);line-height:1.55;margin:0;white-space:pre-line"></p></div>
+    <div class="mf"><button class="fd-btn-primary" id="uialert-ok" onclick="uiAlertResolve()">OK</button></div>
+  </div>
+</div>
+<div class="mw" id="m-elcss">
+  <div class="modal" style="width:800px">
+    <div class="mh"><h2 id="elcss-title">Element CSS</h2><button class="ib" onclick="closeM('m-elcss')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="mb" id="elcss-body"></div>
+    <div class="mf"><span id="elcss-status" style="flex:1;font-size:12px;color:var(--muted);align-self:center"></span><button class="fd-btn-primary" onclick="closeM('m-elcss')">Done</button></div>
   </div>
 </div>
 <div class="mw" id="m-adduser">
@@ -2651,6 +2734,16 @@ textarea.fb-input{resize:vertical}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closetag.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+<!-- In-editor search (⌘/Ctrl+F), go-to-line (Alt+G), active-line highlight; the browser's own Find only sees the lines CodeMirror has drawn -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/matchesonscrollbar.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/scroll/annotatescrollbar.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/matchesonscrollbar.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/jump-to-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
 <script>
 
 // ── SHA-256 (verified correct) ───────────────────────────────────────────
@@ -2700,7 +2793,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.136';
+const CMS_VERSION='1.14.137';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2951,9 +3044,53 @@ function uiConfirm(msg, okLabel, title){
     const m=document.getElementById('uiconfirm-msg'); if(m) m.textContent=msg||'Are you sure?';
     const b=document.getElementById('uiconfirm-ok'); if(b) b.textContent=okLabel||'Confirm';
     openM('m-uiconfirm');
+    setTimeout(()=>{ try{ b&&b.focus(); }catch(e){} },30);   // Enter confirms, Esc cancels (see uiDialogKeys)
   });
 }
 function uiConfirmResolve(val){ closeM('m-uiconfirm'); const cb=_uiConfirmCb; _uiConfirmCb=null; if(cb) cb(!!val); }
+// In-app prompt — replaces window.prompt(). Resolves with the typed string, or
+// null when cancelled (same contract as the native one).
+let _uiPromptCb=null;
+function uiPrompt(msg, def, okLabel, title, placeholder){
+  return new Promise(resolve=>{
+    const inp=document.getElementById('uiprompt-input');
+    if(!document.getElementById('m-uiprompt')||!inp){ resolve(window.prompt(msg||'', def==null?'':String(def))); return; } // fallback
+    _uiPromptCb=resolve;
+    const t=document.getElementById('uiprompt-title'); if(t) t.textContent=title||'Enter a value';
+    const m=document.getElementById('uiprompt-msg'); if(m){ m.textContent=msg||''; m.style.display=msg?'':'none'; }
+    const b=document.getElementById('uiprompt-ok'); if(b) b.textContent=okLabel||'OK';
+    inp.value=(def==null)?'':String(def); inp.placeholder=placeholder||'';
+    openM('m-uiprompt');
+    setTimeout(()=>{ try{ inp.focus(); inp.select(); }catch(e){} },30);
+  });
+}
+function uiPromptResolve(val){ closeM('m-uiprompt'); const cb=_uiPromptCb; _uiPromptCb=null; if(cb) cb(val==null?null:String(val)); }
+// In-app alert — replaces window.alert(). Resolves when dismissed.
+let _uiAlertCb=null;
+function uiAlert(msg, title, okLabel){
+  return new Promise(resolve=>{
+    if(!document.getElementById('m-uialert')){ window.alert(msg||''); resolve(); return; } // fallback
+    _uiAlertCb=resolve;
+    const t=document.getElementById('uialert-title'); if(t) t.textContent=title||'Notice';
+    const m=document.getElementById('uialert-msg'); if(m) m.textContent=msg||'';
+    const b=document.getElementById('uialert-ok'); if(b) b.textContent=okLabel||'OK';
+    openM('m-uialert');
+    setTimeout(()=>{ try{ b&&b.focus(); }catch(e){} },30);
+  });
+}
+function uiAlertResolve(){ closeM('m-uialert'); const cb=_uiAlertCb; _uiAlertCb=null; if(cb) cb(); }
+// Keyboard for the three dialogs: Esc cancels; Enter confirms unless focus is on a
+// button (then the button's own click wins, so Enter on "Cancel" still cancels).
+function uiDialogKeys(id, onEnter, onEsc){
+  const m=document.getElementById(id); if(!m||m.dataset.keys) return; m.dataset.keys='1';
+  m.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); onEsc(); return; }
+    if(e.key==='Enter' && onEnter){ const tg=e.target&&e.target.tagName; if(tg==='BUTTON'||tg==='TEXTAREA') return; e.preventDefault(); onEnter(); }
+  });
+}
+uiDialogKeys('m-uiconfirm',()=>uiConfirmResolve(true),()=>uiConfirmResolve(false));
+uiDialogKeys('m-uiprompt',()=>uiPromptResolve(document.getElementById('uiprompt-input').value),()=>uiPromptResolve(null));
+uiDialogKeys('m-uialert',()=>uiAlertResolve(),()=>uiAlertResolve());
 function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');p.parentElement.querySelectorAll('.tab-panel').forEach(t=>t.classList.remove('on'));const el=document.getElementById(panelId);if(el)el.classList.add('on');}
 function switchPropsTab(){}
 const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','reviews':'p-reviews','map':'p-map','events':'p-events','users':'p-users'};
@@ -4816,7 +4953,7 @@ async function fpDeleteUnused(){
   const inPosts=await formIdsUsedInPosts();
   const unused=_forms.filter(f=>!placed.has(f.id)&&!inPosts.has(f.id));
   if(!unused.length){ toast('Nothing to delete','ok'); return; }
-  if(!confirm('Delete '+unused.length+' unused form'+(unused.length===1?'':'s')+' ('+unused.map(f=>decodeHtml(f.title||f.id)).join(', ')+')? Pages are untouched; past entries stay viewable under Entries.')) return;
+  if(!(await uiConfirm('Delete '+unused.length+' unused form'+(unused.length===1?'':'s')+' ('+unused.map(f=>decodeHtml(f.title||f.id)).join(', ')+')? Pages are untouched; past entries stay viewable under Entries.', 'Delete forms', 'Delete unused forms'))) return;
   const drop=new Set(unused.map(f=>f.id));
   _forms=_forms.filter(f=>!drop.has(f.id));
   try{ await saveFormsJson(); }catch(e){ toast('Delete failed to save: '+(e.message||e),'err'); return; }
@@ -4844,7 +4981,7 @@ async function placeConvertedForm(formId){
 async function convertAllForms(){
   const items=(_convertScan||[]).slice();
   if(!items.length){ toast('No forms to convert','err'); return; }
-  if(!confirm('Convert all '+items.length+' form'+(items.length===1?'':'s')+' into managed forms? Each page’s form will be replaced with a managed version that captures submissions under Forms → Entries.')) return;
+  if(!(await uiConfirm('Convert all '+items.length+' form'+(items.length===1?'':'s')+' into managed forms? Each page’s form will be replaced with a managed version that captures submissions under Forms → Entries.', 'Convert forms', 'Convert to managed forms'))) return;
   closeM('m-form-convert');
   let done=0, failed=0, failedLabels=[];
   for(const it of items){
@@ -4888,7 +5025,7 @@ function buildFormFromScan(it){
 async function useFormEverywhere(i){
   const items=(_convertScan||[]).slice();
   const src=items[i]; if(!src){ toast('Form not found — rescan and try again','err'); return; }
-  if(!confirm('Put the “'+src.label+'” form on all '+items.length+' form spot'+(items.length===1?'':'s')+' across your pages? They’ll all become the same managed form and capture submissions under Forms → Entries.')) return;
+  if(!(await uiConfirm('Put the “'+src.label+'” form on all '+items.length+' form spot'+(items.length===1?'':'s')+' across your pages? They’ll all become the same managed form and capture submissions under Forms → Entries.', 'Use it everywhere', 'Use this form everywhere'))) return;
   closeM('m-form-convert');
   const form=buildFormFromScan(src);
   // Capture the chosen form's look from its own page before it's swapped out.
@@ -5580,7 +5717,7 @@ async function tlpFeedSave(){
 }
 async function tlpFeedClear(){
   if(!canCallApi()){ toast('Sign in again','err'); return; }
-  if(!confirm('Remove the saved access key? The feed cannot be read until a new one is entered.')) return;
+  if(!(await uiConfirm('Remove the saved access key? The feed cannot be read until a new one is entered.', 'Remove key', 'Remove access key'))) return;
   try{
     await apiCall('set_secret',{name:'tlp_key',value:''});
     await loadSecrets();
@@ -5724,7 +5861,7 @@ async function generateTLPsFromFeed(){
   const rows=_tlpRows.filter(r=>r.on&&r.pageId);
   if(!rows.length){ toast('Tick at least one landing page and give it a source page','err'); return; }
   const missing=_tlpRows.filter(r=>r.on&&!r.pageId).length;
-  if(missing && !confirm(missing+' selected page(s) have no source page and will be skipped. Carry on?')) return;
+  if(missing && !(await uiConfirm(missing+' selected page(s) have no source page and will be skipped. Carry on?', 'Carry on', 'Some pages will be skipped'))) return;
   try{ if(!getEffectivePerms(getSessionUser()).aiEdit){ toast('Markup editing is not enabled for your account','err'); return; } }catch(e){}
 
   const keywords=(_tlpClient&&Array.isArray(_tlpClient.keywords))?_tlpClient.keywords:[];
@@ -6180,7 +6317,7 @@ async function blogSyncTokenRefresh(){
   }catch(e){}
 }
 async function blogSyncTokenOp(op){
-  if(op==='revoke' && !confirm('Revoke the Blog Sync key? Any external scheduler using it will stop being able to trigger a sync.')) return;
+  if(op==='revoke' && !(await uiConfirm('Revoke the Blog Sync key? Any external scheduler using it will stop being able to trigger a sync.', 'Revoke key', 'Revoke Blog Sync key'))) return;
   try{
     const r=await apiCall('blog_sync_admin',{op});
     const out=document.getElementById('blogsync-token-out');
@@ -6350,7 +6487,7 @@ async function convertPagesToPosts(){
   if(!sel.length){ toast('Tick at least one page first','err'); return; }
   const publish=document.getElementById('p2p-publish')?.checked!==false;
   const removeOrig=document.getElementById('p2p-remove')?.checked===true;
-  if(removeOrig && !confirm('Also DELETE the '+sel.length+' original page file'+(sel.length===1?'':'s')+' from the site? Their old addresses will stop working (each post gets a new address on your blog page). This can’t be undone.')) return;
+  if(removeOrig && !(await uiConfirm('Also DELETE the '+sel.length+' original page file'+(sel.length===1?'':'s')+' from the site? Their old addresses will stop working (each post gets a new address on your blog page). This can’t be undone.', 'Delete originals', 'Delete the original pages?'))) return;
   const btn=document.getElementById('p2p-go'); if(btn){ btn.disabled=true; btn.textContent='Converting…'; }
   let done=0, failed=0, removed=0;
   try{
@@ -6394,7 +6531,7 @@ async function postToPage(i){
   let file=base+'.html';
   const fileTaken=f=>Object.values(_pages).some(pg=>String(pg.file||pg.path||'').toLowerCase()===f.toLowerCase());
   if(fileTaken(file)||_pages[pageIdFromPath(file)]) file=base+'-page.html';
-  if(!confirm('Create the page '+file+' from “'+title+'”? It gets your site’s header and footer and appears in the page editor.')) return;
+  if(!(await uiConfirm('Create the page '+file+' from “'+title+'”? It gets your site’s header and footer and appears in the page editor.', 'Create page', 'Create a page from this post'))) return;
   if(!_forms.length){ try{ await initForms(); }catch{} }   // form blocks need the forms list to render
   const body=postBodyHtml(post);
   let html=null;
@@ -6409,7 +6546,7 @@ async function postToPage(i){
     try{ await updateSitemap(); }catch(e){}
     try{ renderVePageList(); }catch(e){}
     let dropped=false;
-    if(confirm('Page created ✓ — also delete the post, so it no longer shows on the blog?')){
+    if((await uiConfirm('Page created ✓ — also delete the post, so it no longer shows on the blog?', 'Delete the post', 'Page created'))){
       _posts.splice(i,1); dropped=true;
       try{ await savePostsJson(); await ensurePostsHtml(); }catch(e){}
     }
@@ -6641,9 +6778,13 @@ function pickBlockPoster(i){
 function peFormat(cmd){
   document.execCommand(cmd,false,null);
 }
-function peLink(){
-  const url=prompt('Link URL:');
-  if(url) document.execCommand('createLink',false,url);
+async function peLink(){
+  // The dialog takes focus, which drops the text selection — keep it and put it back.
+  const selObj=window.getSelection(); const range=(selObj&&selObj.rangeCount)?selObj.getRangeAt(0).cloneRange():null; const host=document.activeElement;
+  const url=await uiPrompt('Link URL:', 'https://', 'Add link', 'Insert a link', 'https://example.com/page');
+  if(!url||!url.trim()||url.trim()==='https://') return;
+  try{ if(host&&host.focus) host.focus(); if(range&&selObj){ selObj.removeAllRanges(); selObj.addRange(range); } }catch(e){}
+  document.execCommand('createLink',false,url.trim());
 }
 
 // ── POST IMAGE PICKER (dedicated, callback-based) ─────────────────
@@ -7666,7 +7807,7 @@ async function saveEvent(){
 }
 async function deleteEvent(id){
   const ev=_events.find(e=>e.id===id); if(!ev) return;
-  if(!confirm('Delete “'+decodeHtml(ev.title||'this event')+'”? This cannot be undone.')) return;
+  if(!(await uiConfirm('Delete “'+decodeHtml(ev.title||'this event')+'”? This cannot be undone.', 'Delete event', 'Delete event'))) return;
   _events=_events.filter(e=>e.id!==id);
   try{
     await saveEventsJson();
@@ -8094,7 +8235,7 @@ async function grSaveKey(){
   }catch(e){ toast('Could not save the key: '+(e.message||e),'err'); }
 }
 async function grClearKey(){
-  if(!confirm('Remove the saved Google API key? Reviews already saved here stay, but new fetches will stop working until a key is added again.')) return;
+  if(!(await uiConfirm('Remove the saved Google API key? Reviews already saved here stay, but new fetches will stop working until a key is added again.', 'Remove key', 'Remove Google API key'))) return;
   try{ await apiCall('set_secret',{name:'google_places_key',value:''});
     toast('API key removed','ok'); await renderReviews();
   }catch(e){ toast('Could not remove the key: '+(e.message||e),'err'); }
@@ -9170,10 +9311,10 @@ function mapUseCatIcon(url){
   _mapData=c; _mapCatIconIdx=-1;
   mapPaintCats(); mapSave('Marker image set ✓').catch(()=>{});
 }
-function mapCatDel(i){
+async function mapCatDel(i){
   const c=mapCfg(); const cat=c.categories[i]; if(!cat) return;
   const used=c.pins.filter(p=>p.cat===cat.id).length;
-  if(!confirm('Remove the category "'+(cat.name||cat.id)+'"?'+(used?('\n\n'+used+' pin(s) use it — they stay, but lose their colour and their place in the legend.'):''))) return;
+  if(!(await uiConfirm('Remove the category "'+(cat.name||cat.id)+'"?'+(used?('\n\n'+used+' pin(s) use it — they stay, but lose their colour and their place in the legend.'):''), 'Remove category', 'Remove map category'))) return;
   c.pins.forEach(p=>{ if(p.cat===cat.id) p.cat=''; });
   c.categories.splice(i,1);
   _mapData=c; mapPaintCats(); mapPaintPins();
@@ -9306,9 +9447,9 @@ async function mapPinSave(i){
   catch(e){ toast('Could not save: '+(e.message||e),'err'); return; }
   mapPaintPins(); mapPaintImage(); mapPaintPreview();
 }
-function mapPinDel(i){
+async function mapPinDel(i){
   const c=mapCfg(), p=c.pins[i]; if(!p) return;
-  if(!confirm('Delete the pin "'+(p.title||'Untitled')+'"? Every map on the site loses it.')) return;
+  if(!(await uiConfirm('Delete the pin "'+(p.title||'Untitled')+'"? Every map on the site loses it.', 'Delete pin', 'Delete map pin'))) return;
   c.pins.splice(i,1); _mapOpen=-1; _mapData=c;
   mapPaintPins(); mapPaintImage();
   mapSave('Pin deleted').catch(()=>{});
@@ -9374,8 +9515,8 @@ async function mapSaveSettings(){
   catch(e){ toast('Could not save: '+(e.message||e),'err'); return; }
   mapPaintSource(); mapPaintPins(); mapPaintPreview();
 }
-function mapResetTemplate(){
-  if(!confirm('Put the popup design back to the built-in one? Your own version is lost.')) return;
+async function mapResetTemplate(){
+  if(!(await uiConfirm('Put the popup design back to the built-in one? Your own version is lost.', 'Use built-in design', 'Reset popup design'))) return;
   const el=document.getElementById('map-tpl'); if(el) el.value=MAP_TPL_DEFAULT;
   mapPaintPreview();
 }
@@ -9569,10 +9710,10 @@ function veInsertPostList(){
 }
 // Swap an old hand-made posts section for the live archive in one move: select
 // the section, click Replace. Undo restores it until the page is left.
-function veReplaceWithPostList(){
+async function veReplaceWithPostList(){
   const fid=_veCurSel?.fid;
   if(!fid){ toast('Click the old posts section first, then Replace','err'); return; }
-  if(!confirm('Replace the selected element with the live post archive?\n\nThe selected element and everything inside it is removed — Undo brings it back until you leave the page.')) return;
+  if(!(await uiConfirm('Replace the selected element with the live post archive?\n\nThe selected element and everything inside it is removed — Undo brings it back until you leave the page.', 'Replace element', 'Replace with the post archive'))) return;
   const ifrm=document.getElementById('visual-iframe');
   if(!ifrm||!ifrm.contentWindow) return;
   ifrm.contentWindow.postMessage({type:'ve-action',action:'replaceHtml',fid,html:postListSnippet(),css:postsRuntimeCss()},'*');
@@ -9856,6 +9997,40 @@ async function uploadMedia(files){
   await initMedia();
 }
 
+// ── MEDIA DRAG & DROP ─────────────────────────────────────────────
+// Drop files from the desktop anywhere on the Media panel to upload them — the
+// same path as the Upload button (uploadMedia). A full-panel overlay shows
+// while a file drag is over the panel. A window-level guard stops the browser
+// from navigating away (and losing the admin session) when files land outside
+// the panel. Only file drags are touched; the form builder's field drags and
+// the page import drop zone keep their own handlers.
+const MEDIA_DROP_OK=/\.(jpe?g|png|gif|webp|avif|svg|bmp|ico|mp4|webm|mov|m4v|ogv|pdf)$/i;
+function dndHasFiles(e){ try{ const t=e.dataTransfer&&e.dataTransfer.types; return !!t && Array.prototype.indexOf.call(t,'Files')!==-1; }catch(err){ return false; } }
+function mediaDropFilter(list){
+  const ok=[], bad=[];
+  Array.from(list||[]).forEach(f=>{ (MEDIA_DROP_OK.test(f.name||'')||/^(image|video)\//.test(f.type||'')||f.type==='application/pdf')?ok.push(f):bad.push(f.name||'file'); });
+  return {ok,bad};
+}
+function mediaHandleDrop(files){
+  const {ok,bad}=mediaDropFilter(files);
+  if(bad.length) toast('Skipped '+bad.length+' unsupported file'+(bad.length===1?'':'s')+' ('+bad.slice(0,3).join(', ')+(bad.length>3?'…':'')+') — images, video, PDF and SVG only','err');
+  if(!ok.length) return Promise.resolve();
+  return uploadMedia(ok);
+}
+function mediaDndInit(){
+  const panel=document.getElementById('p-media'); if(!panel||panel.dataset.dnd) return; panel.dataset.dnd='1';
+  let depth=0;
+  const off=()=>{ depth=0; panel.classList.remove('dragging'); };
+  panel.addEventListener('dragenter',e=>{ if(!dndHasFiles(e)) return; e.preventDefault(); depth++; panel.classList.add('dragging'); });
+  panel.addEventListener('dragover',e=>{ if(!dndHasFiles(e)) return; e.preventDefault(); try{ e.dataTransfer.dropEffect='copy'; }catch(err){} panel.classList.add('dragging'); });
+  panel.addEventListener('dragleave',e=>{ if(!dndHasFiles(e)) return; depth=Math.max(0,depth-1); if(depth===0) panel.classList.remove('dragging'); });
+  panel.addEventListener('drop',e=>{ if(!dndHasFiles(e)) return; e.preventDefault(); off(); mediaHandleDrop(e.dataTransfer.files); });
+  window.addEventListener('dragend',off); window.addEventListener('blur',off);
+  window.addEventListener('dragover',e=>{ if(dndHasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop',e=>{ if(dndHasFiles(e)) e.preventDefault(); });
+}
+mediaDndInit();
+
 // ── IMAGE OPTIMIZER (web / 72dpi) ─────────────────────────────────
 // Re-encodes an image in the browser and writes it back to the SAME file:
 // oversized photos are scaled to a web-sensible size (longest edge 2000px),
@@ -9933,7 +10108,7 @@ async function optimizeMediaItem(i){
 async function optimizeAllImages(){
   const items=(_media||[]).filter(m=>optimizableExt(m.name));
   if(!items.length){ toast('No JPEG/PNG/WebP images to optimize','err'); return; }
-  if(!confirm('Optimize all '+items.length+' image'+(items.length===1?'':'s')+' for the web? Oversized photos are scaled to a sensible size (max 2000px), re-compressed at web quality (72dpi), and saved over the originals. Images that are already optimized are left untouched.')) return;
+  if(!(await uiConfirm('Optimize all '+items.length+' image'+(items.length===1?'':'s')+' for the web? Oversized photos are scaled to a sensible size (max 2000px), re-compressed at web quality (72dpi), and saved over the originals. Images that are already optimized are left untouched.', 'Optimize images', 'Optimize all images'))) return;
   const btn=document.getElementById('media-opt-all');
   let done=0,saved=0,skipped=0,failed=0,total=0,n=0;
   for(const m of items){
@@ -10682,7 +10857,7 @@ async function seoApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply SEO','err'); return; }
   if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
   const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
-  if(!confirm('Re-apply your SEO settings to all '+pages.length+' page(s) and rebuild your sitemap?')) return;
+  if(!(await uiConfirm('Re-apply your SEO settings to all '+pages.length+' page(s) and rebuild your sitemap?', 'Apply to all pages', 'Re-apply SEO settings'))) return;
   await saveSEO();   // saving publishes: pages + sitemap + robots + clean-URL rule
 }
 // ── Sitemap + robots.txt ────────────────────────────────────────────────────
@@ -11064,7 +11239,7 @@ async function uploadFavicon(file){
   }catch(e){ toast('Upload failed: '+e.message,'err'); }
 }
 async function faviconRemove(){
-  if(!confirm('Clear the favicon from all pages?')) return;
+  if(!(await uiConfirm('Clear the favicon from all pages?', 'Clear favicon', 'Clear favicon'))) return;
   _site.favicon=''; _site.faviconIcons={}; _site.faviconVer=0;
   try{ await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}); }catch(e){}
   faviconRender();
@@ -11104,7 +11279,7 @@ async function faviconDetectClick(){
   toast('Searching the site for an existing favicon…');
   const found=await faviconDetect();
   if(!found){ toast('No existing favicon found on the site — upload one instead','err'); return; }
-  if(!confirm('Found an existing favicon:\n\n  '+found+'\n\nUse it as this site’s favicon? It is copied to /favicon at the site root, the tab / Android / iPhone sizes are generated, and it applies to every page.')) return;
+  if(!(await uiConfirm('Found an existing favicon:\n\n  '+found+'\n\nUse it as this site’s favicon? It is copied to /favicon at the site root, the tab / Android / iPhone sizes are generated, and it applies to every page.', 'Use this favicon', 'Existing favicon found'))) return;
   try{
     const base=normSiteBase();
     const abs=/^https?:\/\//i.test(found)?found:(base+'/'+String(found).replace(/^\/+/,''));
@@ -11168,7 +11343,7 @@ async function faviconApplyAll(silent){
   const url=(_site&&_site.favicon)||'';
   if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList(); if(!pages.length){ if(!silent) toast('No pages found','err'); return; }
-  if(!silent && !confirm((url?'Set the favicon on':'Remove the favicon from')+' all '+pages.length+' page file(s)?')) return;
+  if(!silent && !(await uiConfirm((url?'Set the favicon on':'Remove the favicon from')+' all '+pages.length+' page file(s)?', (url?'Set favicon':'Remove favicon'), 'Favicon on all pages'))) return;
   let done=0,failed=0;
   for(const pg of pages){
     const fp=pg.path||pg.file; if(!fp) continue;
@@ -11495,7 +11670,7 @@ function pkgFilePicked(){
 async function pkgRun(mode){
   if(!_pkgData){ toast('Choose a package file first','err'); return; }
   if(!canCallApi()){ toast('Sign in again first','err'); return; }
-  if(mode==='apply' && !confirm('Apply this package to the live site?\n\nEvery file it changes is backed up to data/bak/ first, and a full report follows.')) return;
+  if(mode==='apply' && !(await uiConfirm('Apply this package to the live site?\n\nEvery file it changes is backed up to data/bak/ first, and a full report follows.', 'Apply package', 'Apply to the live site'))) return;
   const st=document.getElementById('pkg-status');
   const pv=document.getElementById('pkg-preview'), ap=document.getElementById('pkg-apply');
   if(pv) pv.disabled=true; if(ap) ap.disabled=true;
@@ -11552,7 +11727,7 @@ async function pkgAdminRefresh(){
   }catch(e){}
 }
 async function pkgToken(op){
-  if(op==='revoke' && !confirm('Revoke the deploy-package key? The platform will no longer be able to post packages to this site.')) return;
+  if(op==='revoke' && !(await uiConfirm('Revoke the deploy-package key? The platform will no longer be able to post packages to this site.', 'Revoke key', 'Revoke deploy-package key'))) return;
   try{
     const r=await apiCall('seo_pkg_admin',{op});
     const out=document.getElementById('pkg-token-out');
@@ -11570,7 +11745,7 @@ async function pkgToken(op){
 // versus skipped: a tool that edits pages on its own has to be auditable.
 async function aiFixRun(dry){
   if(!canCallApi()){ toast('Sign in again first','err'); return; }
-  if(!dry && !confirm('Run the AI auto-fix on this site?\n\nIt fills missing or wrongly-sized titles and descriptions, adds alt text to images that have none, adds internal links, and writes FAQ content for pages that have none at all. It never changes a value that is already good, and every page it edits is backed up to data/bak/ first.')) return;
+  if(!dry && !(await uiConfirm('Run the AI auto-fix on this site?\n\nIt fills missing or wrongly-sized titles and descriptions, adds alt text to images that have none, adds internal links, and writes FAQ content for pages that have none at all. It never changes a value that is already good, and every page it edits is backed up to data/bak/ first.', 'Run auto-fix', 'AI auto-fix'))) return;
   const st=document.getElementById('ai-status'), box=document.getElementById('ai-report');
   if(st) st.textContent=dry?'Looking at the site…':'Working — this can take a minute…';
   if(box) box.innerHTML='';
@@ -11667,7 +11842,7 @@ async function pkgPublishAllConfirm(){
   const plan=_pkgPublishPlan; if(!plan) return;
   // The question gate exists to keep unreviewed copy off the site. Overriding it
   // is allowed — but it is named, not slipped past.
-  if(plan.qa && !confirm(plan.qa+' of these still have unresolved questions from the platform.\n\nPublishing now puts that copy in front of the public before those answers come back. Carry on?')) return;
+  if(plan.qa && !(await uiConfirm(plan.qa+' of these still have unresolved questions from the platform.\n\nPublishing now puts that copy in front of the public before those answers come back. Carry on?', 'Publish anyway', 'Unresolved questions'))) return;
   const box=document.getElementById('pkg-publish-out');
   if(box) box.innerHTML='<div style="font-size:12px;color:var(--muted)">Publishing…</div>';
   try{
@@ -11826,7 +12001,7 @@ async function urlReplaceScan(){
 async function urlReplaceApply(){
   if(!_urScan||!_urScan.rows.length){ toast('Run Scan first','err'); return; }
   const {find,repl,rows,total}=_urScan; const opts=_urScan.opts||frOptions();
-  if(!confirm((repl?'Replace ':'Remove ')+total+' occurrence(s) of\n\n  '+find+(repl?'\n\nwith\n\n  '+repl:'')+'\n\nacross '+rows.length+' file(s)'+(opts.scope==='all'?' — everything, including code, links and file names':' — text people read only')+'?\n\nEvery changed file is backed up to data/bak/ first, and the sitemap + robots file are rebuilt afterward.')) return;
+  if(!(await uiConfirm((repl?'Replace ':'Remove ')+total+' occurrence(s) of\n\n  '+find+(repl?'\n\nwith\n\n  '+repl:'')+'\n\nacross '+rows.length+' file(s)'+(opts.scope==='all'?' — everything, including code, links and file names':' — text people read only')+'?\n\nEvery changed file is backed up to data/bak/ first, and the sitemap + robots file are rebuilt afterward.', (repl?'Replace all':'Remove all'), 'Find & Replace'))) return;
   const st=document.getElementById('ur-status');
   let done=0,failed=0,replaced=0,i=0; const report=[];
   for(const r of rows){
@@ -12699,7 +12874,7 @@ async function fleetSave(){
 }
 async function fleetClear(){
   if(!canCallApi()){ toast('Sign in again','err'); return; }
-  if(!confirm('Stop reporting to the Fleet Dashboard? This site stops appearing as active there.')) return;
+  if(!(await uiConfirm('Stop reporting to the Fleet Dashboard? This site stops appearing as active there.', 'Stop reporting', 'Fleet Dashboard'))) return;
   try{
     await apiCall('set_secret',{name:'fleet_key',value:''});
     await loadSecrets();
@@ -13342,7 +13517,7 @@ async function deleteUser(){
   const target=_users[i]||{};
   if(isArchitect(target) && !isArchitect(me)){toast('Only the Architect can delete the Architect account','err');return;}
   if(String(target.username||'').toLowerCase()===String(me.username||'').toLowerCase()){toast("You can't delete your own account",'err');return;}
-  if(!confirm('Delete user '+target.username+'?'))return;
+  if(!(await uiConfirm('Delete user '+target.username+'?', 'Delete user', 'Delete user')))return;
   try{
     await apiCall('delete_user',{username:target.username});
     toast('User deleted','ok');
@@ -14621,7 +14796,7 @@ function pageSettingsRemove(){
 async function deletePageNow(){
   const pid=document.getElementById('ps-pid').value, pg=_pages[pid]; if(!pg){ toast('Page not found','err'); return; }
   const fp=pg.path||pg.file;
-  if(!confirm('Delete this page?\n\nThis permanently deletes '+fp+' from the server and cannot be undone.')) return;
+  if(!(await uiConfirm('Delete this page?\n\nThis permanently deletes '+fp+' from the server and cannot be undone.', 'Delete page', 'Delete this page'))) return;
   if(!canCallApi()){ toast('Sign in again to delete','err'); return; }
   try{
     await apiCall('delete_file',{path:fp});
@@ -14685,10 +14860,10 @@ function pageInjectCustom(html, pg){
   }catch(e){ console.warn('pageInjectCustom failed',e.message); return html; }
 }
 
-function veSelectPage(id){
+async function veSelectPage(id){
   if(_curPage===id&&_veHtml[id]) return; // already loaded
   if(_veHtml[_curPage]&&_veHtml[_curPage]!==_veOrigHtml[_curPage]){
-    if(!confirm('Unsaved changes on this page. Leave without saving?')) return;
+    if(!(await uiConfirm('Unsaved changes on this page. Leave without saving?', 'Leave without saving', 'Unsaved changes'))) return;
   }
   _curPage=id;
   renderVePageList();
@@ -15182,6 +15357,11 @@ return '(function(){\n'
 +'        el.remove(); sel=null;\n'
 +'        ov.style.display="none"; badge.style.display="none"; hbox.style.display="none";\n'
 +'        veSetPaused(false);window.parent.postMessage({type:"ve-deselect"},"*");\n'
++'      }else if(m.action==="setRespDecls"){\n'
+// Element CSS window: replace this element's per-device override set (regenResp rebuilds #fourge-responsive).
++'        var rdev=(m.device==="tablet"||m.device==="mobile")?m.device:"desktop"; var rcls=fgeClass(el); respData[rdev][rcls]=(m.decls&&typeof m.decls==="object")?m.decls:{}; regenResp(); selectEl(el);\n'
++'      }else if(m.action==="setHoverDecls"){\n'
++'        var hcls=fgeClass(el); hoverData[hcls]=(m.decls&&typeof m.decls==="object")?m.decls:{}; regenHover(); selectEl(el);\n'
 +'      }else if(m.action==="insertIcon"){\n'
 // Make sure the page actually loads Font Awesome so the icon renders here in the
 // editor AND on the published page (many client pages don\'t include it). The
@@ -15964,14 +16144,442 @@ function veAutoApply(){
   if(_veCurSel.isImg||_veCurSel.bgImage) veApplyImg(); else veApplyText();
 }
 
-function veElemAction(action){
+async function veElemAction(action){
   if(!_veCurSel){ toast('Click an element on the page first','err'); return; }
-  if(action==='delete' && !confirm('Delete this element? You can undo with Ctrl+Z.')) return;
+  if(action==='delete' && !(await uiConfirm('Delete this element? You can undo with Ctrl+Z.', 'Delete element', 'Delete element'))) return;
   const ifrm=document.getElementById('visual-iframe');
   if(!ifrm) return;
   ifrm.contentWindow.postMessage({type:'ve-action',action,fid:_veCurSel.fid},'*');
   if(action!=='selectParent') document.getElementById('ve-unsaved')?.classList.add('on');
 }
+
+// ── ELEMENT CSS ───────────────────────────────────────────────────
+// The "Element CSS" toolbar button lists EVERY rule that styles the selected
+// element and lets each one be edited in place: the inline style, every
+// matching rule in the page's own <style> blocks and in the site's stylesheet
+// files (including @media variants, :hover/:focus states and ::before/::after
+// parts), the editor's own per-device and hover overrides, and the rules it
+// inherits from ancestors (colour, fonts…). A change shows in the editor at
+// once and is persisted where the rule lives: the style attribute and <style>
+// blocks are saved with the page; a .css file is written straight to the
+// server (previous copy kept in data/bak/); the editor overrides go through
+// the bridge; Page Settings CSS updates the page record. Stylesheet text is
+// edited textually — only the declarations between that one rule's braces
+// change, so comments and formatting everywhere else stay byte-for-byte.
+let _elcss=null;
+const ELCSS_STATE_RE=/:(hover|focus-within|focus-visible|focus|active|visited|link|target|checked|disabled|enabled|placeholder-shown|valid|invalid|required|optional|read-only|read-write|fullscreen)\b/g;
+const ELCSS_PSEUDO_RE=/::?(before|after|placeholder|marker|selection|first-line|first-letter|backdrop|file-selector-button|cue|-webkit-[a-z-]+|-moz-[a-z-]+)\b/g;
+const ELCSS_OPAQUE_AT=/^(font-face|page|counter-style|property|font-feature-values|font-palette-values|viewport|keyframes|-webkit-keyframes|-moz-keyframes|color-profile|position-try|view-transition)$/;
+const ELCSS_INHERITED=['color','font','font-family','font-size','font-weight','font-style','font-variant','font-stretch','line-height','letter-spacing','word-spacing','text-align','text-transform','text-indent','text-shadow','white-space','word-break','overflow-wrap','word-wrap','direction','visibility','cursor','list-style','list-style-type','list-style-position','list-style-image','quotes','tab-size','hyphens','text-rendering','-webkit-font-smoothing','-webkit-text-size-adjust','caption-side','border-collapse','border-spacing','empty-cells','pointer-events'];
+const ELCSS_ENGINE_LABELS={'fourge-site-css':'Design → Custom CSS (site-wide)','fourge-typography':'Design → Typography','fourge-headings':'Design → Typography (headings)','fourge-brand':'Design → Brand colours','fourge-posts-css':'Blog post list (engine runtime)','fourge-events-css':'Events (engine runtime)','fourge-reviews-css':'Reviews (engine runtime)','fourge-map-css':'Map (engine runtime)','fourge-map-user-css':'Map popup design','fourge-video-css':'Video (engine runtime)'};
+
+function elcssSiteOrigin(){ try{ return new URL(normSiteBase()).origin; }catch(e){ return location.origin; } }
+// Split a selector list on top-level commas (not inside (), [] or quotes).
+function elcssSplitList(sel){
+  const out=[]; let depth=0,q=null,cur='';
+  for(let i=0;i<sel.length;i++){ const c=sel[i];
+    if(q){ cur+=c; if(c==='\\'){ cur+=sel[++i]||''; continue; } if(c===q) q=null; continue; }
+    if(c==='"'||c==="'"){ q=c; cur+=c; continue; }
+    if(c==='('||c==='[') depth++; else if(c===')'||c===']') depth=Math.max(0,depth-1);
+    if(c===','&&depth===0){ out.push(cur.trim()); cur=''; continue; }
+    cur+=c; }
+  if(cur.trim()) out.push(cur.trim()); return out;
+}
+// Canonical form good enough to tell "the same selector" written two ways apart
+// from a different one (the browser re-serialises what it parsed).
+function elcssNormSel(s){
+  return String(s||'').replace(/\/\*[\s\S]*?\*\//g,' ').replace(/\s+/g,' ').trim()
+    .replace(/\s*([>+~,])\s*/g,'$1')
+    .replace(/\(\s*([^()]*?)\s*\)/g,(m,a)=>'('+a.replace(/\s+/g,'')+')')
+    .replace(/\[\s*([^\]=~|^$*\s]+)\s*(?:([~|^$*]?=)\s*(["']?)(.*?)\3\s*([is])?)?\s*\]/g,(m,k,op,q,v,f)=>'['+k+(op?op+v+(f||''):'')+']')
+    .replace(/::?(before|after|first-line|first-letter)\b/g,'::$1')
+    .replace(/\*(?=[.#\[:])/g,'')
+    .toLowerCase();
+}
+function elcssNormCond(c){ return String(c||'').toLowerCase().replace(/\s+/g,''); }
+// Does this selector part apply to el — directly, or once a state (:hover…) or
+// a pseudo-element (::before…) is set aside? Returns {state,pseudo} or null.
+function elcssMatchPart(el, part){
+  try{ if(el.matches(part)) return {state:'',pseudo:''}; }catch(e){}
+  let pseudo='', state='';
+  const base=part.replace(ELCSS_PSEUDO_RE,m=>{ if(!pseudo) pseudo=m.replace(/^:+/,'::'); return ''; }).replace(ELCSS_STATE_RE,m=>{ if(!state) state=m; return ''; }).trim();
+  if(!base||base===part) return null;
+  try{ if(el.matches(base)) return {state,pseudo}; }catch(e){}
+  return null;
+}
+// Approximate specificity (ids, classes/attributes/pseudo-classes, types) — used only to order the list the way DevTools does.
+function elcssSpecificity(part){
+  let a=0,b=0,c=0; let s=String(part).replace(/\\./g,'x');
+  s=s.replace(/\[[^\]]*\]/g,()=>{ b++; return ' '; });
+  s=s.replace(/::?(not|is|has|where|matches|-webkit-any)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/gi,(m,name,inner)=>{
+    if(/^where$/i.test(name)) return ' ';
+    const best=elcssSplitList(inner).map(elcssSpecificity).sort((x,y)=>y.n-x.n)[0];
+    if(best){ a+=best.a; b+=best.b; c+=best.c; }
+    return ' ';
+  });
+  s=s.replace(/::?[a-z-]+\([^)]*\)/gi,()=>{ b++; return ' '; });
+  s=s.replace(/::[a-z-]+/gi,()=>{ c++; return ' '; });
+  s=s.replace(/:(before|after|first-line|first-letter)\b/gi,()=>{ c++; return ' '; });
+  s=s.replace(/:[a-z-]+/gi,()=>{ b++; return ' '; });
+  s=s.replace(/#[\w-]+/g,()=>{ a++; return ' '; });
+  s=s.replace(/\.[\w-]+/g,()=>{ b++; return ' '; });
+  s=s.replace(/(^|[\s>+~(])([a-z][\w-]*)/gi,(m,p)=>{ c++; return p+' '; });
+  return {a,b,c,n:a*10000+b*100+c};
+}
+// Scan stylesheet TEXT for style rules in document order (parents before their
+// nested rules, conditional groups descended, opaque at-rules skipped). Each
+// hit records where its declaration block sits, so one rule can be rewritten
+// without touching anything else in the file.
+function elcssScan(text){
+  const out=[], n=text.length;
+  const skipComment=i=>{ const e=text.indexOf('*/',i+2); return e<0?n:e+2; };
+  function readPrelude(i){ let depth=0,q=null; const start=i;
+    while(i<n){ const ch=text[i];
+      if(q){ if(ch==='\\'){ i+=2; continue; } if(ch===q) q=null; i++; continue; }
+      if(ch==='"'||ch==="'"){ q=ch; i++; continue; }
+      if(ch==='/'&&text[i+1]==='*'){ i=skipComment(i); continue; }
+      if(ch==='('||ch==='[') depth++; else if(ch===')'||ch===']') depth=Math.max(0,depth-1);
+      else if(depth===0&&(ch==='{'||ch===';'||ch==='}')) break;
+      i++; }
+    return {prelude:text.slice(start,i), at:i}; }
+  function blockEnd(i){ let depth=0,q=null;
+    while(i<n){ const ch=text[i];
+      if(q){ if(ch==='\\'){ i+=2; continue; } if(ch===q) q=null; i++; continue; }
+      if(ch==='"'||ch==="'"){ q=ch; i++; continue; }
+      if(ch==='/'&&text[i+1]==='*'){ i=skipComment(i); continue; }
+      if(ch==='{') depth++; else if(ch==='}'){ depth--; if(depth===0) return i; }
+      i++; }
+    return n; }
+  function scan(i,end,chain){
+    while(i<end){
+      const ch=text[i];
+      if(ch===' '||ch==='\n'||ch==='\t'||ch==='\r'||ch==='\f'||ch===';'||ch==='}'){ i++; continue; }
+      if(ch==='/'&&text[i+1]==='*'){ i=skipComment(i); continue; }
+      const r=readPrelude(i); i=r.at;
+      if(i>=end) break;
+      if(text[i]!=='{'){ i++; continue; }                 // a declaration, or @import/@charset/@layer x;
+      const open=i, close=blockEnd(i), p=r.prelude.trim();
+      if(p.charAt(0)==='@'){
+        const name=p.slice(1).split(/[\s({]/)[0].toLowerCase();
+        if(!ELCSS_OPAQUE_AT.test(name)) scan(open+1, close, chain.concat(p.replace(/\s+/g,' ')));
+      }else if(p){
+        out.push({sel:p, bodyStart:open+1, bodyEnd:close, chain:chain});
+        scan(open+1, close, chain);                        // CSS nesting: rules inside the block
+      }
+      i=close+1;
+    }
+  }
+  scan(0,n,[]);
+  return out;
+}
+// Find the scanned text rule that is this CSSOM rule: the k-th style rule in
+// document order, verified by selector + conditions; if the browser dropped a
+// rule it did not understand (ordinals shifted), the k-th rule with the same
+// selector under the same conditions.
+function elcssLocateScanned(scanned, en){
+  const want=elcssNormSel(en.sel), chainN=en.chain.map(elcssNormCond).join('|');
+  const ok=r=>r && elcssNormSel(r.sel)===want && r.chain.map(elcssNormCond).join('|')===chainN;
+  if(ok(scanned[en.ord])) return {rule:scanned[en.ord], index:en.ord, list:scanned};
+  let k=0; for(let i=0;i<scanned.length;i++){ if(!ok(scanned[i])) continue; if(k===en.sameIdx) return {rule:scanned[i], index:i, list:scanned}; k++; }
+  return null;
+}
+// Top-level ';' split of a declaration block (comments and url(...) kept whole).
+function elcssSplitDecls(body){
+  const out=[]; let depth=0,q=null,cur='';
+  for(let i=0;i<body.length;i++){ const ch=body[i];
+    if(q){ cur+=ch; if(ch==='\\'){ cur+=body[++i]||''; continue; } if(ch===q) q=null; continue; }
+    if(ch==='"'||ch==="'"){ q=ch; cur+=ch; continue; }
+    if(ch==='/'&&body[i+1]==='*'){ const e=body.indexOf('*/',i+2); const seg=body.slice(i,e<0?body.length:e+2); cur+=seg; i+=seg.length-1; continue; }
+    if(ch==='(') depth++; else if(ch===')') depth=Math.max(0,depth-1);
+    if(ch===';'&&depth===0){ out.push(cur.trim()); cur=''; continue; }
+    cur+=ch; }
+  if(cur.trim()) out.push(cur.trim());
+  // a line break followed by "prop:" starts a new declaration even without the ';'
+  const flat=out.flatMap(seg=>seg.split(/\n(?=\s*[-\w]+\s*:)/)).map(s=>s.trim()).filter(Boolean);
+  // a comment that follows a declaration ("font-size: 40px; /* big */") stays on that line
+  const merged=[]; flat.forEach(seg=>{ if(merged.length&&/^\/\*[\s\S]*\*\/$/.test(seg)&&!/^\/\*[\s\S]*\*\/$/.test(merged[merged.length-1])) merged[merged.length-1]+=' '+seg; else merged.push(seg); });
+  return merged;
+}
+function elcssStripNoise(s){ return String(s).replace(/\/\*[\s\S]*?\*\//g,'').replace(/(["'])(?:\\.|(?!\1).)*\1/g,''); }
+// Declarations as the editor shows them: one per line. A block with nested
+// rules is shown verbatim (and written back verbatim).
+function elcssDisplay(body){
+  if(/[{}]/.test(elcssStripNoise(body))) return String(body).replace(/^\s*\n/,'').replace(/\s+$/,'');
+  return elcssSplitDecls(String(body).replace(/\r/g,'')).map(d=>elcssLine(d.replace(/\n\s*/g,' '))).join('\n');
+}
+// One declaration line: a lone comment stays as is; otherwise the declaration ends in ';' with any trailing comment after it.
+function elcssLine(l){
+  l=String(l).trim(); if(!l||/^\/\*[\s\S]*\*\/$/.test(l)) return l;
+  let tail=''; const tc=l.match(/\s*\/\*[\s\S]*?\*\/\s*$/); if(tc){ tail=tc[0].trim(); l=l.slice(0,l.length-tc[0].length); }
+  return l.replace(/;+\s*$/,'')+';'+(tail?' '+tail:'');
+}
+function elcssCssTextLines(cssText){ return elcssDisplay(String(cssText||'')); }
+// What the user typed → {body (each declaration on its own line, ending in ';'), decls:[{prop,val,important}], nested}
+function elcssCleanBody(text){
+  text=String(text||'').replace(/\r/g,'');
+  if(/[{}]/.test(elcssStripNoise(text))) return {body:text.replace(/\s+$/,''), nested:true, decls:[]};
+  const out=[], decls=[];
+  elcssSplitDecls(text).forEach(l=>{
+    l=l.replace(/\n\s*/g,' ').trim(); if(!l) return;
+    if(/^\/\*[\s\S]*\*\/$/.test(l)){ out.push(l); return; }
+    const m=l.replace(/\/\*[\s\S]*?\*\//g,'').match(/^\s*([-\w]+)\s*:\s*([\s\S]+?)\s*$/);
+    if(m){ const imp=/!\s*important\s*$/i.test(m[2]); decls.push({prop:m[1].toLowerCase(), val:m[2].replace(/\s*!\s*important\s*$/i,'').trim(), important:imp}); }
+    let tail=''; const tc=l.match(/\s*\/\*[\s\S]*?\*\/\s*$/); if(tc){ tail=tc[0].trim(); l=l.slice(0,l.length-tc[0].length); }
+    out.push(l.replace(/;+\s*$/,'')+';'+(tail?' '+tail:''));
+  });
+  return {body:out.join('\n'), nested:false, decls};
+}
+// Declarations the browser does not understand (CSS.supports) — reported, never blocked.
+function elcssValidate(decls){
+  const bad=[]; if(!(window.CSS&&CSS.supports)) return bad;
+  decls.forEach(d=>{ if(d.prop.indexOf('--')===0||/^-(webkit|moz|ms|o)-/.test(d.prop)) return; try{ if(!CSS.supports(d.prop,d.val)) bad.push(d.prop+': '+d.val); }catch(e){} });
+  return bad;
+}
+// Write a new declaration block into the original text's formatting (indent kept; one-line rules stay one line).
+function elcssIndentBody(body, loc, text){
+  const orig=text.slice(loc.bodyStart,loc.bodyEnd);
+  const m=orig.match(/^[ \t]*\n([ \t]*)/);
+  if(!m) return ' '+body.split('\n').join(' ')+' ';
+  const ind=m[1], closeInd=(orig.match(/\n([ \t]*)$/)||[,''])[1];
+  return '\n'+body.split('\n').map(l=>ind+l).join('\n')+'\n'+closeInd;
+}
+function elcssSheetText(sheet){ try{ return Array.from(sheet.cssRules).map(r=>r.cssText).join('\n'); }catch(e){ return null; } }
+function elcssHasInheritable(style){ try{ for(let i=0;i<style.length;i++){ if(ELCSS_INHERITED.indexOf(style[i])!==-1) return true; } }catch(e){} return false; }
+function elcssDeviceOf(chain){ const c=chain.join(' '); return /1024px/.test(c)?'tablet':(/600px/.test(c)?'mobile':'desktop'); }
+function elcssLinkSource(href, ctx, node){
+  let u; try{ u=new URL(href, ctx.doc.baseURI); }catch(e){ return {type:'external',label:String(href||''),href:String(href||''),key:'x:'+href}; }
+  const name=decodeURIComponent(u.pathname.split('/').pop()||u.hostname);
+  if(node&&(node.hasAttribute('data-fourge-fa')||node.hasAttribute('data-fourge-page')||/^fourge-/.test(node.id||''))) return {type:'engine',label:name,href:u.href,node,key:'e:'+u.href};
+  if(u.origin!==ctx.siteOrigin) return {type:'external',label:u.host+u.pathname,href:u.href,node,key:'x:'+u.href};
+  return {type:'link',label:name,href:u.href,path:decodeURIComponent(u.pathname).replace(/^\/+/,''),node,key:'l:'+u.pathname};
+}
+function elcssClassify(sheet, node, ctx, idx){
+  if(!node) return null;
+  if(node.tagName==='STYLE'){
+    const id=node.id||'', txt=node.textContent||'';
+    if(txt.indexOf('__fe_')!==-1||node.dataset.foundry!==undefined||id==='__ve_pause_style__'||id.indexOf('__fe_')===0) return null;   // the editor's own
+    if(id==='fourge-responsive') return {type:'resp',label:'Editor override',node,key:'r'};
+    if(id==='fourge-hover') return {type:'hover',label:'Hover override',node,key:'h'};
+    if(id==='fourge-page-css'||node.hasAttribute('data-fourge-page')) return {type:'pagecss',label:'Page CSS',node,key:'p'};
+    if(id==='fourge-element-css') return {type:'style',label:'Element CSS rules',node,key:'ec'};
+    if(/^fourge-/.test(id)||Array.from(node.attributes).some(a=>/^data-fourge-/.test(a.name))) return {type:'engine',label:ELCSS_ENGINE_LABELS[id]||'the engine ('+(id||'managed style')+')',node,key:'e:'+idx};
+    ctx.styleN++; return {type:'style',label:'<style> block '+ctx.styleN,node,key:'s'+idx};
+  }
+  if(node.tagName==='LINK') return elcssLinkSource(sheet.href||node.href, ctx, node);
+  return null;
+}
+// Hrefs of every readable stylesheet file (links and @imports, recursively) so their text can be fetched once.
+function elcssGatherFiles(sheet, src, ctx, acc){
+  if(!src) return;
+  if(src.type==='link'&&acc.indexOf(src.href)===-1) acc.push(src.href);
+  let rules; try{ rules=sheet.cssRules; }catch(e){ return; }
+  if(!rules) return;
+  for(let i=0;i<rules.length;i++){ const r=rules[i]; if(r.type===3&&r.styleSheet) elcssGatherFiles(r.styleSheet, elcssLinkSource(r.styleSheet.href||r.href, ctx, null), ctx, acc); }
+}
+function elcssTestRule(r, chain, k, src, ctx, scanned, text, same){
+  const sel=r.selectorText||''; if(!sel) return;
+  const parts=elcssSplitList(sel); let hit=null, part='', inherited=null;
+  for(const p of parts){ const m=elcssMatchPart(ctx.el,p); if(m){ hit=m; part=p; break; } }
+  if(!hit){
+    if(!elcssHasInheritable(r.style)) return;
+    for(const anc of ctx.ancestors){ for(const p of parts){ const m=elcssMatchPart(anc,p); if(m&&!m.pseudo){ hit=m; part=p; inherited=anc; break; } } if(hit) break; }
+    if(!hit) return;
+  }
+  const keyN=elcssNormSel(sel)+'|'+chain.map(elcssNormCond).join('|'); const sameIdx=same[keyN]||0; same[keyN]=sameIdx+1;
+  const en={key:src.key+':'+k, kind:'rule', sel, part, chain, state:hit.state, pseudo:hit.pseudo, inherited, src, rule:r, sheet:r.parentStyleSheet, ord:k, sameIdx, seq:ctx.seq++, spec:elcssSpecificity(part), loc:null, text:null, decls:'', readOnly:false, roWhy:'', note:''};
+  if(src.type==='resp'){ en.src=Object.assign({},src,{device:elcssDeviceOf(chain)}); en.decls=elcssCssTextLines(r.style.cssText.replace(/\s*!important/g,'')); en.note='The editor’s own '+en.src.device+' override for this element (what the Size / Spacing controls write). Saved with the page.'; }
+  else if(src.type==='hover'){ en.decls=elcssCssTextLines(r.style.cssText.replace(/\s*!important/g,'')); en.note='The editor’s hover style for this element. Saved with the page.'; }
+  else if(src.type==='engine'){ en.readOnly=true; en.decls=elcssCssTextLines(r.style.cssText); en.roWhy='Managed by '+src.label+' — change it there. To override it for this element, add a rule below or use the inline style.'; }
+  else if(src.type==='external'){ en.readOnly=true; en.decls=elcssCssTextLines(r.style.cssText); en.roWhy='Third-party stylesheet ('+src.label+') — override it with a rule below or the inline style.'; }
+  else {
+    if(scanned){ const loc=elcssLocateScanned(scanned,en); if(loc){ en.loc=loc; en.text=text; en.decls=elcssDisplay(text.slice(loc.rule.bodyStart,loc.rule.bodyEnd)); } }
+    if(!en.loc) en.decls=elcssCssTextLines(r.style.cssText);
+    if(src.type==='link') en.note='Shared stylesheet — every page that uses '+src.label+' changes. Written to the server when you click Save (previous copy in data/bak/).'+(text==null?' This file could not be read here; the change will show in the editor but may not save.':'');
+    else if(src.type==='pagecss') en.note='Page Settings → Custom CSS for this page. Saved to the page record when you click Apply.';
+    else en.note='Saved with the page.';
+  }
+  ctx.entries.push(en);
+}
+function elcssWalkSheet(sheet, src, ctx){
+  if(!src) return;
+  let rules; try{ rules=sheet.cssRules; }catch(e){ if(src.type!=='engine'&&ctx.unreadable.indexOf(src.label)===-1) ctx.unreadable.push(src.label); return; }
+  if(!rules) return;
+  let text=null;
+  if(src.type==='style'||src.type==='pagecss') text=src.node.textContent||'';
+  else if(src.type==='link') text=(ctx.texts[src.href]!=null)?ctx.texts[src.href]:null;
+  const scanned=(text!=null)?elcssScan(text):null;
+  const same={}; let ord=0;
+  const walk=(list,chain)=>{
+    for(let i=0;i<list.length;i++){ const r=list[i];
+      if(r.type===1){ const k=ord++; elcssTestRule(r,chain,k,src,ctx,scanned,text,same); if(r.cssRules&&r.cssRules.length) walk(r.cssRules,chain); }
+      else if(r.type===3){ if(r.styleSheet) elcssWalkSheet(r.styleSheet, elcssLinkSource(r.styleSheet.href||r.href, ctx, null), ctx); }
+      else if(r.type===5||r.type===6||r.type===7||r.type===8) continue;      // @font-face, @page, @keyframes, keyframe
+      else if(r.cssRules){ const cond=(r.type===4)?('@media '+r.conditionText):(r.type===12?('@supports '+r.conditionText):String(r.cssText||'').split('{')[0].trim()); walk(r.cssRules,chain.concat(cond)); }
+    } };
+  walk(rules,[]);
+}
+async function elcssCollect(){
+  const st=_elcss; if(!st) return;
+  const doc=st.doc, el=st.el; const ancestors=[]; for(let p=el.parentElement;p;p=p.parentElement) ancestors.push(p);
+  const ctx={doc,el,ancestors,entries:[],unreadable:[],siteOrigin:elcssSiteOrigin(),styleN:0,seq:0,texts:st.texts||{}}; st.texts=ctx.texts;
+  const sheets=Array.from(doc.styleSheets||[]); const srcs=sheets.map((sh,i)=>elcssClassify(sh,sh.ownerNode,ctx,i));
+  const files=[]; sheets.forEach((sh,i)=>elcssGatherFiles(sh,srcs[i],ctx,files));
+  await Promise.all(files.filter(h=>ctx.texts[h]===undefined).map(async h=>{ try{ const r=await fetch(h,{credentials:'same-origin'}); ctx.texts[h]=r.ok?await r.text():null; }catch(e){ ctx.texts[h]=null; } }));
+  sheets.forEach((sh,i)=>elcssWalkSheet(sh,srcs[i],ctx));
+  const own=ctx.entries.filter(e=>!e.inherited).sort((x,y)=>(y.spec.n-x.spec.n)||(y.seq-x.seq));
+  const inh=ctx.entries.filter(e=>e.inherited).sort((x,y)=>(ancestors.indexOf(x.inherited)-ancestors.indexOf(y.inherited))||(y.spec.n-x.spec.n)||(y.seq-x.seq));
+  let inlineRaw=el.getAttribute('style')||'';
+  if(el.hasAttribute('data-fe-editing')) inlineRaw=inlineRaw.replace(/outline(-offset)?\s*:[^;]*;?/g,'');
+  st.inline={key:'in',kind:'inline',sel:'style="…"',chain:[],state:'',pseudo:'',inherited:null,src:{type:'inline',label:'inline style',key:'in'},decls:elcssDisplay(inlineRaw),readOnly:false,note:'This element’s own style attribute — beats every stylesheet rule (except !important). Saved with the page.'};
+  st.entries=own.concat(inh); st.unreadable=ctx.unreadable; st.map={};
+  [st.inline].concat(st.entries).forEach(en=>{ st.map[en.key]=en; if(st.orig[en.key]===undefined) st.orig[en.key]=en.decls; });
+}
+function elcssSuggestSelector(el){
+  if(el.id&&el.id.indexOf('__fe_')!==0) return '#'+el.id;
+  const cls=Array.from(el.classList||[]).filter(c=>!/^(fge-r\d+|fe-sel|fe-hover)$/.test(c));
+  const tag=el.tagName.toLowerCase();
+  if(cls.length) return tag+'.'+cls[0];
+  const p=el.parentElement; if(p&&p.tagName!=='BODY'&&p.tagName!=='HTML'){ if(p.id&&p.id.indexOf('__fe_')!==0) return '#'+p.id+' > '+tag; const pc=Array.from(p.classList||[]).filter(c=>!/^(fge-r\d+|fe-sel|fe-hover)$/.test(c)); if(pc.length) return '.'+pc[0]+' > '+tag; }
+  return tag;
+}
+function elcssBadge(cls,txt){ return '<span class="elcss-badge '+cls+'">'+esc(txt)+'</span>'; }
+function elcssCard(en){
+  const badges=[elcssBadge('src '+en.src.type, en.src.type==='inline'?'inline':en.src.label)];
+  en.chain.forEach(c=>badges.push(elcssBadge('media',c)));
+  if(en.state) badges.push(elcssBadge('state',en.state));
+  if(en.pseudo) badges.push(elcssBadge('state',en.pseudo));
+  if(en.inherited) badges.push(elcssBadge('inh','via <'+en.inherited.tagName.toLowerCase()+(en.inherited.id&&en.inherited.id.indexOf('__fe_')!==0?'#'+en.inherited.id:'')+'>'));
+  if(en.readOnly) badges.push(elcssBadge('ro','read-only'));
+  const rows=Math.min(14,Math.max(2,(en.decls.match(/\n/g)||[]).length+2));
+  const btn=en.src.type==='link'?'Save to file':'Apply';
+  const ph=en.kind==='inline'?'No inline style yet — type declarations here, e.g. color: #333;':'';
+  return '<div class="elcss-card'+(en.readOnly?' ro':'')+'" data-key="'+esc(en.key)+'">'
+    +'<div class="elcss-head"><code class="elcss-sel">'+esc(en.kind==='inline'?'style="…"':en.sel)+'</code><span class="elcss-badges">'+badges.join('')+'</span></div>'
+    +'<textarea class="elcss-decls" data-key="'+esc(en.key)+'" rows="'+rows+'" spellcheck="false" placeholder="'+esc(ph)+'"'+(en.readOnly?' readonly':'')+' onkeydown="elcssKey(event,this)" oninput="elcssDirty(this)">'+esc(en.decls)+'</textarea>'
+    +'<div class="elcss-foot"><span class="elcss-note">'+esc(en.readOnly?en.roWhy:en.note)+'</span>'
+    +(en.readOnly?'':'<button class="fd-btn-ghost" type="button" onclick="elcssRevert(\''+esc(en.key)+'\')" title="Back to how it was when this window opened">Revert</button><button class="fd-btn-primary elcss-apply" type="button" onclick="elcssApply(\''+esc(en.key)+'\')">'+btn+'</button>')
+    +'</div></div>';
+}
+function elcssRender(){
+  const st=_elcss, body=document.getElementById('elcss-body'); if(!st||!body) return;
+  const own=st.entries.filter(e=>!e.inherited), inh=st.entries.filter(e=>e.inherited);
+  let html='<div class="elcss-section">Applies to this element <span class="elcss-count">'+(own.length+1)+'</span></div>'+[st.inline].concat(own).map(elcssCard).join('');
+  if(inh.length) html+='<div class="elcss-section">Inherited from ancestors <span class="elcss-count">'+inh.length+'</span></div>'+inh.map(elcssCard).join('');
+  const sug=elcssSuggestSelector(st.el);
+  html+='<div class="elcss-add"><div class="elcss-section">Add a rule for this element</div>'
+    +'<div class="elcss-add-row"><input type="text" id="elcss-new-sel" class="fd-input" value="'+esc(sug)+'" spellcheck="false" oninput="elcssNewSelCheck()" placeholder="selector, e.g. .hero h1"><span class="elcss-note" id="elcss-new-note"></span></div>'
+    +'<textarea id="elcss-new-decls" class="elcss-decls" rows="3" spellcheck="false" placeholder="color: #333;&#10;font-size: 18px;" onkeydown="elcssKey(event,this)"></textarea>'
+    +'<div class="elcss-foot" style="border:none;background:none;padding:0"><span class="elcss-note">Added to this page in a &lt;style&gt; block (saved with the page). Rules you add here appear above, editable like the others.</span><button class="fd-btn-primary" type="button" onclick="elcssAddRule()">Add rule</button></div></div>';
+  if(st.unreadable.length) html+='<div class="elcss-footnote">Not readable here (third-party stylesheets): '+st.unreadable.map(esc).join(', ')+'.</div>';
+  body.innerHTML=html;
+  elcssNewSelCheck();
+  const status=document.getElementById('elcss-status'); if(status) status.textContent=(own.length+1)+' rule'+(own.length?'s':'')+' apply'+(inh.length?(' · '+inh.length+' inherited'):'');
+}
+function elcssNewSelCheck(){
+  const st=_elcss, inp=document.getElementById('elcss-new-sel'), note=document.getElementById('elcss-new-note'); if(!st||!inp||!note) return;
+  const sel=inp.value.trim(); if(!sel){ note.textContent=''; return; }
+  let n=0, hits=false; try{ n=st.doc.querySelectorAll(sel).length; hits=st.el.matches(sel); }catch(e){ note.textContent='Not a valid selector'; return; }
+  note.textContent=!hits?('Does not match the selected element'+(n?(' — matches '+n+' other'+(n===1?'':'s')):'')):(n===1?'Matches just this element':'Matches '+n+' elements on this page — all of them change');
+}
+function elcssKey(e, ta){ if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); if(ta.id==='elcss-new-decls') elcssAddRule(); else elcssApply(ta.getAttribute('data-key')); } }
+function elcssDirty(ta){ const st=_elcss, key=ta.getAttribute('data-key'), en=st&&st.map[key]; const card=ta.closest('.elcss-card'); if(card&&en) card.classList.toggle('dirty', ta.value!==en.decls); }
+function elcssMarkUnsaved(){ document.getElementById('ve-unsaved')?.classList.add('on'); }
+function elcssFrame(){ const ifr=document.getElementById('visual-iframe'); return (ifr&&ifr.contentDocument&&ifr.contentWindow)?ifr:null; }
+async function veElementCssOpen(){
+  if(_veMode==='code'){ toast('Switch to Visual and click an element first','err'); return; }
+  if(!_veCurSel){ toast('Click an element on the page first','err'); return; }
+  const ifr=elcssFrame(); if(!ifr){ toast('Page not loaded yet','err'); return; }
+  const el=ifr.contentDocument.querySelector('[data-feid="'+_veCurSel.fid+'"]'); if(!el){ toast('Select the element again','err'); return; }
+  _elcss={fid:_veCurSel.fid, el, doc:ifr.contentDocument, entries:[], unreadable:[], orig:{}, map:{}, texts:{}};
+  const t=document.getElementById('elcss-title'); if(t) t.textContent='Element CSS — '+(_veCurSel.path||('<'+_veCurSel.tag+'>'));
+  const b=document.getElementById('elcss-body'); if(b) b.innerHTML='<div class="elcss-loading">Reading stylesheets…</div>';
+  openM('m-elcss');
+  await elcssRefresh();
+}
+async function elcssRefresh(){
+  const st=_elcss; if(!st) return;
+  const mb=document.getElementById('elcss-body'); const scroll=mb?mb.scrollTop:0;
+  try{ await elcssCollect(); }catch(e){ if(mb) mb.innerHTML='<div class="elcss-empty">Could not read the stylesheets: '+esc(e.message)+'</div>'; return; }
+  elcssRender(); if(mb) mb.scrollTop=scroll;
+}
+function elcssRevert(key){ const st=_elcss; if(!st) return; const ta=document.querySelector('#elcss-body textarea[data-key="'+key+'"]'); if(!ta||st.orig[key]===undefined) return; ta.value=st.orig[key]; return elcssApply(key); }
+async function elcssApply(key){
+  const st=_elcss; const en=st&&st.map[key]; if(!en||en.readOnly) return;
+  const ta=document.querySelector('#elcss-body textarea[data-key="'+key+'"]'); if(!ta) return;
+  const ifr=elcssFrame(); if(!ifr){ toast('Page not loaded','err'); return; }
+  const el=st.el; if(!el.isConnected){ toast('That element is gone — select it again','err'); return; }
+  const c=elcssCleanBody(ta.value); const warn=c.nested?[]:elcssValidate(c.decls);
+  const nestedForbidden=c.nested&&!(en.loc&&/[{}]/.test(elcssStripNoise(en.text.slice(en.loc.rule.bodyStart,en.loc.rule.bodyEnd))));
+  if(nestedForbidden){ toast('Only declarations go here (no { } blocks) — add nested rules with "Add a rule"','err'); return; }
+  try{
+    if(en.kind==='inline'){
+      ifr.contentWindow.postMessage({type:'ve-checkpoint'},'*');   // Ctrl+Z restores the attribute
+      const inline=c.body.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\s*\n\s*/g,' ').trim();
+      if(inline) el.setAttribute('style',inline); else el.removeAttribute('style');
+      elcssMarkUnsaved();
+    } else if(en.src.type==='style'){
+      const node=en.src.node, cur=node.textContent||''; const loc=elcssLocateScanned(elcssScan(cur),en);
+      if(loc){ node.textContent=cur.slice(0,loc.rule.bodyStart)+(c.nested?c.body:elcssIndentBody(c.body,loc.rule,cur))+cur.slice(loc.rule.bodyEnd); }
+      else { en.rule.style.cssText=c.body; const regen=elcssSheetText(en.sheet); if(regen==null) throw new Error('could not rewrite that style block'); node.textContent=regen; toast('That <style> block was rewritten from the browser’s copy (comments and formatting normalised)','ok'); }
+      elcssMarkUnsaved();
+    } else if(en.src.type==='link'){
+      en.rule.style.cssText=c.body;                                 // live, in the editor
+      await elcssSaveToFile(en,c);                                  // and on the server
+    } else if(en.src.type==='pagecss'){
+      en.rule.style.cssText=c.body;
+      const pg=_pages[_curPage]; const custom=(pg&&pg.customCss)||''; const node=en.src.node, nodeText=node.textContent||'';
+      const la=elcssLocateScanned(elcssScan(nodeText),en); const lb=elcssScan(custom); const j=la?(la.index-(la.list.length-lb.length)):-1;
+      if(!pg||!la||j<0||!lb[j]||elcssNormSel(lb[j].sel)!==elcssNormSel(la.rule.sel)) throw new Error('that rule is generated from Page Settings (fonts) — change it there');
+      pg.customCss=custom.slice(0,lb[j].bodyStart)+(c.nested?c.body:elcssIndentBody(c.body,lb[j],custom))+custom.slice(lb[j].bodyEnd);
+      node.textContent=nodeText.slice(0,la.rule.bodyStart)+(c.nested?c.body:elcssIndentBody(c.body,la.rule,nodeText))+nodeText.slice(la.rule.bodyEnd);
+      const ok=await savePagesJson(); if(!ok) toast('Applied here, but the page settings could not be saved','err');
+      elcssMarkUnsaved();
+    } else if(en.src.type==='resp'||en.src.type==='hover'){
+      const decls={}; c.decls.forEach(d=>{ decls[d.prop]=d.val; });
+      ifr.contentWindow.postMessage({type:'ve-action',action:en.src.type==='resp'?'setRespDecls':'setHoverDecls',fid:st.fid,device:en.src.device,decls},'*');
+      elcssMarkUnsaved();
+    }
+  }catch(e){ toast('Could not apply: '+e.message,'err'); return; }
+  if(warn.length) toast('Applied — but the browser does not understand: '+warn.join('; '),'err'); else if(en.src.type!=='link') toast('Applied','ok');
+  try{ ifr.contentWindow.postMessage({type:'ve-reselect'},'*'); }catch(e){}
+  await new Promise(r=>setTimeout(r,en.src.type==='resp'||en.src.type==='hover'?60:0));   // let the bridge regenerate first
+  await elcssRefresh();
+}
+async function elcssSaveToFile(en, c){
+  const path=en.src.path; if(!path) throw new Error('no file path');
+  if(!canCallApi()) throw new Error('Server API is not configured (Settings → Server API)');
+  const d=await apiCall('read_file',{path}); const cur=(d&&d.content)||'';
+  const loc=elcssLocateScanned(elcssScan(cur),en);
+  if(!loc) throw new Error(path+' on the server does not match the stylesheet the editor loaded — reload the page and try again');
+  const next=cur.slice(0,loc.rule.bodyStart)+(c.nested?c.body:elcssIndentBody(c.body,loc.rule,cur))+cur.slice(loc.rule.bodyEnd);
+  if(next===cur){ toast('No change','ok'); return; }
+  try{ await apiCall('write_file',{path:'data/bak/'+path.replace(/[\/\\]+/g,'__'),content:cur}); }catch(e){}
+  const wd=await apiCall('write_file',{path,content:next});
+  try{ if(typeof ghMirror==='function') await ghMirror(path,next,'Fourge: element CSS ('+path+')',{serverResult:wd&&wd.gh}); }catch(e){}
+  if(_elcss&&_elcss.texts) _elcss.texts[en.src.href]=next;
+  toast('Saved to '+path+' (previous copy in data/bak/)','ok');
+}
+async function elcssAddRule(){
+  const st=_elcss; if(!st) return;
+  const selEl=document.getElementById('elcss-new-sel'), ta=document.getElementById('elcss-new-decls'); if(!selEl||!ta) return;
+  const sel=selEl.value.trim(); const c=elcssCleanBody(ta.value);
+  if(!sel){ toast('Enter a selector','err'); selEl.focus(); return; }
+  if(c.nested){ toast('Only declarations go in the rule (no { } blocks)','err'); return; }
+  if(!c.body.trim()){ toast('Enter at least one declaration, e.g. color: #333;','err'); ta.focus(); return; }
+  try{ st.doc.querySelector(sel); }catch(e){ toast('That is not a valid selector','err'); selEl.focus(); return; }
+  const warn=elcssValidate(c.decls);
+  let node=st.doc.getElementById('fourge-element-css');
+  if(!node){ node=st.doc.createElement('style'); node.id='fourge-element-css'; node.textContent='/* Rules added with Element CSS (visual editor) */\n'; (st.doc.head||st.doc.documentElement).appendChild(node); }
+  node.textContent=node.textContent.replace(/\s*$/,'\n')+sel+' {\n'+c.body.split('\n').map(l=>'  '+l).join('\n')+'\n}\n';
+  ta.value=''; elcssMarkUnsaved();
+  let matches=false; try{ matches=st.el.matches(sel); }catch(e){}
+  toast(matches?'Rule added':'Rule added — note it does not match the selected element', matches?'ok':'err');
+  if(warn.length) toast('Added — but the browser does not understand: '+warn.join('; '),'err');
+  try{ elcssFrame()?.contentWindow.postMessage({type:'ve-reselect'},'*'); }catch(e){}
+  await elcssRefresh();
+}
+// Esc in the window: first leaves the text box, then closes.
+(function(){ const m=document.getElementById('m-elcss'); if(!m) return; m.addEventListener('keydown',e=>{ if(e.key!=='Escape') return; e.preventDefault(); e.stopPropagation(); const ae=document.activeElement; if(ae&&(ae.tagName==='TEXTAREA'||ae.tagName==='INPUT')&&m.contains(ae)){ ae.blur(); try{ m.querySelector('.mf .fd-btn-primary').focus(); }catch(e2){} return; } closeM('m-elcss'); }); })();
 
 // ── ICON LIBRARY (Font Awesome, already loaded) ───────────────────
 // A curated set of common icons. Picking one inserts a <i class="fa-…"> into
@@ -16131,9 +16739,9 @@ function veAddFaq(){
   document.getElementById('ve-unsaved')?.classList.add('on');
   toast('FAQ added — edit its question & answer in the panel','ok');
 }
-function veRemoveFaq(){
+async function veRemoveFaq(){
   if(!_veCurSel) return;
-  if(!confirm('Remove this FAQ item?')) return;
+  if(!(await uiConfirm('Remove this FAQ item?', 'Remove item', 'Remove FAQ item'))) return;
   const ifrm=document.getElementById('visual-iframe'); if(!ifrm) return;
   ifrm.contentWindow.postMessage({type:'ve-update',fid:_veCurSel.fid,field:'removeFaq',value:''},'*');
   document.getElementById('ve-unsaved')?.classList.add('on');
@@ -16494,13 +17102,50 @@ function veInitCM(){
   if(!ta||!window.CodeMirror) return null;
   _cmEditor=CodeMirror.fromTextArea(ta,{
     mode:'htmlmixed', theme:'material-darker', lineNumbers:true, lineWrapping:false,
-    autoCloseTags:true, matchBrackets:true, indentUnit:2, tabSize:2,
-    extraKeys:{'Ctrl-S':()=>veSavePage(),'Cmd-S':()=>veSavePage()}
+    autoCloseTags:true, matchBrackets:true, indentUnit:2, tabSize:2, styleActiveLine:true,
+    extraKeys:{
+      'Ctrl-S':()=>veSavePage(),'Cmd-S':()=>veSavePage(),
+      // Search inside the code (the browser's Find only sees the lines currently drawn).
+      // findPersistent keeps the search bar open and highlights every match;
+      // Enter / Shift+Enter step through them, Alt+G jumps to a line.
+      'Ctrl-F':'findPersistent','Cmd-F':'findPersistent','Ctrl-H':'replace'
+    }
   });
   _cmEditor.setSize('100%','100%');
   _cmEditor.on('change',()=>{ if(_veMode==='code') document.getElementById('ve-unsaved')?.classList.add('on'); });
+  _cmEditor.on('gutterClick',veCmGutterClick);
   return _cmEditor;
 }
+
+// Click a line number to select (highlight) that whole line; shift-click
+// extends the selection from the last clicked line — the desktop-editor
+// affordance for "this line, exactly".
+let _cmLineAnchor=null;
+function veCmGutterClick(cm, line, gutter, ev){
+  if(gutter && gutter!=='CodeMirror-linenumbers' && gutter!=='CodeMirror-gutter-wrapper') return;
+  const last=cm.lineCount()-1;
+  const shift=!!(ev&&ev.shiftKey);
+  const anchor=(shift&&_cmLineAnchor!=null)?_cmLineAnchor:line;
+  if(!shift) _cmLineAnchor=line;
+  const a=Math.min(anchor,line), z=Math.max(anchor,line);
+  const head=(z<last)?{line:z+1,ch:0}:{line:z,ch:cm.getLine(z).length};
+  cm.setSelection({line:a,ch:0}, head, {origin:'*gutter'});
+  cm.focus();
+  if(ev&&ev.preventDefault) ev.preventDefault();
+}
+// ⌘/Ctrl+F while the Code editor is showing searches the code, even when the
+// editor itself does not have keyboard focus yet (e.g. right after switching
+// to Code). Typing in some other field keeps the browser's own Find.
+document.addEventListener('keydown',function(e){
+  if(e.defaultPrevented||_veMode!=='code'||!_cmEditor) return;
+  if(!(e.ctrlKey||e.metaKey)||e.altKey||e.shiftKey) return;
+  if(String(e.key||'').toLowerCase()!=='f') return;
+  const wrap=document.getElementById('ve-code-wrap');
+  if(!wrap||!wrap.classList.contains('on')||!wrap.offsetParent) return;
+  const ae=document.activeElement;
+  if(ae&&ae!==document.body&&!wrap.contains(ae)) return;
+  e.preventDefault(); _cmEditor.execCommand('findPersistent');
+});
 
 // Toggle Visual ⇄ Code. Entering Code loads the current clean HTML into the
 // editor; returning to Visual feeds any hand-edits back through veRenderHtml so
@@ -17027,7 +17672,7 @@ async function veSaveTemplateToAll(zone){
   const pages = getPageList();
   if(!pages.length){ toast('No pages found','err'); return; }
 
-  if(!confirm('Apply this '+zone+' to all '+pages.length+' page(s)?\n\nThis will update the '+zone+' section on every page using your current server files.')) return;
+  if(!(await uiConfirm('Apply this '+zone+' to all '+pages.length+' page(s)?\n\nThis will update the '+zone+' section on every page using your current server files.', 'Apply to all pages', 'Save to all pages'))) return;
 
   const{url,token}=getApiCfg();
   if(!url||!token){ toast('Server API required — configure in Settings','err'); return; }
@@ -17705,7 +18350,7 @@ async function loadRevisions(){
 }
 
 async function restoreRevision(revId, path, pageId){
-  // In-app confirm — native confirm() is suppressed in some embedded/iframe browsers.
+  // In-app confirm — the native dialog is suppressed in some embedded/iframe browsers.
   if(!(await uiConfirm('Restore this version? The current '+(path||'page')+' will be overwritten with this saved snapshot.','Restore this version','Restore page version'))) return;
   try{
     const revPath = 'data/rev_'+revId+'.html';
@@ -17832,7 +18477,7 @@ async function adaptifyInstallAll(){
   if(!canCallApi()){ toast('Sign in again to install','err'); return; }
   const pages=getPageList();
   if(!pages.length){ toast('No pages found','err'); return; }
-  if(!confirm('Install the ADAptify widget on all '+pages.length+' page(s)?\n\nThis adds the widget script to each page and saves your current settings. The widget then appears site-wide.')) return;
+  if(!(await uiConfirm('Install the ADAptify widget on all '+pages.length+' page(s)?\n\nThis adds the widget script to each page and saves your current settings. The widget then appears site-wide.', 'Install widget', 'Install ADAptify on all pages'))) return;
 
   const status=document.getElementById('ada-install-status');
   const setStatus=t=>{ if(status) status.textContent=t; };
@@ -17978,7 +18623,7 @@ async function veSavePage(){
   // or serialization, not an intentional edit. Editors get an override (they
   // may genuinely be emptying a page); nothing is written without a yes.
   const alarm=fourgeShrinkAlarm(_veOrigHtml[_curPage]||'', html);
-  if(alarm && !confirm('⚠ This save would shrink the page body by '+alarm.pct+'% ('+alarm.from+' → '+alarm.to+' characters).\n\nThat usually means the page did not load fully or the layout was gutted by mistake. Save anyway?')){
+  if(alarm && !(await uiConfirm('⚠ This save would shrink the page body by '+alarm.pct+'% ('+alarm.from+' → '+alarm.to+' characters).\n\nThat usually means the page did not load fully or the layout was gutted by mistake. Save anyway?', 'Save anyway', 'This save shrinks the page'))){
     toast('Save cancelled — nothing was written','ok');
     return;
   }
@@ -18086,7 +18731,7 @@ async function veCleanAllPages(){
   if(!url||!token){ toast('Configure Server API in Settings first','err'); return; }
   const ids=Object.keys(_pages||{});
   if(!ids.length){ toast('No pages to clean','err'); return; }
-  if(!confirm('Scan '+ids.length+' page file(s) and strip stale editor tracking attributes? This fixes the wrong-block image bug on previously saved pages.')) return;
+  if(!(await uiConfirm('Scan '+ids.length+' page file(s) and strip stale editor tracking attributes? This fixes the wrong-block image bug on previously saved pages.', 'Clean pages', 'Strip editor attributes'))) return;
   toast('Cleaning '+ids.length+' page(s)…');
   let cleaned=0, skipped=0, failed=0;
   for(const id of ids){
@@ -18342,7 +18987,7 @@ async function persistHiddenPages(){
 }
 async function removePageFromCMS(path){
   if(!path) return;
-  if(!confirm('Remove this page from the CMS?\n\nThe .html file stays on your server — it just won’t show in the pages list.')) return;
+  if(!(await uiConfirm('Remove this page from the CMS?\n\nThe .html file stays on your server — it just won’t show in the pages list.', 'Remove from CMS', 'Remove page from the CMS'))) return;
   if(!_site.hiddenPages) _site.hiddenPages=[];
   const id=pageIdFromPath(path), key=normHiddenKey(path);
   if(!_site.hiddenPages.some(p=>pageIdFromPath(p)===id || normHiddenKey(p)===key)) _site.hiddenPages.push(path);
@@ -18495,7 +19140,7 @@ async function generatePrivacyPolicy(){
   const path='privacy-policy.html';
   try{
     // Warn before overwriting an existing privacy policy.
-    try{ const ex=await apiCall('read_file',{path}); if(ex&&ex.content&&!confirm('privacy-policy.html already exists — overwrite it with a freshly generated version?')) return; }catch{}
+    try{ const ex=await apiCall('read_file',{path}); if(ex&&ex.content&&!(await uiConfirm('privacy-policy.html already exists — overwrite it with a freshly generated version?', 'Overwrite', 'privacy-policy.html exists'))) return; }catch{}
     // Prefer wrapping the policy in the site shell (header/footer/CSS) by cloning a
     // real page; fall back to the standalone styled document if there's no donor.
     const full=privacyPolicyHTML();
@@ -18708,7 +19353,7 @@ async function importFromServerRun(forceOverride){
     });
     if(wouldOverride.length){
       const names = wouldOverride.map(p => p.split('/').pop()).join(', ');
-      if(!confirm(`${wouldOverride.length} page(s) already exist in the CMS:\n\n${names}\n\nOverride them with the server versions?`)) return;
+      if(!(await uiConfirm(`${wouldOverride.length} page(s) already exist in the CMS:\n\n${names}\n\nOverride them with the server versions?`, 'Override', 'Pages already in the CMS'))) return;
     }
   }
 

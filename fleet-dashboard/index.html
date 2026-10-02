@@ -54,6 +54,14 @@ tr:last-child td{border-bottom:none}
 .tbl-wrap{overflow-x:auto}
 .remove-btn{font-size:11px;padding:5px 9px}
 .count{font-size:12px;color:var(--muted);font-weight:600}
+/* in-app dialog (no browser confirm/alert) */
+#fd-dialog{border:none;border-radius:12px;padding:0;max-width:420px;width:calc(100% - 32px);box-shadow:0 20px 60px rgba(0,0,0,.25);color:var(--text);background:var(--surface)}
+#fd-dialog::backdrop{background:rgba(26,26,26,.5)}
+#fd-dialog .t{padding:18px 20px 6px;font-weight:700;font-size:15px}
+#fd-dialog .m{padding:0 20px 18px;font-size:14px;line-height:1.55;color:var(--muted);white-space:pre-line}
+#fd-dialog .f{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;background:var(--surface-2)}
+#fd-dialog button{font:inherit;padding:8px 14px;border-radius:8px;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text)}
+#fd-dialog button.ok{border-color:var(--ember);background:var(--ember);color:#fff;font-weight:600}
 </style>
 </head>
 <body>
@@ -105,7 +113,23 @@ tr:last-child td{border-bottom:none}
   </div>
 </div>
 
+<dialog id="fd-dialog"><div class="t" id="fd-dialog-title">Please confirm</div><div class="m" id="fd-dialog-msg"></div><div class="f"><button type="button" id="fd-dialog-cancel">Cancel</button><button type="button" class="ok" id="fd-dialog-ok">OK</button></div></dialog>
 <script>
+// In-app dialog — replaces the browser's native confirm/alert boxes. Resolves true/false.
+function fdDialog(msg, opts){
+  opts=opts||{}; const cancel=opts.cancel!==false;
+  return new Promise(resolve=>{
+    const dlg=document.getElementById('fd-dialog');
+    if(!dlg||!dlg.showModal){ resolve(cancel?window.confirm(msg):(window.alert(msg),true)); return; }
+    document.getElementById('fd-dialog-title').textContent=opts.title||(cancel?'Please confirm':'Notice');
+    document.getElementById('fd-dialog-msg').textContent=msg||'';
+    const okB=document.getElementById('fd-dialog-ok'), cB=document.getElementById('fd-dialog-cancel');
+    okB.textContent=opts.ok||'OK'; cB.style.display=cancel?'':'none';
+    const done=v=>{ okB.onclick=cB.onclick=null; dlg.onclose=null; try{ dlg.close(); }catch(e){} resolve(v); };
+    okB.onclick=()=>done(true); cB.onclick=()=>done(false); dlg.onclose=()=>done(false);
+    dlg.showModal(); setTimeout(()=>{ try{ okB.focus(); }catch(e){} },20);
+  });
+}
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 async function api(action, body){
@@ -218,9 +242,9 @@ async function loadSites(){
   }
 }
 async function removeSite(url){
-  if (!confirm('Remove ' + url + ' from the dashboard? It reappears the next time that site reports.')) return;
+  if (!(await fdDialog('Remove ' + url + ' from the dashboard? It reappears the next time that site reports.', {title:'Remove site', ok:'Remove'}))) return;
   try{ await api('delete_site', {url}); loadSites(); }
-  catch(e){ alert('Could not remove: ' + (e.message || e)); }
+  catch(e){ await fdDialog('Could not remove: ' + (e.message || e), {title:'Could not remove', cancel:false}); }
 }
 
 document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
