@@ -75,6 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
+define('FOURGE_API_VERSION', '1.14.136');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -244,7 +245,7 @@ if (REQUIRE_HTTPS && in_array($action, $HTTPS_REQUIRED_ACTIONS, true) && !fourge
 
 try {
     switch ($action) {
-        case 'ping':        ob_end_clean(); echo json_encode(['ok' => true, 'root' => PUBLIC_HTML, 'php' => PHP_VERSION, 'version' => '1.2.0', 'db' => true]); break;
+        case 'ping':        ob_end_clean(); echo json_encode(['ok' => true, 'root' => PUBLIC_HTML, 'php' => PHP_VERSION, 'version' => FOURGE_API_VERSION, 'api_version' => FOURGE_API_VERSION, 'db' => true]); break;
         // ── Auth + accounts + secrets (SQLite-backed) ──
         case 'login':           ob_end_clean(); fourgeApiLogin($body); break;
         case 'logout':          ob_end_clean(); fourgeApiLogout($sessionToken); break;
