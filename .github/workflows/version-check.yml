@@ -12,11 +12,13 @@ on:
     paths:
       - 'admin/version.json'
       - 'admin/index.html'
+      - 'admin/api.php'
   push:
     branches: [main]
     paths:
       - 'admin/version.json'
       - 'admin/index.html'
+      - 'admin/api.php'
 
 jobs:
   check:
@@ -32,4 +34,8 @@ jobs:
           echo "CMS_VERSION:  $C"
           if [ -z "$C" ]; then echo "::error::admin/index.html has no CMS_VERSION constant"; exit 1; fi
           if [ "$V" != "$C" ]; then echo "::error::admin/version.json says $V but admin/index.html says $C — every site would loop installing this release. Bump both."; exit 1; fi
-          echo "OK — both say $V"
+          A=$(grep -oE "^define\('FOURGE_API_VERSION', '[^']+'\);" admin/api.php | sed -E "s/^define\('FOURGE_API_VERSION', '([^']+)'\);/\1/")
+          echo "FOURGE_API_VERSION: $A"
+          if [ -z "$A" ]; then echo "::error::admin/api.php has no FOURGE_API_VERSION constant"; exit 1; fi
+          if [ "$V" != "$A" ]; then echo "::error::admin/api.php says $A but the release is $V — the sign-in check would flag every site's api.php as stale. Bump all three."; exit 1; fi
+          echo "OK — version.json, CMS_VERSION and FOURGE_API_VERSION all say $V"

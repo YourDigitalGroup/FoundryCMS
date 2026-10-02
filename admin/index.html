@@ -135,8 +135,8 @@ html,body{height:100%;font-family:var(--font-sans);font-size:14px;color:var(--te
 .tb-theme-switch::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
 html[data-theme="dark"] .tb-theme-switch{background:var(--ember)}
 html[data-theme="dark"] .tb-theme-switch::after{left:15px}
-#update-banner{display:none;background:var(--ember);color:white;padding:8px 20px;font-size:12px;font-weight:600;align-items:center;gap:10px;flex-shrink:0}
-#update-banner.show{display:flex}
+#update-banner,#api-banner{display:none;background:var(--ember);color:white;padding:8px 20px;font-size:12px;font-weight:600;align-items:center;gap:10px;flex-shrink:0}
+#update-banner.show,#api-banner.show{display:flex}
 .body-row{flex:1;display:flex;overflow:hidden}
 
 /* ── SIDEBAR (white in Fourge) ── */
@@ -1094,6 +1094,11 @@ textarea.fb-input{resize:vertical}
 
 
 <div id="shell">
+  <div id="api-banner" style="background:#7a2e0e">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg> <span id="api-msg"></span>
+    <button class="btn btn-amber btn-sm" onclick="installApiPhpNow(this)" id="api-install-btn">Install api.php now</button>
+    <button class="ib" onclick="document.getElementById('api-banner').classList.remove('show')" style="color:rgba(255,255,255,.6);margin-left:auto"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
   <div id="update-banner">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg> <span id="update-msg">A new version of Fourge is available.</span>
     <button class="btn btn-amber btn-sm" onclick="doUpdateAndReload(this)" id="update-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Update Now</button>
@@ -1971,13 +1976,22 @@ textarea.fb-input{resize:vertical}
           <div id="plc-results" style="margin-top:14px"></div>
         </div>
 
-        <div class="si-sec"><h2>Launch: Domain Find &amp; Replace</h2>
-          <div class="desc">Going live? Swap every reference to the old (dev) address for the new domain — across all pages, blog posts, forms, SEO data, plugins, and site settings, in one pass. <strong>Scan first</strong> to preview exactly which files change and how many times; nothing is written until you approve it. Changed files are backed up to <code>data/bak/</code>, and the sitemap + robots file are rebuilt afterward. Tip: enter addresses without <code>https://</code> (e.g. <code>dev-client.44interactive.com</code> → <code>www.clientdomain.com</code>) so every form of the link is caught.</div>
+        <div class="si-sec"><h2>Find &amp; Replace</h2>
+          <div class="desc">Change any text across the whole site in one pass — a word (<em>epoxy</em> → <em>coating</em>), a phone number, a product name, or the dev address when a site goes live. Every page, blog post, form, SEO data, plugin and site setting is covered. <strong>Scan first</strong>: it shows exactly which files change and how many times, and nothing is written until you approve it. Changed files are backed up to <code>data/bak/</code>, and the sitemap and robots file are rebuilt afterwards.</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-            <div style="flex:1;min-width:220px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Find (old address)</label><input id="ur-find" placeholder="dev-client.44interactive.com" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box;font-family:var(--font-mono)"></div>
-            <div style="flex:1;min-width:220px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Replace with (new address)</label><input id="ur-replace" placeholder="www.clientdomain.com" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box;font-family:var(--font-mono)"></div>
+            <div style="flex:1;min-width:220px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Find</label><input id="ur-find" placeholder="epoxy" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box;font-family:var(--font-mono)"></div>
+            <div style="flex:1;min-width:220px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Replace with</label><input id="ur-replace" placeholder="coating" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;box-sizing:border-box;font-family:var(--font-mono)"></div>
             <button type="button" class="fd-btn-secondary" onclick="urlReplaceScan()"><i class="fa-solid fa-magnifying-glass"></i> Scan</button>
             <button type="button" class="fd-btn-primary" id="ur-apply" style="display:none" onclick="urlReplaceApply()">Replace…</button>
+          </div>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:10px;font-size:12.5px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ur-case"> Match case <span style="color:var(--muted)">(off: <em>Epoxy</em> and <em>EPOXY</em> change too, keeping their capitals)</span></label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ur-word" checked> Whole words only</label>
+            <label style="display:flex;align-items:center;gap:6px">Where
+              <select id="ur-scope" style="padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:12.5px">
+                <option value="text">Text people read (never code, links, class names or file names)</option>
+                <option value="all">Everything, including code, links and file names (for domain swaps)</option>
+              </select></label>
           </div>
           <div id="ur-status" style="font-size:12px;color:var(--muted);margin-top:10px"></div>
           <div id="ur-results" style="margin-top:10px"></div>
@@ -1991,12 +2005,6 @@ textarea.fb-input{resize:vertical}
           <button class="fd-btn-primary" onclick="changePassword()">Change Password</button>
         </div>
 
-        <div class="si-sec architect-only"><h2>Go Live — Find &amp; Replace URL</h2>
-          <div class="desc">Swap a domain across every page when a site goes live — e.g. replace a staging/preview URL with the production domain. Scans all pages, posts, <code>sitemap.xml</code> and <code>robots.txt</code>. Run <strong>Preview</strong> first; the replace is a literal text swap and can't be undone (keep your git history).</div>
-          <div class="fg"><label>Find</label><input type="text" id="go-find" placeholder="https://staging.example.com" spellcheck="false" style="font-family:var(--font-mono);font-size:12px"></div>
-          <div class="fg"><label>Replace with</label><input type="text" id="go-replace" placeholder="https://www.example.com" spellcheck="false" style="font-family:var(--font-mono);font-size:12px"></div>
-          <div style="display:flex;gap:8px"><button class="fd-btn-secondary" onclick="goliveScan(false)"><i class="fa-solid fa-magnifying-glass"></i> Preview</button><button class="fd-btn-primary" onclick="goliveScan(true)"><i class="fa-solid fa-rotate"></i> Replace in all files</button></div>
-          <div id="go-status" style="display:none;margin-top:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--text)"></div>
         </div>
         </div>
       </div>
@@ -2692,7 +2700,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.135';
+const CMS_VERSION='1.14.136';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3422,8 +3430,8 @@ function applyRole(){
   // (see the stylesheet), and clearing an inline style only removes an inline
   // override; it falls back to the cascade, where that class rule still applies.
   // '' therefore never actually revealed anything: every architect-only section
-  // (GitHub Integration, Repository Override, Markup API Key, Custom AI Endpoint,
-  // Go Live) has been permanently invisible, on every site, regardless of account.
+  // (GitHub Integration, Repository Override, Markup API Key, Custom AI Endpoint)
+  // has been permanently invisible, on every site, regardless of account.
   document.querySelectorAll('.architect-only').forEach(el=>el.style.display=isArchitect(user)?'block':'none');
 
   // Nav visibility map
@@ -3551,6 +3559,8 @@ async function initApp(){
   }
   // Update check runs during the post-login loader (see initUpdateGate)
   try{ await initUpdateGate(); }catch(e){ console.warn('Update gate:',e.message); }
+  // Is the server half of the engine (api.php) as new as this page? See apiVersionCheck().
+  try{ apiVersionCheck().catch(()=>{}); }catch(e){}
   // One-time, silent sweep so pages published before the generator-tag feature
   // shipped get it too — see generatorTagSweepOnce(). Fire-and-forget: it must
   // never hold up login, and initUpdateGate() above may have already reloaded
@@ -11683,10 +11693,11 @@ async function pkgTickNow(){
   }catch(e){ toast('Failed: '+e.message,'err'); }
 }
 
-// ── LAUNCH: DOMAIN FIND & REPLACE ───────────────────────────────────────────
-// Site-wide literal find/replace for going live: swap the dev address for the
-// production domain across every page file and the data files that can carry
-// URLs. Two-step by design — Scan is a pure dry-run (per-file match counts,
+// ── FIND & REPLACE (site-wide) ──────────────────────────────────────────────
+// One tool for any text: a word, a phone number, a product name, or the dev
+// address when a site goes live. Scope "text" touches only what people read
+// (frHtmlText / frJsonText); scope "all" is the literal swap across every byte,
+// which a domain change needs. Two-step by design — Scan is a pure dry-run (per-file match counts,
 // zero writes); Replace only runs on the scanned plan after an explicit
 // confirm. Writes are guarded like every other bulk op: truncated reads are
 // refused, JSON files are parse-validated after replacement (a bad result is
@@ -11703,6 +11714,81 @@ function urlReplaceTargets(){
   const seen=new Set();
   return files.filter(f=>{ if(seen.has(f.path)) return false; seen.add(f.path); return true; });
 }
+// ── The matcher: literal text, optionally case-insensitive (the replacement then
+//    follows the case of what it replaces: epoxy→coating, Epoxy→Coating, EPOXY→COATING)
+//    and optionally whole words only. Works on plain text segments.
+function frMatcher(find, repl, opts){
+  opts=opts||{}; const esc=x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  let src=esc(find);
+  if(opts.wholeWord){ if(/^\w/.test(find)) src='\\b'+src; if(/\w$/.test(find)) src=src+'\\b'; }
+  const re=new RegExp(src,'g'+(opts.matchCase?'':'i'));
+  const caseLike=(m,r)=>{ if(opts.matchCase) return r; if(m===m.toUpperCase()&&m!==m.toLowerCase()) return r.toUpperCase(); if(m[0]===m[0].toUpperCase()&&m[0]!==m[0].toLowerCase()) return r.charAt(0).toUpperCase()+r.slice(1); return r; };
+  return {
+    count: t=>{ const m=String(t||'').match(re); return m?m.length:0; },
+    replace: t=>String(t||'').replace(re, m=>caseLike(m,repl)),
+  };
+}
+// Text-only scope for an HTML document or fragment: tags, comments, <script>,
+// <style> and <code>/<pre> blocks are left exactly as they are; text between tags
+// changes, and so do the human-readable attributes (alt, title, placeholder,
+// aria-label, and the content of description / og: / twitter: meta tags). A URL,
+// a class name, an id or a file name can never be touched this way.
+function frHtmlText(html, matcher, mode){
+  html=String(html||''); let count=0;
+  const parts=html.split(/(<!--[\s\S]*?-->|<script\b[\s\S]*?<\/script>|<style\b[\s\S]*?<\/style>|<pre\b[\s\S]*?<\/pre>|<code\b[\s\S]*?<\/code>|<[^>]+>)/i);
+  const out=parts.map((seg,k)=>{
+    if(k%2===0){ count+=matcher.count(seg); return mode==='replace'?matcher.replace(seg):seg; }   // text between tags
+    if(!/^<[a-z!\/]/i.test(seg) || /^<(!--|script|style|pre|code)\b/i.test(seg) || seg.startsWith('</')) return seg;
+    const isMeta=/^<meta\b/i.test(seg) && /\b(?:name|property)=["'](?:description|keywords|og:[a-z:_]+|twitter:[a-z:_]+|application-name)["']/i.test(seg);
+    return seg.replace(/\b(alt|title|placeholder|aria-label|content)=(["'])([\s\S]*?)\2/gi,(m,attr,q,val)=>{
+      if(attr.toLowerCase()==='content' && !isMeta) return m;
+      count+=matcher.count(val); return attr+'='+q+(mode==='replace'?matcher.replace(val):val)+q;
+    });
+  });
+  return {count, text: mode==='replace'?out.join(''):html};
+}
+// JSON data (posts, forms, SEO, settings): string values only, each treated as HTML
+// text — keys, ids, slugs-as-keys and structure are never touched.
+// A JSON string is prose only when it reads like prose: identifier-ish keys (id, slug,
+// url, path, file names, colours, emails, dates…) and identifier-shaped values (no
+// spaces and a slash, a dot-extension, a hex colour, an @, a slug) are left alone.
+const FR_JSON_SKIP_KEYS=/^(id|ids|slug|url|src|href|path|file|files|featured|poster|image|images|logo|favicon|icon|canonicalUrl|syncedFrom|syncedSourceId|sourceUrl|resolvedBase|website|email|notifyEmail|phone|type|level|formId|format|font|fonts|typography|color|colors|brand|class|className|tag|tags|date|publishAt|createdAt|updatedAt|lastCheckedAt|at|key|token|secret|hash|version|lang|locale|align|size|width|height|target|rel|method|action|status|mode|kind)$/i;
+function frJsonSkip(key, val){
+  if(FR_JSON_SKIP_KEYS.test(String(key||''))) return true;
+  if(/\s/.test(val) || /<[a-z!\/]/i.test(val)) return false;                     // sentences and HTML are prose
+  if(/[\/\\@#]/.test(val) || /\.[a-z0-9]{2,5}$/i.test(val) || /^https?:/i.test(val)) return true;   // paths, urls, files, emails, colours
+  if(/^[a-z0-9]+(-[a-z0-9]+)+$/.test(val) || /^[0-9a-f]{6,}$/i.test(val) || /^\d[\d.:T Z+-]*$/.test(val)) return true;   // slugs, ids, hashes, dates
+  return false;
+}
+function frJsonText(obj, matcher, mode){
+  let count=0;
+  const walk=(v,key)=>{
+    if(typeof v==='string'){ if(frJsonSkip(key,v)) return v; const r=frHtmlText(v,matcher,mode); count+=r.count; return mode==='replace'?r.text:v; }
+    if(Array.isArray(v)) return v.map(x=>walk(x,key));
+    if(v&&typeof v==='object'){ const o={}; for(const k in v) o[k]=walk(v[k],k); return o; }
+    return v;
+  };
+  const out=walk(obj,''); return {count, value:out};
+}
+function frOptions(){
+  return { matchCase: !!document.getElementById('ur-case')?.checked, wholeWord: !!document.getElementById('ur-word')?.checked, scope: document.getElementById('ur-scope')?.value||'text' };
+}
+// One file, both passes: returns {count, next} for the given scope. kind: page | json | text.
+function frProcess(content, kind, find, repl, opts, mode){
+  const matcher=frMatcher(find,repl,opts);
+  if(opts.scope==='all'){
+    const count=matcher.count(content); const next=mode==='replace'?matcher.replace(content):content;
+    if(kind==='json' && mode==='replace'){ try{ JSON.parse(next); }catch(e){ return {count, next:null, refused:'replacement would corrupt this JSON file — nothing written'}; } }
+    return {count, next};
+  }
+  if(kind==='json'){
+    let obj; try{ obj=JSON.parse(content); }catch(e){ return {count:0, next:content}; }
+    const r=frJsonText(obj,matcher,mode);
+    return {count:r.count, next: mode==='replace'?JSON.stringify(r.value,null,2):content};
+  }
+  if(kind==='text') return {count:0, next:content};     // CSS and other code files: never in text scope
+  const r=frHtmlText(content,matcher,mode); return {count:r.count, next:r.text};
+}
 function urCount(hay,needle){ let n=0,i=0; while((i=hay.indexOf(needle,i))!==-1){ n++; i+=needle.length; } return n; }
 async function urlReplaceScan(){
   const find=(document.getElementById('ur-find')?.value||'').trim();
@@ -11710,10 +11796,10 @@ async function urlReplaceScan(){
   const st=document.getElementById('ur-status'), res=document.getElementById('ur-results'), applyBtn=document.getElementById('ur-apply');
   _urScan=null; if(applyBtn) applyBtn.style.display='none'; if(res) res.innerHTML='';
   if(!canCallApi()){ toast('Sign in again first','err'); return; }
-  if(find.length<4){ toast('Enter at least 4 characters to find — very short strings are dangerous to replace site-wide','err'); return; }
-  if(!repl){ toast('Enter the replacement address','err'); return; }
+  const opts=frOptions();
+  if(find.length<(opts.scope==='all'?4:2)){ toast('Enter at least '+(opts.scope==='all'?4:2)+' characters to find — very short strings are dangerous to replace site-wide','err'); return; }
   if(find===repl){ toast('Find and Replace are identical — nothing to do','err'); return; }
-  if(repl.indexOf(find)>=0){ toast('The replacement contains the text being found — running this twice would corrupt addresses (e.g. www.www.…). Adjust one of them.','err'); return; }
+  if(opts.scope==='all' && repl.indexOf(find)>=0){ toast('The replacement contains the text being found — running this twice on code and links would compound it (e.g. www.www.…). Adjust one of them, or use the “Text people read” scope.','err'); return; }
   if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
   const targets=urlReplaceTargets();
   const rows=[]; let total=0, i=0;
@@ -11724,14 +11810,14 @@ async function urlReplaceScan(){
     try{
       const d=await apiCall('read_file',{path:t.path}); const content=d.content||'';
       if(!content) continue;
-      const n=urCount(content,find);
+      const n=frProcess(content,t.kind,find,repl,opts,'count').count;
       if(n){ rows.push({path:t.path,kind:t.kind,n}); total+=n; }
     }catch(e){}
   }
   if(st) st.textContent='';
-  if(!rows.length){ if(res) res.innerHTML='<div style="font-size:12.5px;color:var(--muted)">No matches for “'+esc(find)+'” anywhere on the site — nothing to replace.</div>'; return; }
-  _urScan={find,repl,rows,total};
-  if(res) res.innerHTML='<div style="font-size:12.5px;font-weight:600;margin-bottom:6px">'+total+' match'+(total===1?'':'es')+' in '+rows.length+' file'+(rows.length===1?'':'s')+' — review, then click Replace:</div>'
+  if(!rows.length){ if(res) res.innerHTML='<div style="font-size:12.5px;color:var(--muted)">No matches for “'+esc(find)+'” '+(opts.scope==='all'?'anywhere on the site':'in the site’s text')+' — nothing to replace.</div>'; return; }
+  _urScan={find,repl,rows,total,opts};
+  if(res) res.innerHTML='<div style="font-size:12.5px;font-weight:600;margin-bottom:6px">'+total+' match'+(total===1?'':'es')+' in '+rows.length+' file'+(rows.length===1?'':'s')+(opts.scope==='all'?' (everything, including code and links)':' (text people read only)')+' — review, then click Replace:</div>'
     +'<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;font-family:var(--font-mono);background:var(--surface-2)">'
     +rows.map(r=>'<div style="display:flex;justify-content:space-between;gap:12px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.path)+'</span><span style="color:var(--muted);flex-shrink:0">×'+r.n+'</span></div>').join('')
     +'</div>';
@@ -11739,8 +11825,8 @@ async function urlReplaceScan(){
 }
 async function urlReplaceApply(){
   if(!_urScan||!_urScan.rows.length){ toast('Run Scan first','err'); return; }
-  const {find,repl,rows,total}=_urScan;
-  if(!confirm('Replace '+total+' occurrence(s) of\n\n  '+find+'\n\nwith\n\n  '+repl+'\n\nacross '+rows.length+' file(s)?\n\nEvery changed file is backed up to data/bak/ first, and the sitemap + robots file are rebuilt afterward.')) return;
+  const {find,repl,rows,total}=_urScan; const opts=_urScan.opts||frOptions();
+  if(!confirm((repl?'Replace ':'Remove ')+total+' occurrence(s) of\n\n  '+find+(repl?'\n\nwith\n\n  '+repl:'')+'\n\nacross '+rows.length+' file(s)'+(opts.scope==='all'?' — everything, including code, links and file names':' — text people read only')+'?\n\nEvery changed file is backed up to data/bak/ first, and the sitemap + robots file are rebuilt afterward.')) return;
   const st=document.getElementById('ur-status');
   let done=0,failed=0,replaced=0,i=0; const report=[];
   for(const r of rows){
@@ -11750,13 +11836,10 @@ async function urlReplaceApply(){
     try{
       const d=await apiCall('read_file',{path:r.path}); const content=d.content||'';
       if(r.kind==='page' && fourgeLooksTruncated(content)){ failed++; report.push({file:r.path,status:'refused',reason:'read looked empty/truncated — nothing written'}); continue; }
-      const n=urCount(content,find);
+      const pr=frProcess(content,r.kind,find,repl,opts,'replace'); const n=pr.count;
       if(!n){ report.push({file:r.path,status:'unchanged'}); continue; }
-      const next=content.split(find).join(repl);
-      if(r.kind==='json'){
-        try{ JSON.parse(next); }
-        catch(e){ failed++; report.push({file:r.path,status:'refused',reason:'replacement would corrupt this JSON file — nothing written'}); continue; }
-      }
+      if(pr.refused||pr.next==null){ failed++; report.push({file:r.path,status:'refused',reason:pr.refused||'nothing written'}); continue; }
+      const next=pr.next;
       try{ await apiCall('write_file',{path:'data/bak/'+r.path.replace(/[\/\\]+/g,'__'),content}); }catch(e){}
       await apiCall('write_file',{path:r.path,content:next});
       done++; replaced+=n; report.push({file:r.path,status:'updated',replacements:n});
@@ -11827,54 +11910,6 @@ async function rcApplyAll(silent){
   }
   if(!silent) toast(done?('reCAPTCHA applied to '+done+' page(s)'+(failed?' ('+failed+' failed)':'')):'Nothing updated', done?'ok':'err');
   return {done,failed};
-}
-
-// ── GO LIVE — find & replace a URL across every site file ─────────
-function golivePages(){
-  const files=new Set();
-  getPageList().forEach(p=>{ const fp=p.path||p.file; if(fp&&veIsSafePath(fp)) files.add(fp); });
-  (_posts||[]).forEach(po=>{ const fp=po.path||(po.slug?('blog/'+po.slug+'.html'):''); if(fp&&veIsSafePath(fp)) files.add(fp); });
-  files.add('sitemap.xml'); files.add('robots.txt');
-  return [...files];
-}
-async function goliveScan(apply){
-  const find=(document.getElementById('go-find')?.value||'').trim();
-  const repl=document.getElementById('go-replace')?.value||'';
-  const st=document.getElementById('go-status');
-  if(!find){ toast('Enter the URL or text to find','err'); return; }
-  if(!canCallApi()){ toast('Sign in again to run this','err'); return; }
-  if(apply && find===repl){ toast('Find and Replace are identical — nothing to do','err'); return; }
-  if(apply && !confirm('Replace every occurrence of:\n\n  '+find+'\n\nwith:\n\n  '+(repl||'(empty string)')+'\n\nacross all site files? This is a literal text swap and cannot be undone — make sure your work is committed to git first.')) return;
-  if(!Object.keys(_pages).length) await loadPages();
-  const files=golivePages();
-  let scanned=0, hits=0, filesWithHits=0, changed=0, failed=0; const details=[];
-  for(const fp of files){
-    let html;
-    try{ const d=await apiCall('read_file',{path:fp}); html=d.content; }
-    catch(e){ continue; } // file may not exist (e.g. no sitemap yet) — skip quietly
-    if(html==null) continue;
-    scanned++;
-    const count=html.split(find).length-1;
-    if(count>0){
-      hits+=count; filesWithHits++; details.push(fp+' — '+count+'×');
-      if(apply){ try{ await apiCall('write_file',{path:fp,content:html.split(find).join(repl)}); changed++; }catch(e){ failed++; details[details.length-1]+=' (write failed)'; } }
-    }
-  }
-  // On apply, also fix the website URL stored in site.json if it referenced the old domain
-  if(apply && _site && typeof _site.website==='string' && _site.website.indexOf(find)>=0){
-    _site.website=_site.website.split(find).join(repl);
-    const w=document.getElementById('si-website'); if(w) w.value=_site.website;
-    try{ await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}); }catch(e){}
-  }
-  if(st){
-    st.style.display='block';
-    st.innerHTML=(apply
-      ? `<strong>Replaced</strong> ${hits} occurrence(s) across ${changed} file(s)${failed?` — <span style="color:var(--ember)">${failed} write(s) failed</span>`:''}.`
-      : (hits?`<strong>Preview:</strong> found ${hits} occurrence(s) in ${filesWithHits} of ${scanned} file(s). Click <strong>Replace in all files</strong> to apply.`
-            : `<strong>Preview:</strong> no occurrences found in ${scanned} file(s).`))
-      +(details.length?`<div style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--muted);max-height:170px;overflow:auto">`+details.map(d=>esc(d)).join('<br>')+`</div>`:'');
-  }
-  toast(apply?('Replaced in '+changed+' file(s)'+(failed?' ('+failed+' failed)':'')):('Found '+hits+' occurrence(s) in '+filesWithHits+' file(s)'), apply&&failed?'err':'ok');
 }
 
 // ── PLUGINS ───────────────────────────────────
@@ -13381,6 +13416,57 @@ async function fetchRemoteVersion(){
   return {version:String(j.version), branch, repo, notes:j.notes||'', files, apiManual:!!j.apiManual, apiNote:j.apiNote||''};
 }
 
+// ── Is api.php as new as this admin? ─────────────────────────────────────────
+// The updater installs api.php best-effort: a server refusal (no config.secret.php,
+// a firewall that blocks PHP uploads, a release that does not parse on the host's
+// PHP) used to be a console note while every other engine file went in — so a site
+// could run a current admin on an api.php from months ago, and every newer feature
+// answered "Unknown action" (brewer-digital.com, 2026-10-02). api.php now reports
+// its own version (ping → api_version, 1.14.136+); an older one reports nothing.
+async function apiVersionCheck(){
+  if(!canCallApi()) return null;
+  let d=null; try{ d=await apiCall('ping'); }catch(e){ return null; }
+  const api=(d&&typeof d.api_version==='string')?d.api_version:'';
+  const stale=!api || semverCmp(api, CMS_VERSION)<0;
+  const banner=document.getElementById('api-banner'), msg=document.getElementById('api-msg');
+  if(!banner||!msg) return {stale,api};
+  if(!stale){ banner.classList.remove('show'); return {stale:false,api}; }
+  let why='';
+  try{ const j=JSON.parse(localStorage.getItem('fourge_api_install_error')||'null'); if(j&&j.error) why=' Last install attempt ('+new Date(j.at).toLocaleString()+'): '+j.error; }catch(e){}
+  msg.textContent='The server part of the engine (admin/api.php) is '+(api?('version '+api):'older than 1.14.136')+' while this admin is '+CMS_VERSION+'. Features added since fail with “Unknown action”.'+why;
+  banner.classList.add('show');
+  return {stale:true,api};
+}
+// The one-click fix: fetch the matching api.php from the engine repo and install it
+// through the server's own write path (parse-checked, atomic, byte-count verified).
+// A refusal is shown word for word — that is the reason the automatic install skipped.
+async function installApiPhpNow(btn){
+  if(!canCallApi()){ toast('Sign in again first','err'); return false; }
+  const msg=document.getElementById('api-msg');
+  if(btn){ btn.disabled=true; btn.textContent='Installing…'; }
+  try{
+    const tpl=getTplRepo(); if(!tpl) throw new Error('No engine repository configured (Settings → Repository)');
+    const {repo,branch}=parseTplRepo(tpl);
+    const content=await fetchRepoFile(repo,branch,'admin/api.php');
+    if(!content || content.indexOf('$PUBLIC_ACTIONS')<0) throw new Error('The downloaded api.php does not look like the engine file — not installing');
+    const want=new TextEncoder().encode(content).length;
+    const w=await apiCall('write_file',{path:'admin/api.php',content});
+    if(!w || typeof w.size!=='number' || w.size!==want) throw new Error('Short write of admin/api.php ('+(w&&w.size)+' of '+want+' bytes) — the old file was kept');
+    try{ localStorage.removeItem('fourge_api_install_error'); }catch(e){}
+    try{ sessionStorage.removeItem('fourge_cu_ok'); }catch(e){}
+    toast('api.php installed ('+want+' bytes). Reloading…','ok');
+    const r=await apiVersionCheck();
+    if(r&&r.stale&&msg) msg.textContent='api.php was written, but the server still answers as the old version — a PHP opcode cache may need a minute, or the host serves api.php from somewhere else. Reload and check again.';
+    else setTimeout(()=>location.reload(),1200);
+    return !(r&&r.stale);
+  }catch(e){
+    try{ localStorage.setItem('fourge_api_install_error', JSON.stringify({at:new Date().toISOString(), version:CMS_VERSION, error:String(e.message||e)})); }catch(x){}
+    if(msg) msg.textContent='Could not install api.php: '+(e.message||e)+' — fix that and try again, or upload admin/api.php from the engine repo by FTP.';
+    toast('Could not install api.php: '+(e.message||e),'err');
+    return false;
+  }finally{ if(btn){ btn.disabled=false; btn.textContent='Install api.php now'; } }
+}
+
 // Returns {available:bool, remote, local} — does NOT touch UI. Safe to call anywhere.
 async function getUpdateStatus(){
   const remote=await fetchRemoteVersion(); // may throw
@@ -13483,6 +13569,8 @@ async function doUpdate(st){
         // simply lacks config.secret.php stays a quiet console note as before.
         if(/Refusing to install|Short write|did not arrive|arrived incomplete/.test(e.message||'')) toast(e.message,'err');
         else console.warn('api.php not auto-updated (site may not use config.secret.php):',e.message);
+        // Remember why, so the sign-in check can show it instead of a silent mismatch.
+        try{ localStorage.setItem('fourge_api_install_error', JSON.stringify({at:new Date().toISOString(), version:remote.version, error:String(e.message||e)})); }catch(x){}
       }
     }
     // The .htaccess self-heal is once-per-tab-session — but we just installed a
