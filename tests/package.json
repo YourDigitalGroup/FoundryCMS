@@ -1,0 +1,11 @@
+{
+  "name": "fourge-regression",
+  "private": true,
+  "description": "Regression suites for the Fourge admin: headless-browser suites against the real admin page plus the api.php dispatcher end to end. Run with: npm test",
+  "scripts": {
+    "test": "bash run.sh"
+  },
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

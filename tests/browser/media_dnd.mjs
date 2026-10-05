@@ -1,0 +1,22 @@
+import { openAdmin } from '../lib/harness.mjs';
+// 1.14.137 — Media library: drop files anywhere on the panel to upload (overlay, filter, guard).
+const {p,chk,done}=await openAdmin();
+await p.evaluate(()=>{ goPanel('p-media'); window.__up=[]; window.uploadMedia=async(files)=>{ window.__up.push(Array.from(files).map(f=>f.name)); }; });
+chk(await p.evaluate(()=>!!document.getElementById('media-drop')&&!!document.getElementById('media-dnd-hint')&&document.getElementById('p-media').dataset.dnd==='1'),'overlay + hint are in the Media panel and the listeners are armed');
+const mk=`const dt=new DataTransfer(); names.forEach(n=>dt.items.add(new File(['x'],n,{type:n.endsWith('.png')?'image/png':n.endsWith('.mp4')?'video/mp4':n.endsWith('.pdf')?'application/pdf':'application/octet-stream'}))); const ev=new DragEvent(type,{dataTransfer:dt,bubbles:true,cancelable:true}); target.dispatchEvent(ev); return ev.defaultPrevented;`;
+const fire=(type,names,sel)=>p.evaluate(({type,names,sel,mk})=>{ const target=document.querySelector(sel); return (new Function('type','names','target',mk))(type,names,target); },{type,names,sel,mk});
+let dp=await fire('dragenter',['a.png'],'#media-body');
+chk(dp && await p.evaluate(()=>document.getElementById('p-media').classList.contains('dragging')),'dragenter with files over the panel → overlay shows (default prevented)');
+await fire('dragover',['a.png'],'#media-body');
+chk(await p.evaluate(()=>getComputedStyle(document.getElementById('media-drop')).display==='flex'),'…the drop target is visible while dragging');
+await fire('dragleave',['a.png'],'#media-body');
+chk(await p.evaluate(()=>!document.getElementById('p-media').classList.contains('dragging')),'dragleave → overlay hides');
+await fire('dragenter',['a.png'],'#media-body');
+dp=await fire('drop',['a.png','clip.mp4','doc.pdf','virus.exe'],'#media-body'); await p.waitForTimeout(50);
+let r=await p.evaluate(()=>({up:window.__up,dragging:document.getElementById('p-media').classList.contains('dragging'),toasts:window.__toasts.map(t=>t.m)}));
+chk(dp&&r.up.length===1&&r.up[0].join(',')==='a.png,clip.mp4,doc.pdf'&&!r.dragging,'drop → uploadMedia gets the image, video and PDF; overlay hides — '+JSON.stringify(r.up));
+chk(r.toasts.some(t=>/Skipped 1 unsupported file \(virus\.exe\)/.test(t)),'…the unsupported file is skipped with a toast naming it — '+JSON.stringify(r.toasts));
+dp=await fire('drop',['a.png'],'body');
+chk(dp&&await p.evaluate(()=>window.__up.length===1),'files dropped elsewhere in the admin are swallowed (no navigation away) and not uploaded');
+chk(await p.evaluate(()=>{ const dt=new DataTransfer(); dt.setData('text/plain','field'); const ev=new DragEvent('dragenter',{dataTransfer:dt,bubbles:true,cancelable:true}); document.getElementById('media-body').dispatchEvent(ev); return !ev.defaultPrevented&&!document.getElementById('p-media').classList.contains('dragging'); }),'a non-file drag (e.g. the form builder reordering fields) is ignored');
+await done('media drag & drop');
