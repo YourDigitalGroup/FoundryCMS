@@ -1,0 +1,49 @@
+# Runs the regression suites in tests/ on every pull request that touches the
+# engine or the suites: the headless-browser suites against the real admin page,
+# the api.php dispatcher end to end, php -l, a parse of every inline script and
+# the three-way version check. See tests/README.md. Chromium is cached between
+# runs; a run takes a few minutes.
+name: Regression suites
+
+on:
+  pull_request:
+    paths:
+      - 'admin/**'
+      - 'fleet-dashboard/**'
+      - 'tests/**'
+      - '.github/workflows/regression.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'admin/**'
+      - 'fleet-dashboard/**'
+      - 'tests/**'
+      - '.github/workflows/regression.yml'
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+      - name: Node dependencies
+        run: npm ci --prefix tests --no-audit --no-fund
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('./tests/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ steps.pw.outputs.version }}
+      - name: Chromium
+        run: npx --yes playwright@${{ steps.pw.outputs.version }} install --with-deps chromium
+      - name: PHP with SQLite
+        run: php -v && php -m | grep -i pdo_sqlite
+      - name: Run the suites
+        run: bash tests/run.sh

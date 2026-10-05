@@ -37,6 +37,10 @@ Blog.html               Blog page shell
 .github/workflows/      GitHub Actions deploy workflow
 ```
 
+## Tests
+
+The regression suites live in `tests/` and run on every pull request (GitHub Actions: *Regression suites*). Locally: `cd tests && npm test` — see [tests/README.md](tests/README.md). The folder is excluded from the FTP deploy and is never part of an engine update.
+
 ## Updating the CMS
 
 To push a CMS update to all future sites, edit this repo. All sites created after the update automatically get the new version. Existing sites need a manual pull.

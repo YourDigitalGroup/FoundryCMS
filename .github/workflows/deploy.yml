@@ -21,5 +21,6 @@ jobs:
             **/.git/**
             **/.github/**
             **/node_modules/**
+            tests/**
             README.md
             .gitignore
