@@ -1,24 +1,16 @@
-# Runs the regression suites in tests/ on every pull request that touches the
-# engine or the suites: the headless-browser suites against the real admin page,
+# Runs the regression suites in tests/ on every pull request: the headless-browser suites against the real admin page,
 # the api.php dispatcher end to end, php -l, a parse of every inline script and
 # the three-way version check. See tests/README.md. Chromium is cached between
 # runs; a run takes a few minutes.
 name: Regression suites
 
+# Runs on EVERY pull request (no path filter): the "regression" check is required
+# on main, and a required check that does not run leaves a pull request stuck at
+# "waiting for status". A run takes about a minute with the cached Chromium.
 on:
   pull_request:
-    paths:
-      - 'admin/**'
-      - 'fleet-dashboard/**'
-      - 'tests/**'
-      - '.github/workflows/regression.yml'
   push:
     branches: [main]
-    paths:
-      - 'admin/**'
-      - 'fleet-dashboard/**'
-      - 'tests/**'
-      - '.github/workflows/regression.yml'
 
 jobs:
   regression:
