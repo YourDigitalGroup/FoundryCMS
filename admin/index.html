@@ -532,15 +532,15 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 #ve-code-wrap.on{display:flex;flex-direction:column}
 #ve-code-wrap .CodeMirror{height:100%;font-size:13px;line-height:1.5;font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
 /* Code editor: in-editor search dialog (CodeMirror dialog addon), active line, clickable line numbers, key hint */
-#ve-code-wrap .CodeMirror-dialog{padding:8px 12px;font-size:13px;background:#1b1b1b;border-bottom:1px solid #333;color:#ddd;font-family:var(--font-sans)}
-#ve-code-wrap .CodeMirror-dialog input{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:13px;background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:4px 8px;color:#fff;width:24em;max-width:60%;margin:0 6px}
-#ve-code-wrap .CodeMirror-dialog input:focus{border-color:var(--ember)}
-#ve-code-wrap .CodeMirror-dialog button{font:inherit;font-size:12px;padding:3px 9px;margin-left:4px;border-radius:6px;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
-#ve-code-wrap .CodeMirror-search-hint{color:#8a8a8a}
-#ve-code-wrap .cm-searching{background:rgba(255,213,79,.32);outline:1px solid rgba(255,213,79,.55)}
-#ve-code-wrap .CodeMirror-activeline-background{background:rgba(255,255,255,.06)}
-#ve-code-wrap .CodeMirror-linenumber{cursor:pointer}
-#ve-code-wrap .CodeMirror-linenumber:hover{color:#fff}
+#ve-code-wrap .CodeMirror-dialog,.sitecss-editor .CodeMirror-dialog{padding:8px 12px;font-size:13px;background:#1b1b1b;border-bottom:1px solid #333;color:#ddd;font-family:var(--font-sans)}
+#ve-code-wrap .CodeMirror-dialog input,.sitecss-editor .CodeMirror-dialog input{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:13px;background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:4px 8px;color:#fff;width:24em;max-width:60%;margin:0 6px}
+#ve-code-wrap .CodeMirror-dialog input:focus,.sitecss-editor .CodeMirror-dialog input:focus{border-color:var(--ember)}
+#ve-code-wrap .CodeMirror-dialog button,.sitecss-editor .CodeMirror-dialog button{font:inherit;font-size:12px;padding:3px 9px;margin-left:4px;border-radius:6px;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
+#ve-code-wrap .CodeMirror-search-hint,.sitecss-editor .CodeMirror-search-hint{color:#8a8a8a}
+#ve-code-wrap .cm-searching,.sitecss-editor .cm-searching{background:rgba(255,213,79,.32);outline:1px solid rgba(255,213,79,.55)}
+#ve-code-wrap .CodeMirror-activeline-background,.sitecss-editor .CodeMirror-activeline-background{background:rgba(255,255,255,.06)}
+#ve-code-wrap .CodeMirror-linenumber,.sitecss-editor .CodeMirror-linenumber{cursor:pointer}
+#ve-code-wrap .CodeMirror-linenumber:hover,.sitecss-editor .CodeMirror-linenumber:hover{color:#fff}
 .ve-code-hint{position:absolute;right:18px;bottom:10px;z-index:5;font-size:11px;color:#a0a0a0;background:rgba(33,33,33,.9);border:1px solid #3a3a3a;border-radius:8px;padding:5px 9px;pointer-events:none;letter-spacing:.01em;font-family:var(--font-sans)}
 .ve-code-hint kbd{font-family:inherit;font-size:10.5px;background:#333;border:1px solid #4a4a4a;border-radius:4px;padding:0 5px;color:#eee;margin:0 1px}
 /* Media library: drop-anywhere upload */
@@ -582,6 +582,30 @@ code{font-family:var(--font-mono);font-size:11px;background:var(--surface-3);pad
 .elcss-add .elcss-decls{border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
 .elcss-empty,.elcss-loading{font-size:13px;color:var(--muted);padding:18px;text-align:center}
 .elcss-footnote{font-size:11.5px;color:var(--muted);margin:10px 2px 0;line-height:1.5}
+/* Site CSS window */
+.sitecss-side{width:300px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--surface-2)}
+.sitecss-filter{padding:10px 12px;border-bottom:1px solid var(--border)}
+.sitecss-filter input{font-size:12.5px}
+.sitecss-list{flex:1;overflow-y:auto;padding:6px 0 12px}
+.sitecss-group{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:12px 14px 4px}
+.sitecss-none{font-size:11.5px;color:var(--muted);padding:4px 14px 6px;line-height:1.45}
+.sitecss-item{display:block;width:100%;text-align:left;background:none;border:none;border-left:3px solid transparent;padding:7px 14px 7px 11px;cursor:pointer;color:var(--text);font-family:var(--font-sans)}
+.sitecss-item:hover{background:var(--surface-3)}
+.sitecss-item.on{background:var(--surface);border-left-color:var(--ember)}
+.sitecss-item .n{font-family:var(--font-mono);font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;word-break:break-all;line-height:1.4}
+.sitecss-item .s{display:block;font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sitecss-item .dot{width:7px;height:7px;border-radius:50%;background:var(--ember);flex-shrink:0;display:none}
+.sitecss-item.dirty .dot{display:inline-block}
+.sitecss-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;background:#212121}
+.sitecss-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface);min-height:40px}
+.sitecss-head .t{font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:var(--text);flex:1;min-width:120px;word-break:break-all}
+.sitecss-editor{flex:1;min-height:0;position:relative}
+.sitecss-editor .CodeMirror{height:100%;font-size:13px;line-height:1.5;font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
+.sitecss-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--border);background:var(--surface)}
+.sitecss-note{flex:1;font-size:11.5px;color:var(--muted);line-height:1.45;min-width:0}
+.sitecss-foot .fd-btn-primary,.sitecss-foot .fd-btn-ghost{padding:7px 14px;font-size:12.5px;white-space:nowrap}
+.sitecss-foot button:disabled{opacity:.5;cursor:default}
+.sitecss-empty{padding:28px 16px;color:var(--muted);font-size:13px;text-align:center;line-height:1.5}
 /* Flash the selected element's markup when switching Visual → Code. */
 .ve-code-hl{background:rgba(217,106,48,.34);border-radius:2px;box-shadow:0 0 0 1px rgba(217,106,48,.55)}
 .ve-code-hl-line{background:rgba(217,106,48,.16)!important;animation:veCodeHlFade 1.8s ease-out}
@@ -1376,6 +1400,10 @@ textarea.fb-input{resize:vertical}
           <button class="fd-btn-secondary" id="ve-elcss-btn" onclick="veElementCssOpen()" title="See and edit every CSS rule that applies to the selected element">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 00-2 2v5a2 2 0 01-2 2 2 2 0 012 2v5a2 2 0 002 2h1"/><path d="M16 3h1a2 2 0 012 2v5a2 2 0 002 2 2 2 0 00-2 2v5a2 2 0 01-2 2h-1"/></svg>
             Element CSS
+          </button>
+          <button class="fd-btn-secondary" id="ve-sitecss-btn" onclick="veSiteCssOpen()" title="Every stylesheet on the site in one place — the site-wide custom CSS, the .css files and each page's own style blocks">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/><path d="M2 17l10 5 10-5"/></svg>
+            Site CSS
           </button>
           <button class="fd-btn-secondary" onclick="veAiPageModal()" title="General Markup" id="tb-ai-edit" data-perm="aiEdit">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -2578,6 +2606,28 @@ textarea.fb-input{resize:vertical}
     <div class="mf"><span id="elcss-status" style="flex:1;font-size:12px;color:var(--muted);align-self:center"></span><button class="fd-btn-primary" onclick="closeM('m-elcss')">Done</button></div>
   </div>
 </div>
+<div class="mw" id="m-sitecss">
+  <div class="modal" style="width:1140px;max-width:96vw;height:88vh;max-height:88vh;display:flex;flex-direction:column">
+    <div class="mh"><h2>Site CSS</h2>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="fd-btn-ghost" style="font-size:12px;padding:7px 10px" onclick="siteCssRescan()" title="Read every page and stylesheet from the server again">Rescan</button>
+        <button class="fd-btn-secondary" id="sitecss-saveall" style="font-size:12px;padding:7px 12px" onclick="siteCssSaveAll()" disabled>Save all</button>
+        <button class="ib" onclick="siteCssClose()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+    </div>
+    <div class="mb" id="sitecss-body" style="flex:1;min-height:0;display:flex;padding:0;overflow:hidden">
+      <div class="sitecss-side">
+        <div class="sitecss-filter"><input type="text" id="sitecss-filter" class="fd-input" placeholder="Filter by name, or by CSS it contains (e.g. .hero h1)" oninput="siteCssFilter()" spellcheck="false" autocomplete="off"></div>
+        <div class="sitecss-list" id="sitecss-list"><div class="sitecss-empty">Reading the site…</div></div>
+      </div>
+      <div class="sitecss-main">
+        <div class="sitecss-head" id="sitecss-head"></div>
+        <div class="sitecss-editor" id="sitecss-editor"></div>
+        <div class="sitecss-foot"><span class="sitecss-note" id="sitecss-note"></span><button class="fd-btn-ghost" id="sitecss-revert" type="button" onclick="siteCssRevert()" disabled title="Back to the saved version">Revert</button><button class="fd-btn-primary" id="sitecss-save" type="button" onclick="siteCssSave()" disabled title="Save this stylesheet (⌘/Ctrl+S)">Save</button></div>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="mw" id="m-adduser">
   <div class="modal" style="width:480px">
     <div class="mh"><h2>Add User</h2><button class="ib" onclick="closeM('m-adduser')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -2793,7 +2843,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.137';
+const CMS_VERSION='1.14.138';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -16580,6 +16630,301 @@ async function elcssAddRule(){
 }
 // Esc in the window: first leaves the text box, then closes.
 (function(){ const m=document.getElementById('m-elcss'); if(!m) return; m.addEventListener('keydown',e=>{ if(e.key!=='Escape') return; e.preventDefault(); e.stopPropagation(); const ae=document.activeElement; if(ae&&(ae.tagName==='TEXTAREA'||ae.tagName==='INPUT')&&m.contains(ae)){ ae.blur(); try{ m.querySelector('.mf .fd-btn-primary').focus(); }catch(e2){} return; } closeM('m-elcss'); }); })();
+
+// ── SITE CSS ──────────────────────────────────────────────────────
+// The "Site CSS" toolbar button opens one window with every stylesheet on the
+// site: the site-wide Custom CSS (Design tab), every .css file a page links
+// (and what those @import), and each page's own <style> blocks. Pick a source
+// on the left, edit it in the code editor on the right, Save (⌘/Ctrl+S). The
+// change shows live in the visual editor when the open page uses that source.
+// Files are written to the server with the previous copy kept in data/bak/
+// (and mirrored to GitHub when configured); a file that changed on the server
+// since it was read here is refused rather than overwritten. The site-wide CSS
+// takes the same path as Design → "Apply CSS to all pages" (site.json + the
+// <style id="fourge-site-css"> block in every page); a page's own block is
+// rewritten inside that page file and nothing else in the file changes.
+let _sitecss=null;   // {sources:[], cur, docs:{key:Doc}, cm, filter, scannedAt, readFail, pagesCount}
+// Engine- or editor-managed <link>/<style> nodes are not the site's own CSS
+// (typography, brand, runtimes, the editor bridge); rules added with Element CSS are.
+function siteCssIsEngineNode(el){
+  const id=el.id||'';
+  if(id==='fourge-element-css') return false;
+  if(/^fourge-/.test(id)||/^__/.test(id)) return true;
+  for(const a of el.attributes){ if(/^data-fourge/.test(a.name)||a.name==='data-foundry') return true; }
+  return false;
+}
+function siteCssBase(){ let b=''; try{ b=normSiteBase(); }catch(e){} if(!b) b=location.origin; return new URL(b.replace(/\/+$/,'')+'/'); }
+// Site-relative path of an href (null when it points off the site).
+function siteCssPathOf(href, fromUrl, base){
+  try{ const u=new URL(String(href||'').trim(), fromUrl); if(u.origin!==base.origin||u.pathname.indexOf(base.pathname)!==0) return null; return decodeURIComponent(u.pathname.slice(base.pathname.length)); }catch(e){ return null; }
+}
+// The page's own <style> blocks, found in the TEXT of the page (the same order the
+// browser sees). Comments and <script> bodies are blanked (same length, offsets kept)
+// so a <style> mentioned inside them is not mistaken for one.
+function siteCssBlocks(html){
+  const masked=String(html||'').replace(/<!--[\s\S]*?-->/g,m=>' '.repeat(m.length)).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,m=>' '.repeat(m.length));
+  const out=[]; const re=/<style\b([^>]*)>([\s\S]*?)<\/style>/gi; let m, n=0;
+  while((m=re.exec(masked))){
+    const attrs=m[1]||''; const id=(attrs.match(/\bid\s*=\s*["']?([^"'\s>]+)/i)||[])[1]||'';
+    if(id!=='fourge-element-css'&&(/^fourge-/.test(id)||/^__/.test(id))) continue;
+    if(/\sdata-fourge|\sdata-foundry/i.test(attrs)||m[2].indexOf('__fe_')!==-1) continue;
+    n++;
+    const start=m.index+m[0].indexOf('>')+1;
+    out.push({idx:n, start, end:start+m[2].length, text:String(html).slice(start,start+m[2].length)});
+  }
+  return out;
+}
+function siteCssFirstSelectors(text){ try{ return elcssScan(String(text||'')).map(r=>r.sel.replace(/\s+/g,' ')).slice(0,3).join(', '); }catch(e){ return ''; } }
+function siteCssStatus(msg){ const n=document.getElementById('sitecss-note'); if(n&&msg!=null) n.textContent=msg; }
+async function siteCssScan(){
+  const st=_sitecss; const base=siteCssBase();
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+  const pages=getPageList().filter(p=>p.path||p.file);
+  const files=new Map(); const blocks=[]; let readFail=0;
+  for(let i=0;i<pages.length;i++){
+    const pg=pages[i], fp=pg.path||pg.file;
+    siteCssStatus('Reading '+fp+'… ('+(i+1)+'/'+pages.length+')');
+    let html=''; try{ const d=await apiCall('read_file',{path:fp}); html=(d&&d.content)||''; }catch(e){ readFail++; continue; }
+    if(!html) continue;
+    let doc=null; try{ doc=new DOMParser().parseFromString(html,'text/html'); }catch(e){}
+    const pageUrl=new URL(fp.replace(/^\/+/,''), base);
+    if(doc) doc.querySelectorAll('link[rel~="stylesheet"][href]').forEach(l=>{
+      if(siteCssIsEngineNode(l)) return;
+      const p=siteCssPathOf(l.getAttribute('href'),pageUrl,base); if(!p) return;
+      const clean=p.split('?')[0]; if(!/\.css$/i.test(clean)) return;
+      if(!files.has(clean)) files.set(clean,{key:'f:'+clean,type:'file',path:clean,usedBy:new Set(),importedBy:new Set(),text:'',baseline:''});
+      files.get(clean).usedBy.add(fp);
+    });
+    siteCssBlocks(html).forEach(b=>{ if(!b.text.trim()) return; blocks.push({key:'b:'+fp+'#'+b.idx,type:'block',fp,idx:b.idx,text:b.text,baseline:b.text,sel:siteCssFirstSelectors(b.text)}); });
+    if(i%8===7) await new Promise(r=>setTimeout(r,0));
+  }
+  // the files themselves, and whatever they @import (same site only)
+  const queue=[...files.keys()];
+  while(queue.length){
+    const p=queue.shift(), f=files.get(p); siteCssStatus('Reading '+p+'…');
+    try{ const d=await apiCall('read_file',{path:p}); f.text=(d&&typeof d.content==='string')?d.content:''; f.baseline=f.text; }
+    catch(e){ f.missing=true; f.text=''; f.baseline=''; continue; }
+    const fileUrl=new URL(p,base); const re=/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)["']?\s*\)?[^;]*;/g; let m;
+    while((m=re.exec(f.text))){
+      const ip=siteCssPathOf(m[1],fileUrl,base); if(!ip) continue; const ic=ip.split('?')[0]; if(!/\.css$/i.test(ic)) continue;
+      if(!files.has(ic)){ files.set(ic,{key:'f:'+ic,type:'file',path:ic,usedBy:new Set(),importedBy:new Set(),text:'',baseline:''}); queue.push(ic); }
+      files.get(ic).importedBy.add(p);
+    }
+  }
+  const site={key:'site',type:'site',text:_site.customCss||'',baseline:_site.customCss||''};
+  st.sources=[site].concat([...files.values()].sort((a,b)=>a.path.localeCompare(b.path)), blocks);
+  st.readFail=readFail; st.pagesCount=pages.length; st.scannedAt=Date.now();
+}
+function siteCssCur(){ return _sitecss&&_sitecss.sources.find(s=>s.key===_sitecss.cur)||null; }
+function siteCssIsDirty(s){ return !!s && s.text!==s.baseline; }
+function siteCssDirty(){ return _sitecss?_sitecss.sources.filter(siteCssIsDirty):[]; }
+function siteCssName(s){ return s.type==='site'?'Site-wide custom CSS':(s.type==='file'?s.path:(s.fp+' · <style> '+s.idx)); }
+async function veSiteCssOpen(){
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
+  if(!window.CodeMirror){ toast('The code editor is still loading — try again in a moment','err'); return; }
+  if(!_sitecss) _sitecss={sources:[],cur:null,docs:{},cm:null,filter:'',scannedAt:0};
+  openM('m-sitecss'); siteCssEnsureEditor();
+  const stale=!_sitecss.sources.length || (Date.now()-_sitecss.scannedAt>10*60*1000 && !siteCssDirty().length);
+  if(stale) await siteCssRescan(); else { siteCssRenderList(); siteCssShow(_sitecss.cur||_sitecss.sources[0].key); }
+}
+async function siteCssRescan(){
+  const st=_sitecss; if(!st) return;
+  const dirty=siteCssDirty().length;
+  if(dirty && !(await uiConfirm('Rescanning reads every stylesheet from the server again. Unsaved changes in '+dirty+' source'+(dirty===1?'':'s')+' are lost. Rescan anyway?','Rescan','Unsaved changes'))) return;
+  siteCssDirty().forEach(s=>{ s.text=s.baseline; siteCssPreview(s); });
+  st.sources=[]; st.docs={}; st.cur=null;
+  const list=document.getElementById('sitecss-list'); if(list) list.innerHTML='<div class="sitecss-empty">Reading the site…</div>';
+  const head=document.getElementById('sitecss-head'); if(head) head.innerHTML='';
+  try{ await siteCssScan(); }catch(e){ toast('Could not read the site: '+e.message,'err'); }
+  siteCssRenderList(); siteCssShow(st.sources.length?st.sources[0].key:null);
+}
+function siteCssEnsureEditor(){
+  const st=_sitecss; if(st.cm) return st.cm;
+  const host=document.getElementById('sitecss-editor'); if(!host||!window.CodeMirror) return null;
+  st.cm=CodeMirror(host,{mode:'css',theme:'material-darker',lineNumbers:true,lineWrapping:false,matchBrackets:true,indentUnit:2,tabSize:2,styleActiveLine:true,
+    extraKeys:{'Ctrl-S':()=>siteCssSave(),'Cmd-S':()=>siteCssSave(),'Ctrl-F':'findPersistent','Cmd-F':'findPersistent','Ctrl-H':'replace'}});
+  st.cm.setSize('100%','100%');
+  st.cm.on('gutterClick',veCmGutterClick);
+  st.cm.on('change',()=>{ const s=siteCssCur(); if(!s) return; s.text=st.cm.getValue(); siteCssItemState(s); siteCssPreview(s); siteCssButtons(); });
+  return st.cm;
+}
+function siteCssRenderList(){
+  const st=_sitecss, list=document.getElementById('sitecss-list'); if(!st||!list) return;
+  const q=(st.filter||'').trim().toLowerCase();
+  // name, the pages that use it (so a page name finds its stylesheets), or the CSS itself
+  const hay=s=>(s.type==='site'?'site-wide custom css design':s.type==='file'?(s.path+' '+[...s.usedBy,...s.importedBy].join(' ')):(s.fp+' <style> '+s.idx)).toLowerCase();
+  const match=s=>!q||hay(s).indexOf(q)!==-1||String(s.text||'').toLowerCase().indexOf(q)!==-1;
+  const groups=[['Site-wide','site','',''],['Stylesheet files','file','No .css files are linked from any page.',''],['Page style blocks','block','No page has a <style> block of its own.','']];
+  let html='', shown=0;
+  groups.forEach(([title,type,empty])=>{
+    const items=st.sources.filter(s=>s.type===type), vis=items.filter(match);
+    if(q&&!vis.length) return;
+    html+='<div class="sitecss-group">'+title+(items.length?' <span class="elcss-count">'+(q?(vis.length+'/'+items.length):items.length)+'</span>':'')+'</div>';
+    if(!items.length){ html+='<div class="sitecss-none">'+esc(empty)+'</div>'; return; }
+    vis.forEach(s=>{ shown++; html+=siteCssItemHtml(s); });
+  });
+  if(q&&!shown) html+='<div class="sitecss-empty">Nothing contains “'+esc(q)+'”.</div>';
+  if(st.readFail) html+='<div class="sitecss-none">'+st.readFail+' page'+(st.readFail===1?'':'s')+' could not be read.</div>';
+  list.innerHTML=html; siteCssButtons();
+}
+function siteCssItemHtml(s){
+  let name=siteCssName(s), sub='';
+  if(s.type==='site') sub='Design → Custom CSS · on every page'+(String(s.text).trim()?'':' · empty');
+  else if(s.type==='file'){ const u=s.usedBy.size, im=s.importedBy.size; sub=(s.missing?'not on the server · ':'')+(u?('used by '+u+' page'+(u===1?'':'s')):'')+(u&&im?' · ':'')+(im?('imported by '+[...s.importedBy].join(', ')):''); }
+  else sub=s.sel||'(no selectors)';
+  return '<button type="button" class="sitecss-item'+(siteCssIsDirty(s)?' dirty':'')+(_sitecss.cur===s.key?' on':'')+'" data-key="'+esc(s.key)+'" onclick="siteCssShow(this.dataset.key)"><span class="n"><span class="dot" title="Unsaved changes"></span>'+esc(name)+'</span><span class="s">'+esc(sub)+'</span></button>';
+}
+function siteCssItemState(s){ const b=document.querySelector('#sitecss-list .sitecss-item[data-key="'+(window.CSS&&CSS.escape?CSS.escape(s.key):s.key)+'"]'); if(b) b.classList.toggle('dirty',siteCssIsDirty(s)); }
+function siteCssFilter(){ const st=_sitecss; const i=document.getElementById('sitecss-filter'); if(!st||!i) return; st.filter=i.value; siteCssRenderList(); }
+function siteCssShow(key){
+  const st=_sitecss; if(!st) return; const cm=siteCssEnsureEditor(); st.cur=key||null;
+  document.querySelectorAll('#sitecss-list .sitecss-item').forEach(b=>b.classList.toggle('on',b.dataset.key===key));
+  const s=siteCssCur(), head=document.getElementById('sitecss-head'), note=document.getElementById('sitecss-note');
+  if(!s){ if(head) head.innerHTML='<span class="t" style="color:var(--muted)">'+(st.sources.length?'Pick a stylesheet on the left':'No pages found')+'</span>'; if(note) note.textContent=''; if(cm) cm.swapDoc(CodeMirror.Doc('','css')); siteCssButtons(); return; }
+  if(!st.docs[key]) st.docs[key]=CodeMirror.Doc(s.text||'','css');
+  if(cm){ cm.swapDoc(st.docs[key]); setTimeout(()=>{ cm.refresh(); cm.focus(); },20); }
+  if(head) head.innerHTML=siteCssHeadHtml(s);
+  if(note) note.textContent=siteCssNote(s);
+  siteCssButtons();
+}
+function siteCssHeadHtml(s){
+  const b=[]; const lines=String(s.text||'').split('\n').length;
+  if(s.type==='site') b.push(elcssBadge('src','site.json → every page'));
+  if(s.type==='file'){ b.push(elcssBadge('src link','.css file')); if(s.usedBy.size) b.push('<span class="elcss-badge inh" title="'+esc([...s.usedBy].join('\n'))+'">used by '+s.usedBy.size+' page'+(s.usedBy.size===1?'':'s')+'</span>'); if(s.importedBy.size) b.push(elcssBadge('media','@import')); if(s.missing) b.push(elcssBadge('ro','not on the server')); }
+  if(s.type==='block') b.push(elcssBadge('src','<style> in '+s.fp));
+  b.push(elcssBadge('',lines+' line'+(lines===1?'':'s')));
+  if(siteCssPreviewApplies(s)) b.push(elcssBadge('state','live in the editor'));
+  return '<span class="t">'+esc(siteCssName(s))+'</span><span class="elcss-badges">'+b.join('')+'</span>';
+}
+function siteCssNote(s){
+  if(s.type==='site') return 'Saved to site.json and written into every page’s <style id="fourge-site-css"> — the same as Design → “Apply CSS to all pages”.';
+  if(s.type==='file') return (s.missing?'This file is linked but missing on the server; saving creates it. ':'')+'Written to '+s.path+' on the server (previous copy in data/bak/). Every page that uses it changes.';
+  return 'Rewritten inside '+s.fp+' — only this block changes, the rest of the page stays byte for byte.';
+}
+function siteCssButtons(){
+  const s=siteCssCur(), d=siteCssIsDirty(s), any=siteCssDirty().length;
+  const sv=document.getElementById('sitecss-save'), rv=document.getElementById('sitecss-revert'), sa=document.getElementById('sitecss-saveall');
+  if(sv) sv.disabled=!d; if(rv) rv.disabled=!d; if(sa){ sa.disabled=!any; sa.textContent=any>1?('Save all ('+any+')'):'Save all'; }
+}
+// ── live preview in the visual editor (never saved with the page: preview styles carry data-foundry)
+function siteCssOpenDoc(){ try{ const f=document.getElementById('visual-iframe'); const d=f&&f.contentDocument; return (d&&d.body)?d:null; }catch(e){ return null; } }
+function siteCssOpenPath(){ const pg=_pages&&_pages[_curPage]; return pg?(pg.path||pg.file||''):''; }
+function siteCssOpenLinks(s){
+  const doc=siteCssOpenDoc(); if(!doc||s.type!=='file') return [];
+  const base=siteCssBase(); let pageUrl; try{ pageUrl=new URL((siteCssOpenPath()||'index.html').replace(/^\/+/,''),base); }catch(e){ return []; }
+  return [...doc.querySelectorAll('link[rel~="stylesheet"][href]')].filter(l=>{ if(siteCssIsEngineNode(l)) return false; const p=siteCssPathOf(l.getAttribute('href'),pageUrl,base); return !!p&&p.split('?')[0]===s.path; });
+}
+function siteCssOwnStyle(idx){
+  const doc=siteCssOpenDoc(); if(!doc) return null;
+  const own=[...doc.querySelectorAll('style')].filter(x=>!siteCssIsEngineNode(x)&&(x.textContent||'').indexOf('__fe_')===-1);
+  return own[idx-1]||null;
+}
+function siteCssPreviewApplies(s){
+  if(!siteCssOpenDoc()) return false;
+  if(s.type==='site') return true;
+  if(s.type==='file') return siteCssOpenLinks(s).length>0;
+  return siteCssOpenPath()===s.fp && !!siteCssOwnStyle(s.idx);
+}
+function siteCssPreview(s){
+  const doc=siteCssOpenDoc(); if(!doc||!s) return;
+  if(s.type==='file'){
+    siteCssOpenLinks(s).forEach(l=>{
+      let pv=l.nextElementSibling;
+      if(!(pv&&pv.tagName==='STYLE'&&pv.getAttribute('data-sitecss')===s.path)){ pv=doc.createElement('style'); pv.setAttribute('data-foundry','sitecss'); pv.setAttribute('data-sitecss',s.path); l.parentNode.insertBefore(pv,l.nextSibling); }
+      if(s.text===s.baseline && !s.savedHere){ pv.remove(); l.disabled=false; }        // back to the file as loaded
+      else { pv.textContent=s.text; l.disabled=true; }
+    });
+  } else if(s.type==='site'){
+    let el=doc.getElementById('fourge-site-css');
+    if(!el){ if(!String(s.text).trim()) return; el=doc.createElement('style'); el.id='fourge-site-css'; el.setAttribute('data-fourge-site-css',''); (doc.head||doc.documentElement).appendChild(el); }
+    el.textContent=s.text;
+  } else if(s.type==='block'){
+    if(siteCssOpenPath()!==s.fp) return;
+    const el=siteCssOwnStyle(s.idx); if(el) el.textContent=s.text;
+  }
+}
+// ── saving
+async function siteCssSave(key){
+  const st=_sitecss; if(!st) return;
+  const s=key?st.sources.find(x=>x.key===key):siteCssCur(); if(!s) return;
+  if(!siteCssIsDirty(s)){ toast('No changes to save','ok'); return; }
+  const btn=document.getElementById('sitecss-save'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  let ok=false;
+  try{
+    if(s.type==='file') await siteCssSaveFile(s); else if(s.type==='site') await siteCssSaveSite(s); else await siteCssSaveBlock(s);
+    s.baseline=s.text; s.savedHere=true; ok=true;
+  }catch(e){ toast('Not saved: '+e.message,'err'); }
+  finally{ if(btn) btn.textContent='Save'; siteCssItemState(s); siteCssButtons(); }
+  return ok;
+}
+async function siteCssSaveFile(s){
+  let cur='';
+  if(!s.missing){ const d=await apiCall('read_file',{path:s.path}); cur=(d&&d.content)||''; if(cur!==s.baseline) throw new Error(s.path+' changed on the server since it was read here — Rescan, then re-apply your edit'); }
+  if(!s.missing){ try{ await apiCall('write_file',{path:'data/bak/'+s.path.replace(/[\/\\]+/g,'__'),content:cur}); }catch(e){} }
+  const wd=await apiCall('write_file',{path:s.path,content:s.text});
+  try{ if(typeof ghMirror==='function') await ghMirror(s.path,s.text,'Fourge: site css ('+s.path+')',{serverResult:wd&&wd.gh}); }catch(e){}
+  s.missing=false;
+  toast('Saved '+s.path+(cur?' (previous copy in data/bak/)':''),'ok');
+}
+async function siteCssSaveSite(s){
+  const ta=document.getElementById('si-customcss'); if(ta) ta.value=s.text;          // keep the Design tab in step
+  if(String(s.text).trim()) _site.customCss=s.text; else delete _site.customCss;
+  const json=JSON.stringify(_site,null,2);
+  let wd=null; try{ wd=await apiCall('write_file',{path:F_SITE,content:json}); }catch(e){ throw new Error('could not save site.json: '+e.message); }
+  try{ if(typeof ghMirror==='function') await ghMirror(F_SITE,json,'Fourge: site css',{serverResult:wd&&wd.gh}); }catch(e){}
+  if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
+  let done=0, failed=0;
+  for(const pg of getPageList()){
+    const fp=pg.path||pg.file; if(!fp) continue;
+    siteCssStatus('Applying to '+fp+'…');
+    try{
+      const d=await apiCall('read_file',{path:fp}); const html=(d&&d.content)||''; if(!html){ failed++; continue; }
+      const out=siteCssInjectIntoHtml(html,_site.customCss||''); if(out===html) continue;
+      const w=await apiCall('write_file',{path:fp,content:out});
+      try{ if(typeof ghMirror==='function') await ghMirror(fp,out,'Fourge: site css',{serverResult:w&&w.gh}); }catch(e){}
+      done++;
+    }catch(e){ failed++; }
+  }
+  siteCssStatus(siteCssNote(s));
+  if(failed) throw new Error('site.json saved; '+done+' page'+(done===1?'':'s')+' updated, '+failed+' failed');
+  toast('Site-wide CSS saved'+(done?(' and applied to '+done+' page'+(done===1?'':'s')):'')+' ✓','ok');
+}
+async function siteCssSaveBlock(s){
+  const d=await apiCall('read_file',{path:s.fp}); const html=(d&&d.content)||'';
+  const b=siteCssBlocks(html).find(x=>x.idx===s.idx);
+  if(!b||b.text!==s.baseline) throw new Error(s.fp+' changed on the server since it was read here — Rescan, then re-apply your edit');
+  const out=html.slice(0,b.start)+s.text+html.slice(b.end);
+  try{ await apiCall('write_file',{path:'data/bak/'+s.fp.replace(/[\/\\]+/g,'__'),content:html}); }catch(e){}
+  const wd=await apiCall('write_file',{path:s.fp,content:out});
+  try{ if(typeof ghMirror==='function') await ghMirror(s.fp,out,'Fourge: site css ('+s.fp+')',{serverResult:wd&&wd.gh}); }catch(e){}
+  toast('Saved the <style> block in '+s.fp+' (previous copy in data/bak/)','ok');
+}
+async function siteCssSaveAll(){
+  const dirty=siteCssDirty(); if(!dirty.length) return;
+  let ok=0; for(const s of dirty){ if(await siteCssSave(s.key)) ok++; }
+  siteCssRenderList(); if(dirty.length>1) toast(ok+' of '+dirty.length+' saved','ok');
+}
+function siteCssRevert(){ const st=_sitecss, s=siteCssCur(); if(!st||!s||!siteCssIsDirty(s)) return; const doc=st.docs[s.key]; if(doc) doc.setValue(s.baseline); else { s.text=s.baseline; siteCssPreview(s); } siteCssItemState(s); siteCssButtons(); }
+async function siteCssClose(){
+  const dirty=siteCssDirty();
+  if(dirty.length){
+    const ok=await uiConfirm('Unsaved changes in '+dirty.length+' source'+(dirty.length===1?'':'s')+' ('+dirty.map(siteCssName).slice(0,3).join(', ')+(dirty.length>3?', …':'')+'). Discard them?','Discard changes','Unsaved changes');
+    if(!ok) return;
+    dirty.forEach(s=>{ const doc=_sitecss.docs[s.key]; if(doc) doc.setValue(s.baseline); s.text=s.baseline; siteCssPreview(s); });
+  }
+  closeM('m-sitecss');
+}
+// Keys inside the window: ⌘/Ctrl+S saves the open source wherever focus is; Esc leaves the editor first, then closes.
+(function(){ const m=document.getElementById('m-sitecss'); if(!m) return;
+  m.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&!e.altKey&&String(e.key).toLowerCase()==='s'){ e.preventDefault(); e.stopPropagation(); siteCssSave(); return; }
+    if(e.key!=='Escape'||e.defaultPrevented) return;
+    e.preventDefault(); e.stopPropagation();
+    const ae=document.activeElement; const inEditor=ae&&(ae.closest('.sitecss-editor')||ae.tagName==='INPUT'||ae.tagName==='TEXTAREA')&&m.contains(ae);
+    if(inEditor){ try{ ae.blur(); document.getElementById('sitecss-save').focus(); }catch(e2){} return; }
+    siteCssClose();
+  });
+})();
 
 // ── ICON LIBRARY (Font Awesome, already loaded) ───────────────────
 // A curated set of common icons. Picking one inserts a <i class="fa-…"> into
