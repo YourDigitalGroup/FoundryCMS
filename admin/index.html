@@ -1994,12 +1994,12 @@ textarea.fb-input{resize:vertical}
       <div class="panel" id="p-settings">
         <div style="max-width:680px">
         <div class="si-sec architect-only"><h2>GitHub Integration</h2><div class="desc">Repo is read from <code>data/site.json</code>. The token is stored encrypted on the server — page saves and revisions mirror to GitHub for every editor, from any browser.</div>
-          <div class="fg"><label>GitHub Token</label><input type="password" id="s-pat" placeholder="ghp_…"><small>Needs <code>repo</code> scope.</small></div>
+          <div class="fg"><label>GitHub Token</label><input type="password" id="s-pat" placeholder="ghp_…"><small>Classic token: <code>repo</code> scope. Fine-grained: Contents read &amp; write on this repository (plus Administration read &amp; write to set it private).</small></div>
           <div style="display:flex;gap:8px"><button class="fd-btn-primary" onclick="saveGHToken()">Save Token</button><button class="fd-btn-secondary" onclick="testGH()">Test Connection</button></div>
           <div id="s-repo-info" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
           <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
             <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Backfill to GitHub</div>
-            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">Normally this runs on its own the next time an admin signs in after an engine update. Use this to run it right now instead of waiting: pushes every current page, post, event, and core data file into the repo above (skipping anything already byte-identical there), and makes sure the repo itself is set to private.</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">Runs on its own once a day when an admin signs in. Use this to run it right now: every page, post, event, image, document and data file is compared with the repo above and whatever differs is pushed in <strong>one commit</strong> (marked <code>[skip ci]</code>, so the repo's own deploy workflow does not run), and the repo itself is set to private.</div>
             <button class="fd-btn-secondary" onclick="ghSyncNow()" id="s-gh-sync-btn">Sync Site to GitHub Now</button>
             <div id="s-gh-sync-status" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
           </div>
@@ -2842,7 +2842,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.140';
+const CMS_VERSION='1.14.141';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3214,12 +3214,17 @@ async function loadSecrets(){
   Object.entries(map).forEach(([name,id])=>{const el=document.getElementById(id);if(el&&_secretStatus[name]&&name!=='repo_override')el.placeholder='Saved ✓';});
   const ro=document.getElementById('s-repo-override'); if(ro&&_secrets.repo_override) ro.value=_secrets.repo_override;
 }
+// Commits the engine makes in the SITE repo carry [skip ci]: the live server is
+// the source of these files, so letting the repo's deploy workflow push them
+// straight back is circular — one run per commit (hundreds of failure emails on
+// a backfill) and a full re-upload puts the repo's stale admin/ over the live one.
+function ghSkipCi(msg){ msg=String(msg||'').trim()||'Fourge: update'; return /\[skip ci\]/i.test(msg)?msg:(msg+' [skip ci]'); }
 function ghH(){const{pat}=ghCfg();return{'Authorization':'Bearer '+pat,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};}
 async function ghRead(path,repoOverride){const{repo,branch}=ghCfg();const r=repoOverride||repo;const res=await fetch('https://api.github.com/repos/'+r+'/contents/'+path+'?ref='+branch,{headers:ghH()});if(!res.ok)throw new Error('GitHub read failed ('+res.status+') for '+path);const d=await res.json();return{content:atob(d.content.replace(/\n/g,'')),sha:d.sha};}
-async function ghWrite(path,content,sha,msg){const{repo,branch}=ghCfg();const body={message:msg,content:btoa(unescape(encodeURIComponent(content))),branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message||'GitHub write failed');}return res.json();}
-async function ghBin(path,buf,sha,msg){const{repo,branch}=ghCfg();const b64=btoa(String.fromCharCode(...new Uint8Array(buf)));const body={message:msg,content:b64,branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message);}return res.json();}
+async function ghWrite(path,content,sha,msg){const{repo,branch}=ghCfg();const body={message:ghSkipCi(msg),content:btoa(unescape(encodeURIComponent(content))),branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message||'GitHub write failed');}return res.json();}
+async function ghBin(path,buf,sha,msg){const{repo,branch}=ghCfg();const b64=btoa(String.fromCharCode(...new Uint8Array(buf)));const body={message:ghSkipCi(msg),content:b64,branch};if(sha)body.sha=sha;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'PUT',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(e.message);}return res.json();}
 async function ghSHA(path){const{repo,branch}=ghCfg();const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path+'?ref='+branch,{headers:ghH()});if(!res.ok)return null;const d=await res.json();return d.sha||null;}
-async function ghDelete(path,msg){const{repo,branch}=ghCfg();const sha=await ghSHA(path);if(!sha)return null;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'DELETE',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify({message:msg||'Fourge: delete',sha,branch})});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||'GitHub delete failed');}return res.json();}
+async function ghDelete(path,msg){const{repo,branch}=ghCfg();const sha=await ghSHA(path);if(!sha)return null;const res=await fetch('https://api.github.com/repos/'+repo+'/contents/'+path,{method:'DELETE',headers:{...ghH(),'Content-Type':'application/json'},body:JSON.stringify({message:ghSkipCi(msg||'Fourge: delete'),sha,branch})});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||'GitHub delete failed');}return res.json();}
 // Mirror a file into the site's GitHub repo. SERVER-side first (the gh_mirror
 // action pushes with the encrypted github_pat, so it works for EVERY signed-in
 // user from any browser — the token never reaches non-Architect sessions), then
@@ -3276,101 +3281,91 @@ async function ghSyncSiteContent(verbose){
   // admin/superadmin/architect login still picks it up. (The manual button is
   // only ever shown to Architect sessions, so this never blocks it.)
   if(accessLevel(getSessionUser())<2){ if(verbose) toast('Admin access required','err'); return; }
-  // The walk itself is server-side (gh_sync_all): api.php lists every file under
-  // the web root that belongs in the repo — pages, data/*.json, images, video,
-  // fonts, documents, .htaccess — compares each to the repo's own blob sha and
-  // pushes only what differs, in time-boxed batches. This loop just keeps
-  // asking for the next batch until the server says there is none.
-  let pushed=0, upToDate=0, failed=0, skipped=0, total=0, errors=[];
-  let offset=0, notConfigured=false, legacy=false;
+  // The walk is server-side (gh_sync_all): api.php lists every file under the
+  // web root that belongs in the repo — pages, data/*.json, images, video,
+  // fonts, documents, .htaccess — compares each to the repo's own blob sha,
+  // uploads only what differs as loose blobs and, on the LAST batch, writes one
+  // tree and ONE commit for the whole site (1.14.141). Earlier releases
+  // committed file by file, and the site repo's own deploy workflow ran once
+  // per commit: a thousand files meant a thousand runs and as many failure
+  // emails. This loop keeps asking for the next batch, handing the run id back
+  // so the server finds the blobs it staged so far. A 1.14.141+ answer carries
+  // cumulative counts for the run (replace); an older api.php reports per
+  // batch (add). A rejected token stops the run on the first answer, with the
+  // reason, instead of failing once per file.
+  const fresh=()=>({pushed:0, upToDate:0, failed:0, skipped:0, total:0, errors:[], commit:null, tokenExpires:'', fatal:null, staleApi:false, notConfigured:false});
+  let acc=fresh(), offset=0, run='', restarted=false;
   const st=document.getElementById('s-gh-sync-status');
   for(let guard=0; guard<500; guard++){
     let r;
-    try{ r=await apiCall('gh_sync_all',{offset}); }
+    try{ r=await apiCall('gh_sync_all', run?{offset,run}:{offset}); }
     catch(e){
-      // An api.php from before gh_sync_all existed (its auto-update is refused
-      // on installs without config.secret.php) still has gh_mirror: fall back
-      // to the per-file client walk so those sites keep syncing.
-      if(offset===0 && /unknown action/i.test(e.message||'')){ legacy=true; break; }
-      failed++; errors.push(e.message); break;
+      // An api.php from before gh_sync_all existed cannot sync at all — and must
+      // not fall back to a per-file walk (one commit per file is exactly what
+      // flooded the deploy workflow). Say what is wrong and how to fix it.
+      if(/unknown action/i.test(e.message||'')){ acc.staleApi=true; acc.failed++; acc.errors.push(apiStaleText('gh_sync_all')); break; }
+      acc.failed++; acc.errors.push(e.message); break;
     }
     if(!r||!r.ok){
-      if(r&&(r.reason==='no_repo'||r.reason==='no_token')){ notConfigured=true; break; }
-      failed++; if(r&&(r.error||r.reason)) errors.push(r.error||r.reason); break;
+      if(r&&(r.reason==='no_repo'||r.reason==='no_token')){ acc.notConfigured=true; break; }
+      // The server lost the staged run (another admin synced meanwhile, or it
+      // timed out): once more from the top, never twice.
+      if(r&&r.reason==='restart'&&!restarted){ restarted=true; offset=0; run=''; acc=fresh(); continue; }
+      acc.fatal={reason:(r&&r.reason)||'github', error:(r&&(r.error||r.reason))||'GitHub sync failed'};
+      acc.failed++; acc.errors.push(acc.fatal.error); if(r&&r.tokenExpires) acc.tokenExpires=r.tokenExpires; break;
     }
-    total=r.total||0; pushed+=r.pushed||0; upToDate+=r.upToDate||0; failed+=r.failed||0; skipped+=r.skipped||0;
-    if(Array.isArray(r.errors)) errors.push(...r.errors);
-    if(verbose && st && r.next!=null) st.textContent=`Syncing… ${r.done||r.next} of ${total} files checked`;
+    if(r.run){
+      run=r.run; acc.total=r.total||0; acc.pushed=r.pushed||0; acc.upToDate=r.upToDate||0; acc.failed=r.failed||0; acc.skipped=r.skipped||0;
+      acc.errors=Array.isArray(r.errors)?r.errors.slice():[]; acc.commit=r.commit||null; if(r.tokenExpires) acc.tokenExpires=r.tokenExpires;
+      if(r.fatal) acc.fatal=r.fatal;
+    }else{
+      acc.total=r.total||0; acc.pushed+=r.pushed||0; acc.upToDate+=r.upToDate||0; acc.failed+=r.failed||0; acc.skipped+=r.skipped||0;
+      if(Array.isArray(r.errors)) acc.errors.push(...r.errors);
+    }
+    if(verbose && st && r.next!=null) st.textContent=`Syncing… ${r.done||r.next} of ${acc.total} files checked${r.staged?` · ${r.staged} queued for one commit`:''}`;
     if(r.next==null || r.next<=offset) break;
     offset=r.next;
   }
-  if(legacy) return ghSyncSiteContentLegacy(verbose);
-  if(notConfigured){
+  if(acc.tokenExpires) _ghTokenExpires=acc.tokenExpires;
+  if(acc.staleApi){ apiStaleHint('gh_sync_all'); if(verbose) toast(apiStaleText('gh_sync_all'),'err'); return {ok:false, ...acc}; }
+  if(acc.notConfigured){
     // Silent on the automatic login-triggered path (matches every other
     // optional GitHub feature); the manual button says so explicitly, since
     // someone who just clicked "Sync Now" deserves to know why nothing moved.
     if(verbose) toast("GitHub isn't configured for this site yet — add a token and repo above, then try again.",'err');
-    return {ok:true, notConfigured:true, pushed:0, upToDate:0, failed:0, skipped:0, total:0, errors:[]};
+    return {ok:true, ...acc};
   }
-  toast(`GitHub sync: ${pushed} pushed, ${upToDate} already current${failed?`, ${failed} failed`:''}`, failed?'err':'ok');
-  return {ok:!failed, notConfigured:false, pushed, upToDate, failed, skipped, total, errors};
+  // A rejected token or an unreachable GitHub is a real problem for every
+  // admin, not just the one who clicked: always say so.
+  if(acc.fatal) toast(acc.fatal.error,'err');
+  else toast(`GitHub sync: ${acc.pushed} pushed${acc.commit?' in one commit':''}, ${acc.upToDate} already current${acc.failed?`, ${acc.failed} failed`:''}`, acc.failed?'err':'ok');
+  return {ok:!acc.failed, ...acc};
 }
-// The pre-gh_sync_all walk, driven from the browser: read each known text file
-// through read_file and push it through gh_mirror. Kept only as the fallback
-// above — it can't see media or other binary files, which is why the server
-// now does the walking.
-async function ghSyncSiteContentLegacy(verbose){
-  const read=async(path)=>{ try{ const d=await apiCall('read_file',{path}); return (d&&d.content!=null)?d.content:null; }catch(e){ return null; } };
-
-  const pagesRaw=await read(F_PAGES);
-  const targets=[
-    {readPath:F_PAGES, ghPath:F_PAGES, label:'pages manifest'},
-    {readPath:F_POSTS, ghPath:F_POSTS, label:'posts manifest'},
-    {readPath:'posts.html', ghPath:'posts.html', label:'blog page'},
-    {readPath:F_EVENTS, ghPath:F_EVENTS, label:'events manifest'},
-    {readPath:F_SITE, ghPath:F_SITE, label:'site settings'},
-    {readPath:F_SEO, ghPath:F_SEO, label:'SEO data'},
-    {readPath:F_FORMS, ghPath:F_FORMS, label:'form definitions'},
-  ];
-  // Read pages.json fresh rather than trusting in-memory _pages, so this is
-  // correct regardless of which tab was open before Update was clicked.
-  if(pagesRaw){
-    let pagesObj={}; try{ pagesObj=JSON.parse(pagesRaw)||{}; }catch(e){ pagesObj={}; }
-    Object.keys(pagesObj).forEach(id=>{
-      const p=pagesObj[id]||{};
-      const file=p.file||(id==='home'?'index.html':capitalize(id)+'.html');
-      targets.push({readPath:p.path||file, ghPath:file, label:'page "'+(p.title||id)+'"'});
-    });
-  }
-
-  let pushed=0, upToDate=0, failed=0, notConfigured=false;
-  const BATCH=5;
-  for(let i=0;i<targets.length && !notConfigured;i+=BATCH){
-    const results=await Promise.all(targets.slice(i,i+BATCH).map(async t=>{
-      const content=await read(t.readPath);
-      if(content==null) return 'missing';   // file doesn't exist on this site — nothing to mirror
-      const r=await ghMirror(t.ghPath,content,'Fourge: sync '+t.label+' to GitHub');
-      if(r.ok) return r.skipped?'uptodate':'pushed';
-      if(r.error==='not_configured') return 'not_configured';
-      return 'failed';
-    }));
-    results.forEach(r=>{
-      if(r==='pushed') pushed++;
-      else if(r==='uptodate') upToDate++;
-      else if(r==='failed') failed++;
-      else if(r==='not_configured') notConfigured=true;
-    });
-  }
-
-  if(notConfigured){
-    // Silent on the automatic login-triggered path (matches every other
-    // optional GitHub feature); the manual button says so explicitly, since
-    // someone who just clicked "Sync Now" deserves to know why nothing moved.
-    if(verbose) toast("GitHub isn't configured for this site yet — add a token and repo above, then try again.",'err');
-    return {ok:true, notConfigured:true, pushed:0, upToDate:0, failed:0};
-  }
-  toast(`GitHub sync: ${pushed} pushed, ${upToDate} already current${failed?`, ${failed} failed`:''}`, failed?'err':'ok');
-  return {ok:!failed, notConfigured:false, pushed, upToDate, failed};
+// What the server said about the token's expiry, from the last sync or test
+// (GitHub's github-authentication-token-expiration header, "YYYY-MM-DD HH:MM:SS UTC").
+let _ghTokenExpires='';
+function ghParseExpiry(s){ if(!s) return null; const m=String(s).match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/); const d=m?new Date(m[1]+'T'+m[2]+(m[2].length===5?':00':'')+'Z'):new Date(s); return isNaN(d.getTime())?null:d; }
+function ghExpiryDays(s){ const d=ghParseExpiry(s); return d?Math.floor((d.getTime()-Date.now())/86400000):null; }
+function ghExpiryNote(s){
+  const d=ghParseExpiry(s); if(!d) return '';
+  const days=ghExpiryDays(s);
+  if(days<0) return 'The GitHub token expired on '+d.toLocaleDateString()+' — save a new one under Settings → GitHub Integration.';
+  if(days<=14) return 'The GitHub token expires in '+days+' day'+(days===1?'':'s')+' ('+d.toLocaleDateString()+') — save a new one soon.';
+  return 'Token expires '+d.toLocaleDateString()+'.';
+}
+function ghEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// The line under the token fields: repo, who the token is, private or not,
+// and when the token expires (red inside two weeks).
+function ghShowTokenInfo(r){
+  const el=document.getElementById('s-repo-info'); if(!el) return;
+  const{repo}=ghCfg();
+  const parts=[`Repo: <strong>${ghEsc(repo||'Not set — add github.repo to data/site.json')}</strong>`];
+  if(r&&r.ok){
+    parts.push(`connected as <strong>${ghEsc(r.login||'?')}</strong>`, r.private?'private':'<span style="color:var(--red)">PUBLIC — the sync will set it private</span>', r.canPush?'token can push':'<span style="color:var(--red)">token cannot push to this repo</span>');
+  }else if(r&&r.error){ parts.push(`<span style="color:var(--red)">${ghEsc(r.error)}</span>`); }
+  const exp=(r&&r.expires)||_ghTokenExpires, note=ghExpiryNote(exp), days=ghExpiryDays(exp);
+  if(note) parts.push((days!=null&&days<=14)?`<span style="color:var(--red)">${ghEsc(note)}</span>`:ghEsc(note));
+  el.innerHTML=parts.join(' · ');
 }
 // A client site's own repo is source control for its business content — no
 // reason for it to be publicly readable. Idempotent (fourgeApiGhSetPrivate
@@ -3390,6 +3385,7 @@ async function ghEnsureRepoPrivate(verbose){
     else if(verbose && r && !r.ok) toast('Could not set the repo private: '+(r.error||r.reason||'unknown error'),'err');
     return r;
   }catch(e){
+    if(/unknown action/i.test(e.message||'')){ apiStaleHint('gh_set_private'); if(verbose) toast(apiStaleText('gh_set_private'),'err'); return {ok:false, reason:'stale_api', error:apiStaleText('gh_set_private')}; }
     console.warn('Could not set GitHub repo private:',e.message);
     if(verbose) toast('Could not set the repo private: '+e.message,'err');
     return {ok:false, error:e.message};
@@ -3414,7 +3410,10 @@ async function ghDailySyncTick(){
     if(last===today) return {ran:false, reason:'done_today'};
     ghStampDailySync();
     const sync=await ghSyncSiteContent();
+    if(sync&&sync.staleApi) return {ran:true, sync, priv:null};   // the banner says what to install; gh_set_private would fail the same way
     const priv=await ghEnsureRepoPrivate();
+    const days=ghExpiryDays(sync&&sync.tokenExpires);
+    if(days!=null&&days<=14) toast(ghExpiryNote(sync.tokenExpires),'err');   // once a day, with the tick
     return {ran:true, sync, priv};
   }catch(e){ console.warn('Daily GitHub sync failed:',e.message); return {ran:false, reason:'error', error:e.message}; }
 }
@@ -3429,12 +3428,24 @@ async function ghSyncNow(){
   if(st) st.textContent='Syncing…';
   try{
     const sync=await ghSyncSiteContent(true);
+    if(sync&&sync.staleApi){
+      // Nothing GitHub-related can run on an old api.php; the fix is one click away.
+      if(st){ st.textContent=apiStaleText('gh_sync_all')+' '; const b=document.createElement('button'); b.className='fd-btn-secondary'; b.id='s-gh-install-api'; b.textContent='Install api.php now'; b.onclick=()=>installApiPhpNow(b); st.appendChild(b); }
+      return;
+    }
     const priv=await ghEnsureRepoPrivate(true);
     if(st){
       if(sync&&sync.notConfigured) st.textContent="GitHub isn't configured for this site — add a token and repo above first.";
+      else if(sync&&sync.fatal){
+        // One sentence about what went wrong (a rejected token, the rate limit, an unreachable GitHub) — not a count of a thousand failures.
+        st.textContent=sync.fatal.error+(sync.total?` (${sync.total} files checked, ${sync.pushed} pushed, ${sync.upToDate} already current.)`:'');
+        const exp=ghExpiryNote(sync.tokenExpires); if(exp) st.textContent+=' '+exp;
+      }
       else if(sync){
         const firstErr=(sync.errors&&sync.errors.length)?(' First problem: '+sync.errors[0]):'';
-        st.textContent=`${sync.total?sync.total+' files checked — ':''}${sync.pushed} pushed, ${sync.upToDate} already current${sync.failed?`, ${sync.failed} failed`:''}${sync.skipped?`, ${sync.skipped} skipped (too big or unreadable)`:''}. Repo: ${priv&&priv.ok?(priv.already?'already private':'set to private ✓'):('could not confirm private — '+((priv&&(priv.error||priv.reason))||'see above'))}.${firstErr}`;
+        const how=sync.commit?` in one commit (${String(sync.commit).slice(0,7)})`:'';
+        st.textContent=`${sync.total?sync.total+' files checked — ':''}${sync.pushed} pushed${how}, ${sync.upToDate} already current${sync.failed?`, ${sync.failed} failed`:''}${sync.skipped?`, ${sync.skipped} skipped (too big or unreadable)`:''}. Repo: ${priv&&priv.ok?(priv.already?'already private':'set to private ✓'):('could not confirm private — '+((priv&&(priv.error||priv.reason))||'see above'))}.${firstErr}`;
+        const exp=ghExpiryNote(sync.tokenExpires); if(exp) st.textContent+=' '+exp;
       }
       else st.textContent='Could not run — see the notification above.';
     }
@@ -3469,7 +3480,27 @@ async function saveGHToken(){
     checkGH();
   }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
-async function testGH(){const{repo,pat}=ghCfg();if(!pat){toast('No token saved','err');return;}if(!repo){toast('Repo not configured','err');return;}toast('Testing\u2026');try{const uRes=await fetch('https://api.github.com/user',{headers:ghH()});if(uRes.status===401){toast('Token invalid','err');return;}const user=await uRes.json();const rRes=await fetch('https://api.github.com/repos/'+repo,{headers:ghH()});if(rRes.status===404){toast('Repo not found: '+repo,'err');return;}if(!rRes.ok){toast('Repo error '+rRes.status,'err');return;}toast('\u2713 Connected as '+user.login+' \u2192 '+repo,'ok');await checkGH();}catch(e){toast('Network error: '+e.message,'err');}}
+// Settings → "Test Connection": the server checks with the saved token (gh_test,
+// 1.14.141) — who the token is, whether it sees and can push to the repo, and
+// when it expires — and the result stays on the line under the fields.
+async function testGH(){
+  const{repo,pat}=ghCfg();
+  if(!pat && !(_secretStatus&&_secretStatus.github_pat)){toast('No token saved','err');return;}
+  if(!repo){toast('Repo not configured','err');return;}
+  toast('Testing\u2026');
+  let r=null;
+  try{ r=await apiCall('gh_test',{}); }
+  catch(e){
+    if(/unknown action/i.test(e.message||'')){ apiStaleHint('gh_test'); return testGHBrowser(); }   // api.php older than 1.14.141: the browser-side check, as before
+    toast('Could not test: '+e.message,'err'); return;
+  }
+  if(r&&r.expires) _ghTokenExpires=r.expires;
+  ghShowTokenInfo(r);
+  if(!r||!r.ok){ toast((r&&r.error)||'GitHub test failed','err'); return; }
+  toast('\u2713 Connected as '+r.login+' \u2192 '+r.repo+(r.private?'':' (public!)'), r.private?'ok':'err');
+  await checkGH();
+}
+async function testGHBrowser(){const{repo,pat}=ghCfg();if(!pat){toast('No token saved','err');return;}if(!repo){toast('Repo not configured','err');return;}toast('Testing\u2026');try{const uRes=await fetch('https://api.github.com/user',{headers:ghH()});if(uRes.status===401){toast('Token invalid','err');return;}const user=await uRes.json();const rRes=await fetch('https://api.github.com/repos/'+repo,{headers:ghH()});if(rRes.status===404){toast('Repo not found: '+repo,'err');return;}if(!rRes.ok){toast('Repo error '+rRes.status,'err');return;}toast('\u2713 Connected as '+user.login+' \u2192 '+repo,'ok');await checkGH();}catch(e){toast('Network error: '+e.message,'err');}}
 
 // ── SITE CONFIG ─────────────────────────────────────────────────
 async function loadSiteConfig(){
@@ -13236,7 +13267,7 @@ async function togglePlugin(name,on,idx){
 }
 function loadSettings(){
   const{repo,pat}=ghCfg();
-  const sRepoInfo=document.getElementById('s-repo-info');if(sRepoInfo)sRepoInfo.innerHTML=`Repo: <strong>${repo||'Not set — add github.repo to data/site.json'}</strong>`;
+  ghShowTokenInfo(null);
   const roEl=document.getElementById('s-repo-override');if(roEl&&!roEl.value)roEl.value=(_secrets&&_secrets.repo_override)||'';
   // Server API is automatic (co-located api.php + login session) and Mailgun is
   // configured server-side in config.secret.php — neither has UI fields to fill.
@@ -19274,8 +19305,25 @@ async function apiCall(action,body={}){
   const payload={action,...body}; if(atok) payload.token=atok;
   const res=await fetch(getApiBase(),{method:'POST',headers,body:JSON.stringify(payload)});
   let d=null; try{ d=await res.json(); }catch(e){ throw new Error('Server returned an invalid response ('+res.status+')'); }
-  if(d&&d.error){ const err=new Error(d.error); err.status=res.status; throw err; }
+  if(d&&d.error){ const err=new Error(d.error); err.status=res.status; if(/^unknown action/i.test(String(d.error))) apiStaleHint(action); throw err; }
   return d;
+}
+// An "Unknown action" answer means admin/api.php is older than this admin (or an
+// opcode cache is serving an old copy): raise the banner — with the version
+// numbers when ping can tell them — at most once a minute, so a feature broken
+// for this reason does not re-check on every click.
+let _apiStaleAt=0;
+function apiStaleText(action){ return 'admin/api.php on this server is out of date — it does not know “'+action+'” (this admin is '+CMS_VERSION+'). Install the matching api.php and try again.'; }
+async function apiStaleHint(action){
+  const now=Date.now(); if(now-_apiStaleAt<60000) return; _apiStaleAt=now;
+  let r=null; try{ r=await apiVersionCheck(); }catch(e){}
+  if(r&&r.stale) return;   // the banner is up with both version numbers
+  const banner=document.getElementById('api-banner'), msg=document.getElementById('api-msg');
+  if(!banner||!msg) return;
+  msg.textContent=(r&&r.api)
+    ? 'The server reports api.php '+r.api+' yet answered “Unknown action” to “'+action+'” — a PHP opcode cache may still be serving an old copy. Reinstalling api.php (or waiting a minute) usually clears it.'
+    : apiStaleText(action);
+  banner.classList.add('show');
 }
 function ifsStatusBadge(label, ok, detail=''){
   const color = ok ? 'var(--green)' : 'var(--red)';

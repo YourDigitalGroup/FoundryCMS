@@ -14,6 +14,8 @@ function lift($api, $name) {
 }
 $tmp = sys_get_temp_dir() . '/fourge-htcache-' . getmypid(); @mkdir($tmp, 0777, true);
 define('PUBLIC_HTML', $tmp);
+// 1.14.141: the writers mirror to GitHub through fourgeSitePut (covered by gh_client.php); here it is just the write.
+function fourgeSitePut($abs, $bytes, $msg = '') { return @file_put_contents($abs, (string)$bytes); }
 $src = '';
 foreach (['fourgeCacheHtMarkers','fourgeCacheHtaccessBlock','fourgeCacheHtaccessFindUnmarked','fourgeCacheHtaccessApply','fourgeWriteCacheHtaccess','fourgeWriteProtectHtaccess','fourgeWriteCleanUrlHtaccess'] as $fn) $src .= lift($api, $fn);
 eval($src);

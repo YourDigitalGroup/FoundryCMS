@@ -6,6 +6,8 @@ set -u
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 S="$SRC/tests/.cache/e2e_site"
 PORT="${E2E_PORT:-8932}"; BASE=http://127.0.0.1:$PORT/admin/api.php
+GHPORT="${E2E_GH_PORT:-8934}"; GHLOG="$SRC/tests/.cache/gh_stub_log.jsonl"; GHSTATE="$SRC/tests/.cache/gh_stub_state.json"; GHMODE="$SRC/tests/.cache/gh_stub_mode"
+export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"   # the engine's curl must reach the stub directly
 command -v python3 >/dev/null 2>&1 || { echo "FAIL python3 is required for the dispatcher suite"; exit 1; }
 rm -rf "$S"; mkdir -p "$S"
 # a throwaway copy of the site (never the repo itself): no .git, no tests, no scratch folders
@@ -19,9 +21,14 @@ return [
   'require_https' => false,
 ];
 PHP
-php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"admin@44interactive.com","E2ePass!234"); $pdo->exec("UPDATE users SET must_change_password=0"); $u=fourgeGetUser($pdo,"admin@44interactive.com"); echo "user ready: role=",($u["role"]??"?"),"\n";' "$S" || { echo "FAIL could not prepare the test DB"; exit 1; }
-php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"admin@44interactive.com","E2ePass!234"); $pdo->exec("UPDATE users SET must_change_password=0, is_architect=1 WHERE username=\"admin@44interactive.com\""); $u=fourgeGetUser($pdo,"admin@44interactive.com"); echo "user ready: role=",($u["role"]??"?"),"\n";' "$S" || { echo "FAIL could not prepare the test DB"; exit 1; }
+# the stand-in for api.github.com (tests/lib/gh_stub.php) — the engine is pointed at it with FOURGE_GH_API_BASE
+mkdir -p "$S.ghroot"; rm -f "$GHLOG" "$GHSTATE"; echo ok > "$GHMODE"
+php -S 127.0.0.1:$GHPORT -t "$S.ghroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/gh_stub.php" > "$S.ghstub.log" 2>&1 &
+GHSRV=$!
+FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$PORT/admin/index.html" && break; sleep 0.2; done
 pass=0; fail=0
 chk(){ if [ "$1" = 0 ]; then echo "ok   $2"; pass=$((pass+1)); else echo "FAIL $2"; fail=$((fail+1)); fi; }
@@ -80,6 +87,75 @@ call "write_file via content_b64 (the client's fallback channel)" "{\"action\":\
 call "delete_file data/e2e-test.txt" '{"action":"delete_file","path":"data/e2e-test.txt"}'
 call "gh_mirror (unconfigured → no_repo)" '{"action":"gh_mirror","path":"data/site.json","content":"{}","message":"e2e"}'
 call "gh_sync_all (unconfigured)" '{"action":"gh_sync_all","offset":0}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is False and d.get("reason") in ("no_repo","no_token"), d' && chk 0 "gh_sync_all without a repo/token answers no_repo/no_token" || chk 1 "gh_sync_all unconfigured — got: $(printf '%s' "$LAST" | head -c 200)"
+
+# ── GitHub mirror, end to end against the stub api.github.com ─────────────────────────────
+qcall(){ LAST=$(curl -s -X POST -H 'Content-Type: application/json' ${TOK:+-H "X-Session-Token: $TOK"} --data "$1" "$BASE"); }
+gh_sync(){ # run gh_sync_all to completion the way the admin does; LAST = the final answer, SYNC_CALLS = batches asked for
+  local off=0 run="" nxt; SYNC_CALLS=0
+  for i in $(seq 1 80); do
+    qcall "{\"action\":\"gh_sync_all\",\"offset\":$off${run:+,\"run\":\"$run\"}}"; SYNC_CALLS=$((SYNC_CALLS+1))
+    nxt=$(printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); n=d.get("next"); print("" if not d.get("ok") or n is None else n)' 2>/dev/null) || nxt=""
+    run=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("run") or "")' 2>/dev/null)
+    [ -z "$nxt" ] && break; off=$nxt
+  done; }
+ghlog(){ python3 - "$GHLOG" "$@" <<'PY'
+import json,sys,os
+log=[json.loads(l) for l in open(sys.argv[1])] if os.path.exists(sys.argv[1]) else []
+exec(sys.argv[2])
+PY
+}
+echo 401 > "$GHMODE"; : > "$GHLOG"
+call "set_secret github_pat (Architect)" '{"action":"set_secret","name":"github_pat","value":"stub-token"}'
+call "write_file data/site.json with github.repo while the token is rejected" '{"action":"write_file","path":"data/site.json","content":"{\"name\":\"E2E\",\"github\":{\"repo\":\"stub/site\",\"branch\":\"main\"}}"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); g=d.get("gh") or {}; assert d.get("ok") and g.get("ok") is False and g.get("reason")=="bad_token" and "rejected the saved token" in g.get("error",""), d' && chk 0 "the save lands and its gh verdict says the token was rejected (reason bad_token), not \"could not be reached\"" || chk 1 "write_file gh verdict with a bad token — got: $(printf '%s' "$LAST" | head -c 300)"
+: > "$GHLOG"; gh_sync
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is False and d.get("reason")=="bad_token" and d.get("error","").startswith("GitHub sync did not start: GitHub rejected the saved token (401 Bad credentials)"), d' && chk 0 "gh_sync_all with a rejected token stops at once: reason bad_token, one sentence" || chk 1 "gh_sync_all bad token — got: $(printf '%s' "$LAST" | head -c 300)"
+[ "$SYNC_CALLS" = 1 ] && ghlog 'assert len(log)==1 and log[0]["m"]=="GET" and log[0]["p"]=="/repos/stub/site", log' && chk 0 "…after exactly ONE request to GitHub (the repo probe), not one per file" || chk 1 "requests made with a bad token: $(wc -l < "$GHLOG") (batches: $SYNC_CALLS)"
+call "gh_set_private (token rejected)" '{"action":"gh_set_private"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is False and d.get("reason")=="bad_token" and "rejected the saved token" in d.get("error",""), d' && chk 0 "gh_set_private explains the rejected token too" || chk 1 "gh_set_private bad token — got: $(printf '%s' "$LAST" | head -c 300)"
+call "gh_test (token rejected)" '{"action":"gh_test"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is False and d.get("reason")=="bad_token" and d.get("error","").startswith("Token check failed: GitHub rejected the saved token"), d' && chk 0 "gh_test: Token check failed: GitHub rejected the saved token…" || chk 1 "gh_test bad token — got: $(printf '%s' "$LAST" | head -c 300)"
+echo ok > "$GHMODE"; : > "$GHLOG"
+call "write_file e2e-mirror.html (a save mirrors at once — the repo's first commit)" '{"action":"write_file","path":"e2e-mirror.html","content":"<html><body>mirror me</body></html>"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and (d.get("gh") or {}).get("ok") is True, d' && chk 0 "write_file reports gh.ok:true" || chk 1 "write_file gh — got: $(printf '%s' "$LAST" | head -c 300)"
+ghlog 'puts=[l for l in log if l["m"]=="PUT" and l["p"]=="/repos/stub/site/contents/e2e-mirror.html"]; assert len(puts)==1 and puts[0]["msg"]=="Fourge: update e2e-mirror.html [skip ci]", log' && chk 0 "…with ONE commit whose message ends in [skip ci] (the site repo's deploy workflow must not run on mirror commits)" || chk 1 "mirror PUT/message — log: $(head -c 400 "$GHLOG")"
+: > "$GHLOG"; gh_sync
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d.get("next") is None and d["done"]==d["total"] and d["failed"]==0 and d["pushed"]>=3 and d["upToDate"]>=1 and d.get("commit"), d' && chk 0 "gh_sync_all pushes the whole site: $(printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["total"],"files,",d["pushed"],"pushed,",d["upToDate"],"already current,",d["skipped"],"skipped, in",'"$SYNC_CALLS"',"batch(es), commit",d["commit"][:7])')" || chk 1 "gh_sync_all — got: $(printf '%s' "$LAST" | head -c 400)"
+PUSHED=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pushed",0))')
+ghlog "c=[l for l in log if l['m']=='POST' and l['p'].endswith('/git/commits')]; t=[l for l in log if l['m']=='POST' and l['p'].endswith('/git/trees')]; r=[l for l in log if l['m']=='PATCH' and l['p'].endswith('/git/refs/heads/main')]; b=[l for l in log if l['m']=='POST' and l['p'].endswith('/git/blobs')]; puts=[l for l in log if l['m']=='PUT']; assert len(c)==1 and len(t)==1 and len(r)==1 and len(b)==$PUSHED and not puts, (len(c),len(t),len(r),len(b),len(puts)); assert c[0]['msg'].startswith('Fourge: sync $PUSHED file') and c[0]['msg'].endswith('[skip ci]'), c[0]" && chk 0 "…as ONE commit (one tree, one ref update, $PUSHED blobs, no per-file PUTs): \"Fourge: sync $PUSHED files to GitHub [skip ci]\"" || chk 1 "one-commit shape — log: $(python3 -c "import json,sys,collections; print(collections.Counter((json.loads(l)['m'],json.loads(l)['p'].split('/')[-1]) for l in open('$GHLOG')))")"
+python3 - "$GHSTATE" <<'PY' && chk 0 "the repo now holds the site files the policy mirrors (.htaccess, preview.html, block-renderer.jsx, data/site.json, e2e-mirror.html) and none it must not (admin/, users.json, config.secret.php, the DB)" || chk 1 "repo contents after sync"
+import json,sys; s=json.load(open(sys.argv[1])); head=s["refs"]["main"]; tree=s["trees"][s["commits"][head]["tree"]]
+assert len(s["commits"])==2, len(s["commits"])
+for p in (".htaccess","preview.html","block-renderer.jsx","data/site.json","e2e-mirror.html"): assert p in tree, p
+for p in tree: assert not p.startswith("admin/") and not p.startswith(".git") and p not in ("data/users.json","config.secret.php") and not p.endswith((".db",".log")), p
+PY
+: > "$GHLOG"; gh_sync
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["pushed"]==0 and d.get("commit") is None and d["failed"]==0 and d["upToDate"]==d["total"]-d["skipped"], d' && ghlog 'assert not [l for l in log if l["m"] in ("POST","PUT","PATCH")], log' && chk 0 "a second sync finds everything current: 0 pushed, no commit, nothing written to GitHub" || chk 1 "second sync — got: $(printf '%s' "$LAST" | head -c 300)"
+call "gh_test" '{"action":"gh_test"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys,re; d=json.load(sys.stdin); assert d.get("ok") and d["login"]=="stub-user" and d["repo"]=="stub/site" and d["private"] is True and d["canPush"] is True and re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$", d.get("expires","")), d' && chk 0 "gh_test: login, repo, private, canPush and the token expiry from GitHub's header ($(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["expires"])'))" || chk 1 "gh_test — got: $(printf '%s' "$LAST" | head -c 300)"
+printf '<html><body>gate 2</body></html>' > "$S/e2e-gate2.html"; : > "$GHLOG"
+call "set_page_password ON (server-side writers mirror: .htaccess + the gate script)" '{"action":"set_page_password","path":"e2e-gate2.html","password":"hunter22"}'
+ghlog 'puts={l["p"].split("/contents/",1)[1]:l["msg"] for l in log if l["m"]=="PUT"}; assert ".htaccess" in puts and "_fourge_gate.php" in puts and all(m.endswith("[skip ci]") for m in puts.values()), puts' && chk 0 "the password gate's .htaccess rule and _fourge_gate.php were pushed the moment they were written, each [skip ci]" || chk 1 "gate ON mirror — log: $(head -c 400 "$GHLOG")"
+: > "$GHLOG"
+call "install_clean_urls (nothing changes → nothing is pushed)" '{"action":"install_clean_urls"}'
+ghlog 'assert not [l for l in log if l["m"]=="PUT" and l["p"].endswith("/contents/.htaccess")], log' && chk 0 "an unchanged .htaccess is not pushed again (no GitHub write on a no-op sign-in self-heal)" || chk 1 "install_clean_urls pushed .htaccess although nothing changed"
+: > "$GHLOG"
+call "set_page_password OFF" '{"action":"set_page_password","path":"e2e-gate2.html","password":""}'
+ghlog 'assert [l for l in log if l["m"]=="PUT" and l["p"].endswith("/contents/.htaccess") and l["msg"].endswith("[skip ci]")], log' && chk 0 "turning the gate off pushes the changed .htaccess" || chk 1 "gate OFF mirror — log: $(head -c 400 "$GHLOG")"
+rm -f "$S/e2e-gate2.html" "$S/_fourge_gate.php"
+call "gh_set_private (the stub repo is already private)" '{"action":"gh_set_private"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d.get("already") is True, d' && chk 0 "gh_set_private: already private" || chk 1 "gh_set_private — got: $(printf '%s' "$LAST" | head -c 200)"
+echo ratelimit > "$GHMODE"; : > "$GHLOG"; gh_sync
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is False and d.get("reason")=="rate_limit" and "rate limit" in d["error"] and "resets at" in d["error"], d' && [ "$SYNC_CALLS" = 1 ] && chk 0 "a used-up rate limit stops the sync at once with the reset time" || chk 1 "rate limit — got: $(printf '%s' "$LAST" | head -c 300)"
+echo notfound > "$GHMODE"; gh_sync
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is False and d.get("reason")=="repo" and "404" in d["error"] and "Resource owner" in d["error"], d' && chk 0 "a repo the token cannot see: reason repo, the 404 explained (owner/name, token access, Resource owner)" || chk 1 "not found — got: $(printf '%s' "$LAST" | head -c 300)"
+# a brand-new, EMPTY repository (a new client site): the Git Data API refuses trees until the first commit exists,
+# so the first file goes through the Contents API and everything else follows in one commit
+echo ok > "$GHMODE"; rm -f "$GHSTATE"; : > "$GHLOG"; gh_sync
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d.get("next") is None and d["failed"]==0 and d["pushed"]==d["total"]-d["skipped"] and d.get("commit"), d' && ghlog 'puts=[l for l in log if l["m"]=="PUT"]; c=[l for l in log if l["m"]=="POST" and l["p"].endswith("/git/commits")]; assert len(puts)==1 and len(c)==1 and puts[0]["msg"].endswith("[skip ci]") and c[0]["msg"].endswith("[skip ci]"), (puts,c)' && python3 -c "import json; s=json.load(open('$GHSTATE')); assert len(s['commits'])==2 and 'main' in s['refs'], len(s['commits'])" && chk 0 "an empty repository gets its first file through the Contents API and the rest in ONE commit (2 commits total, both [skip ci]): $(printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["pushed"],"of",d["total"],"pushed")')" || chk 1 "empty-repo sync — got: $(printf '%s' "$LAST" | head -c 300) / log: $(python3 -c "import json,collections; print(collections.Counter((json.loads(l)['m'],json.loads(l)['p'].split('/')[-1]) for l in open('$GHLOG')))")"
+call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
+rm -f "$S/e2e-mirror.html"
 call "blog_sync_admin status" '{"action":"blog_sync_admin","op":"status"}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("subscribers")==0 and d.get("subscriberSites")==[], d' && chk 0 "blog_sync_admin status reports subscribers:0 on a fresh site" || chk 1 "status subscribers — got: $(printf '%s' "$LAST" | head -c 200)"
 call "blog_sync_admin notify (no partners)" '{"action":"blog_sync_admin","op":"notify"}'
@@ -95,8 +171,9 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 call "form_view (public)" '{"action":"form_view","formId":"e2e-form"}'
 call "unknown action → JSON error" '{"action":"definitely_not_an_action"}'
 call "no session on a session action → 401 JSON" '{"action":"list_users"}'
-kill $SRV 2>/dev/null; wait $SRV 2>/dev/null
+kill $SRV $GHSRV 2>/dev/null; wait $SRV $GHSRV 2>/dev/null
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.server.log"; then chk 1 "php -S log has PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "php -S log shows no PHP warnings/notices/deprecations during the whole run"; fi
-rm -rf "$S" "$S.server.log"
+if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghstub.log"; then chk 1 "the GitHub stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GitHub stub ran without PHP warnings"; fi
+rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE"
 echo; echo "$([ $fail = 0 ] && echo "all end-to-end dispatcher assertions passed ($pass)" || echo "SUITE FAILED ($fail failed, $pass passed)")"
 exit $([ $fail = 0 ] && echo 0 || echo 1)

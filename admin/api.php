@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.140');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.141');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -264,6 +264,7 @@ try {
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'gh_set_private':  ob_end_clean(); fourgeApiGhSetPrivate($authUser, $body); break;
         case 'gh_sync_all':     ob_end_clean(); fourgeApiGhSyncAll($authUser, $body); break;
+        case 'gh_test':         ob_end_clean(); fourgeApiGhTest($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'ai_endpoint_test': ob_end_clean(); fourgeApiAiEndpointTest($authUser, $body); break;
@@ -1381,7 +1382,7 @@ function cmsGhMirrorCfg() {
 // a shared host can take a while to push that); the connect phase is always
 // capped so an unreachable GitHub costs a save seconds, not the full budget.
 function cmsGhApi($method, $url, $token, $payload = null, $timeout = 25) {
-    $ch = curl_init($url);
+    $ch = curl_init($url); $hdrs = [];
     $opts = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CUSTOMREQUEST  => $method,
@@ -1389,12 +1390,16 @@ function cmsGhApi($method, $url, $token, $payload = null, $timeout = 25) {
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_CONNECTTIMEOUT => 10,
         CURLOPT_TIMEOUT        => max(5, (int)$timeout),
+        // Response headers carry the rate limit and the token's expiry date.
+        CURLOPT_HEADERFUNCTION => function ($ch, $line) use (&$hdrs) { $p = strpos($line, ':'); if ($p !== false) $hdrs[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1)); return strlen($line); },
     ];
     if ($payload !== null) $opts[CURLOPT_POSTFIELDS] = json_encode($payload);
     curl_setopt_array($ch, $opts);
-    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch);
+    $res = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch);
     curl_close($ch);
-    return [$code, $res ? json_decode($res, true) : null, $err];
+    $json = $res ? json_decode($res, true) : null;
+    cmsGhLast(['code' => $code, 'message' => is_array($json) ? (string)($json['message'] ?? '') : '', 'headers' => $hdrs, 'curl' => (string)$err]);
+    return [$code, $json, $err];
 }
 
 // ── What belongs in the site's repo ──────────────────────────────────
@@ -1461,10 +1466,10 @@ function cmsGhMaxBytes() {
 function cmsGhBlobSha($bytes) { return sha1('blob ' . strlen($bytes) . "\0" . $bytes); }
 function cmsGhContentsUrl($repo, $rel) {
     $enc = ($rel === '') ? '' : '/' . implode('/', array_map('rawurlencode', explode('/', $rel)));
-    return 'https://api.github.com/repos/' . $repo . '/contents' . $enc;
+    return cmsGhBase() . '/repos/' . $repo . '/contents' . $enc;
 }
 function cmsGhFail($what, $c, $d, $e) {
-    return ['ok' => false, 'reason' => 'github', 'error' => $what . ' ' . (int)$c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : ''))];
+    return ['ok' => false, 'reason' => cmsGhReason($c), 'error' => cmsGhExplain($what, $c, $d, $e)];
 }
 // The repo's blob sha for a path: a sha string, '' when the file isn't in the
 // repo, or false when GitHub couldn't be asked. The per-file lookup stops at
@@ -1490,7 +1495,7 @@ function cmsGhRemoteSha($repo, $branch, $token, $rel) {
 // A repo with no commits yet has no tree (404/409): nothing is there, which is
 // an honest empty map.
 function cmsGhFetchTree($repo, $branch, $token) {
-    list($c, $d) = cmsGhApi('GET', 'https://api.github.com/repos/' . $repo . '/git/trees/' . rawurlencode($branch) . '?recursive=1', $token, null, 40);
+    list($c, $d) = cmsGhApi('GET', cmsGhBase() . '/repos/' . $repo . '/git/trees/' . rawurlencode($branch) . '?recursive=1', $token, null, 40);
     if ($c === 404 || $c === 409) return [];
     if ($c !== 200 || !is_array($d) || !empty($d['truncated']) || !isset($d['tree']) || !is_array($d['tree'])) return null;
     $map = [];
@@ -1515,8 +1520,9 @@ function cmsGhMirrorBytes($rel, $bytes, $msg = '', $cfg = null, $remoteSha = nul
     $msg = trim((string)$msg); if ($msg === '') $msg = 'Fourge: update ' . $rel;
     if (!is_string($remoteSha)) {
         $remoteSha = cmsGhRemoteSha($repo, $branch, $token, $rel);
-        if ($remoteSha === false) return ['ok' => false, 'reason' => 'github', 'error' => 'GitHub could not be reached to check ' . $rel];
+        if ($remoteSha === false) return ['ok' => false, 'reason' => cmsGhReason(cmsGhLast()['code']), 'error' => cmsGhExplain('Could not check ' . $rel . ' on GitHub')];
     }
+    $msg = cmsGhSkipCi($msg);
     $local = cmsGhBlobSha($bytes);
     if ($remoteSha !== '' && $remoteSha === $local) return ['ok' => true, 'skipped' => true];
     $url = cmsGhContentsUrl($repo, $rel);
@@ -1547,9 +1553,9 @@ function cmsGhDeletePath($rel, $msg = '', $cfg = null) {
     if ($token === '') return ['ok' => false, 'reason' => 'no_token'];
     $msg = trim((string)$msg); if ($msg === '') $msg = 'Fourge: delete ' . $rel;
     $sha = cmsGhRemoteSha($repo, $branch, $token, $rel);
-    if ($sha === false) return ['ok' => false, 'reason' => 'github', 'error' => 'GitHub could not be reached to check ' . $rel];
+    if ($sha === false) return ['ok' => false, 'reason' => cmsGhReason(cmsGhLast()['code']), 'error' => cmsGhExplain('Could not check ' . $rel . ' on GitHub')];
     if ($sha === '') return ['ok' => true, 'skipped' => 'absent'];   // nothing to prune
-    list($c, $d, $e) = cmsGhApi('DELETE', cmsGhContentsUrl($repo, $rel), $token, ['message' => $msg, 'sha' => $sha, 'branch' => $branch]);
+    list($c, $d, $e) = cmsGhApi('DELETE', cmsGhContentsUrl($repo, $rel), $token, ['message' => cmsGhSkipCi($msg), 'sha' => $sha, 'branch' => $branch]);
     if ($c >= 200 && $c < 300) return ['ok' => true];
     error_log('Fourge GitHub delete failed for ' . $rel . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
     return cmsGhFail('GitHub delete failed', $c, $d, $e);
@@ -1594,22 +1600,21 @@ function fourgeApiGhSetPrivate($me, $body) {
     list($repo, , $token) = cmsGhMirrorCfg();
     if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo']); return; }
     if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token']); return; }
-    $base = 'https://api.github.com/repos/' . $repo;
+    $base = cmsGhBase() . '/repos/' . $repo;
     list($gc, $gd) = cmsGhApi('GET', $base, $token);
     if ($gc === 200 && !empty($gd['private'])) { echo json_encode(['ok' => true, 'already' => true]); return; }
     if ($gc !== 200) {
         // 404 here is almost never "no such repo": GitHub answers 404 for a
-        // private repo the token can't see, so say what to check.
-        $hint = ($gc === 404) ? ' — check the repo name (owner/name) in Settings, and that this token was granted access to that repository' : '';
-        echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $gc . ' looking up the repo' . $hint]); return;
+        // private repo the token can't see — cmsGhExplain says what to check.
+        echo json_encode(['ok' => false, 'reason' => cmsGhReason($gc), 'error' => cmsGhExplain('Could not confirm the repo is private', $gc, $gd, null)]); return;
     }
     list($c, $d, $e) = cmsGhApi('PATCH', $base, $token, ['private' => true]);
     if ($c >= 200 && $c < 300) { echo json_encode(['ok' => true]); return; }
     error_log('Fourge GitHub set-private failed for ' . $repo . ': HTTP ' . $c . ' ' . ($d['message'] ?? $e));
     // Pushing files needs only "Contents: write"; flipping visibility needs repo
     // administration rights, which most tokens made for mirroring don't carry.
-    $hint = ($c === 403 || $c === 404) ? ' The token needs repository administration rights to change visibility: "Administration: Read and write" on a fine-grained token, or the full "repo" scope on a classic one.' : '';
-    echo json_encode(['ok' => false, 'reason' => 'github', 'error' => 'GitHub returned ' . $c . (isset($d['message']) ? ' — ' . $d['message'] : ($e ? ' — ' . $e : '')) . $hint]);
+    if ($c === 403 || $c === 404) { echo json_encode(['ok' => false, 'reason' => 'forbidden', 'error' => 'GitHub would not let this token change the repo’s visibility (' . $c . '). It needs repository administration rights: "Administration: Read and write" on a fine-grained token, or the full "repo" scope on a classic one.']); return; }
+    echo json_encode(['ok' => false, 'reason' => cmsGhReason($c), 'error' => cmsGhExplain('Could not set the repo private', $c, $d, $e)]);
 }
 // Every file under the web root that belongs in the repo, as sorted relative
 // paths — the same policy cmsGhShouldMirror() applies to single writes, with
@@ -1631,12 +1636,156 @@ function cmsGhListSiteFiles() {
     sort($out, SORT_STRING);
     return $out;
 }
-// Push EVERY site file to the repo, from the server, in time-boxed batches: the
-// client calls with {offset} and keeps calling while `next` isn't null. One
-// recursive tree listing per call gives every remote sha at once, so a file the
-// repo already holds byte-for-byte costs nothing — a repeat run over a caught-up
-// site is a few GETs and no commits. Admin+ only, like gh_set_private.
-// Response: {ok,total,done,next,pushed,upToDate,failed,skipped,errors}.
+// ── GITHUB: what the last answer was, and what it means ──────────────────────
+// GitHub API base — overridable so the test suite can point the engine at a
+// stub server (tests/lib/gh_stub.php) and prove every request it makes.
+function cmsGhBase() { $b = getenv('FOURGE_GH_API_BASE'); return ($b && preg_match('~^https?://~', $b)) ? rtrim($b, '/') : 'https://api.github.com'; }
+// The last GitHub answer this request saw: code, GitHub's message, response
+// headers (lowercase names) and the curl error — so a failure can be explained.
+function cmsGhLast($set = null) {
+    static $last = ['code' => 0, 'message' => '', 'headers' => [], 'curl' => ''];
+    if ($set !== null) $last = $set;
+    return $last;
+}
+function cmsGhReason($code) {
+    $code = (int)$code; $h = cmsGhLast()['headers'];
+    if ($code === 401) return 'bad_token';
+    if ($code === 404) return 'repo';
+    if ($code === 403 && isset($h['x-ratelimit-remaining']) && (int)$h['x-ratelimit-remaining'] === 0) return 'rate_limit';
+    if ($code === 403) return 'forbidden';
+    if ($code === 0) return 'network';
+    return 'github';
+}
+// One plain sentence for a GitHub failure. A rejected token is the common case
+// and used to surface as "could not be reached", which sent people chasing
+// network problems; it now says what happened and where to fix it.
+function cmsGhExplain($what, $c = null, $d = null, $e = null) {
+    $last = cmsGhLast();
+    if ($c === null) { $c = $last['code']; $e = $last['curl']; }
+    $c = (int)$c;
+    $msg = is_array($d) ? (string)($d['message'] ?? '') : (($c === (int)$last['code']) ? (string)$last['message'] : '');
+    $h = $last['headers'];
+    if ($c === 0)   return $what . ': GitHub could not be reached' . ($e ? ' (' . $e . ')' : '') . '.';
+    if ($c === 401) return $what . ': GitHub rejected the saved token (401 Bad credentials) — it has expired or been revoked. Create a new token and save it under Settings → GitHub Integration.';
+    if ($c === 403 && isset($h['x-ratelimit-remaining']) && (int)$h['x-ratelimit-remaining'] === 0) {
+        $reset = (int)($h['x-ratelimit-reset'] ?? 0);
+        return $what . ': GitHub’s rate limit for this token is used up' . ($reset ? ' — it resets at ' . gmdate('H:i', $reset) . ' UTC' : '') . '. Try again then.';
+    }
+    if ($c === 403) return $what . ': GitHub refused (403' . ($msg ? ' — ' . $msg : '') . '). The token may lack permission for this repository, or an organization policy (SAML, token restrictions) is blocking it.';
+    if ($c === 404) return $what . ': GitHub answered 404 — the token cannot see this repository. Check the repo name (owner/name) and that the token was granted access to it; for an organization repository a fine-grained token’s Resource owner must be the organization.';
+    return $what . ': GitHub returned ' . $c . ($msg ? ' — ' . $msg : ($e ? ' — ' . $e : '')) . '.';
+}
+// Mirror commits must never start the site repo's own deploy workflow: the
+// server IS the source of these files, so deploying them back is circular, one
+// run per file fails loudly (hundreds of emails) and a full re-upload puts the
+// repo's stale copy of the engine (admin/) back on the live server.
+function cmsGhSkipCi($msg) { $msg = trim((string)$msg); if ($msg === '') $msg = 'Fourge: update'; return (stripos($msg, '[skip ci]') === false) ? ($msg . ' [skip ci]') : $msg; }
+
+// ── ONE COMMIT FOR THE WHOLE SITE (Git Data API) ─────────────────────────────
+// gh_sync_all used to push one commit per file through the Contents API — a
+// thousand commits for a thousand files, each a workflow run. It now stages
+// blobs batch by batch (the client keeps calling with {offset, run}) and, on
+// the last batch, writes ONE tree, ONE commit and moves the branch once.
+// Unchanged files cost nothing: their git blob sha is computed locally and
+// compared with the repo's tree listing. State between batches lives in
+// admin/gh-sync-state.php (PHP exits before the JSON, so it is never served).
+function cmsGhSyncStatePath() { return __DIR__ . '/gh-sync-state.php'; }
+function cmsGhSyncStateRead() {
+    $f = cmsGhSyncStatePath(); if (!is_file($f)) return null;
+    $raw = (string)@file_get_contents($f); $p = strpos($raw, "\n");
+    $j = json_decode($p === false ? '' : substr($raw, $p + 1), true);
+    return is_array($j) ? $j : null;
+}
+function cmsGhSyncStateWrite($state) { return @file_put_contents(cmsGhSyncStatePath(), "<?php exit; ?>\n" . json_encode($state)) !== false; }
+function cmsGhSyncStateClear() { @unlink(cmsGhSyncStatePath()); }
+// Can this token see the repo? Also reads what GitHub says about the token.
+// Returns ['ok'=>true,'private'=>bool,'canPush'=>bool,'expires'=>string,'scopes'=>string]
+// or ['ok'=>false,'reason'=>…,'error'=>…].
+function cmsGhProbe($repo, $token) {
+    list($c, $d, $e) = cmsGhApi('GET', cmsGhBase() . '/repos/' . $repo, $token);
+    $h = cmsGhLast()['headers'];
+    $info = ['expires' => (string)($h['github-authentication-token-expiration'] ?? ''), 'scopes' => (string)($h['x-oauth-scopes'] ?? '')];
+    if ($c !== 200 || !is_array($d)) return ['ok' => false, 'reason' => cmsGhReason($c), 'error' => cmsGhExplain('GitHub sync did not start', $c, $d, $e)] + $info;
+    return ['ok' => true, 'private' => !empty($d['private']), 'canPush' => !empty($d['permissions']['push']), 'fullName' => (string)($d['full_name'] ?? $repo)] + $info;
+}
+// The branch head: ['sha'=>commit,'tree'=>tree sha], ['empty'=>true] for a
+// branch (or repository) with no commits yet, or ['error'=>…].
+function cmsGhHead($repo, $branch, $token) {
+    list($c, $d, $e) = cmsGhApi('GET', cmsGhBase() . '/repos/' . $repo . '/git/ref/heads/' . rawurlencode($branch), $token);
+    if ($c === 404 || $c === 409) return ['empty' => true];
+    if ($c !== 200 || empty($d['object']['sha'])) return ['error' => cmsGhExplain('GitHub could not read the branch', $c, $d, $e)];
+    $sha = (string)$d['object']['sha'];
+    list($c2, $d2, $e2) = cmsGhApi('GET', cmsGhBase() . '/repos/' . $repo . '/git/commits/' . $sha, $token);
+    if ($c2 !== 200 || empty($d2['tree']['sha'])) return ['error' => cmsGhExplain('GitHub could not read the latest commit', $c2, $d2, $e2)];
+    return ['sha' => $sha, 'tree' => (string)$d2['tree']['sha']];
+}
+// Upload one file's bytes as a blob (no commit): the blob sha, or ['error'=>…].
+function cmsGhCreateBlob($repo, $token, $bytes) {
+    $timeout = 25 + (int)ceil(strlen($bytes) / 262144);
+    list($c, $d, $e) = cmsGhApi('POST', cmsGhBase() . '/repos/' . $repo . '/git/blobs', $token, ['content' => base64_encode($bytes), 'encoding' => 'base64'], $timeout);
+    if ($c === 201 && !empty($d['sha'])) return (string)$d['sha'];
+    return ['error' => cmsGhExplain('GitHub did not accept the file', $c, $d, $e), 'reason' => cmsGhReason($c)];
+}
+// Turn the staged blobs into one tree + one commit and move the branch. If the
+// branch moved while we were staging (someone pushed), rebuild once on the new
+// head — blobs are content-addressed, so nothing is uploaded twice. A repository
+// with no commits yet cannot take trees, so its first file goes through the
+// Contents API to create the initial commit, and the rest follow in one commit.
+function cmsGhCommitStaged($repo, $branch, $token, &$state, $message) {
+    $extra = 0;   // a first file that had to go through the Contents API still counts as pushed
+    if (!empty($state['empty'])) {
+        $first = array_key_first($state['blobs']);
+        if ($first === null) return ['ok' => true, 'sha' => '', 'count' => 0];
+        $bytes = @file_get_contents(PUBLIC_HTML . '/' . $first);
+        if ($bytes === false) return ['ok' => false, 'error' => $first . ' could not be read'];
+        $r = cmsGhMirrorBytes($first, $bytes, $message, [$repo, $branch, $token], '');
+        if (empty($r['ok'])) return ['ok' => false, 'error' => $r['error'] ?? 'GitHub refused the first commit'];
+        unset($state['blobs'][$first]);
+        $h = cmsGhHead($repo, $branch, $token);
+        if (isset($h['error'])) return ['ok' => false, 'error' => $h['error']];
+        if (!empty($h['empty'])) return ['ok' => false, 'error' => 'GitHub still reports the repository as empty after the first commit'];
+        $state['head'] = $h['sha']; $state['baseTree'] = $h['tree']; $state['empty'] = false; $extra = 1;
+        if (!$state['blobs']) return ['ok' => true, 'sha' => $h['sha'], 'count' => 1];
+    }
+    $entries = [];
+    foreach ($state['blobs'] as $path => $sha) $entries[] = ['path' => $path, 'mode' => '100644', 'type' => 'blob', 'sha' => $sha];
+    for ($attempt = 0; $attempt < 2; $attempt++) {
+        $treeBody = ['tree' => $entries]; if ($state['baseTree'] !== '') $treeBody['base_tree'] = $state['baseTree'];
+        list($c, $d, $e) = cmsGhApi('POST', cmsGhBase() . '/repos/' . $repo . '/git/trees', $token, $treeBody, 90);
+        if ($c !== 201 || empty($d['sha'])) return ['ok' => false, 'error' => cmsGhExplain('GitHub could not build the tree', $c, $d, $e)];
+        list($c2, $d2, $e2) = cmsGhApi('POST', cmsGhBase() . '/repos/' . $repo . '/git/commits', $token, ['message' => cmsGhSkipCi($message), 'tree' => (string)$d['sha'], 'parents' => [$state['head']]], 60);
+        if ($c2 !== 201 || empty($d2['sha'])) return ['ok' => false, 'error' => cmsGhExplain('GitHub could not create the commit', $c2, $d2, $e2)];
+        list($c3, $d3, $e3) = cmsGhApi('PATCH', cmsGhBase() . '/repos/' . $repo . '/git/refs/heads/' . rawurlencode($branch), $token, ['sha' => (string)$d2['sha'], 'force' => false], 30);
+        if ($c3 >= 200 && $c3 < 300) return ['ok' => true, 'sha' => (string)$d2['sha'], 'count' => count($entries) + $extra];
+        if (($c3 === 422 || $c3 === 409) && $attempt === 0) {
+            $h = cmsGhHead($repo, $branch, $token);
+            if (isset($h['error']) || !empty($h['empty'])) return ['ok' => false, 'error' => $h['error'] ?? 'the branch disappeared while syncing'];
+            $state['head'] = $h['sha']; $state['baseTree'] = $h['tree'];
+            continue;
+        }
+        return ['ok' => false, 'error' => cmsGhExplain('GitHub refused to move the branch', $c3, $d3, $e3)];
+    }
+    return ['ok' => false, 'error' => 'GitHub kept moving the branch while the sync ran — try again'];
+}
+// Settings → "Test Connection" (admin+): who the token is, whether it sees the
+// repo, and when it expires. The token itself never leaves the server.
+function fourgeApiGhTest($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin access required']); return; }
+    list($repo, $branch, $token) = cmsGhMirrorCfg();
+    if ($token === '') { echo json_encode(['ok' => false, 'reason' => 'no_token', 'error' => 'No GitHub token is saved yet.']); return; }
+    if ($repo === '' || !preg_match('~^[\w.-]+/[\w.-]+$~', $repo)) { echo json_encode(['ok' => false, 'reason' => 'no_repo', 'error' => 'No repository is configured (owner/name).']); return; }
+    list($c, $d, $e) = cmsGhApi('GET', cmsGhBase() . '/user', $token);
+    if ($c !== 200) { echo json_encode(['ok' => false, 'reason' => cmsGhReason($c), 'error' => cmsGhExplain('Token check failed', $c, $d, $e)]); return; }
+    $login = (string)($d['login'] ?? '');
+    $p = cmsGhProbe($repo, $token);
+    if (empty($p['ok'])) { echo json_encode(['ok' => false, 'reason' => $p['reason'], 'error' => $p['error'], 'login' => $login, 'expires' => $p['expires'] ?? '']); return; }
+    echo json_encode(['ok' => true, 'login' => $login, 'repo' => $p['fullName'], 'branch' => $branch, 'private' => $p['private'], 'canPush' => $p['canPush'], 'expires' => $p['expires'], 'scopes' => $p['scopes']]);
+}
+// Push EVERY site file to the repo in ONE commit, staged in time-boxed batches:
+// the client calls with {offset, run} and keeps calling while `next` isn't
+// null; the final batch commits. Counts in every response are cumulative for
+// the run. Admin+ only, like gh_set_private.
+// Response: {ok,run,total,done,next,staged,pushed,upToDate,failed,skipped,errors,commit,tokenExpires}.
 function fourgeApiGhSyncAll($me, $body) {
     if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin access required']); return; }
     $cfg = cmsGhMirrorCfg(); list($repo, $branch, $token) = $cfg;
@@ -1647,25 +1796,88 @@ function fourgeApiGhSyncAll($me, $body) {
     $offset = max(0, (int)($body['offset'] ?? 0));
     $limit  = min(100, max(1, (int)($body['batch'] ?? 50)));
     $budget = 18.0; $t0 = microtime(true);
-    $tree   = ($offset < $total) ? cmsGhFetchTree($repo, $branch, $token) : [];
-    $max    = cmsGhMaxBytes();
-    $pushed = 0; $upToDate = 0; $failed = 0; $skipped = 0; $errors = []; $i = $offset;
+    if ($offset === 0) {
+        // One look at the repo first: a rejected token stops here, with the reason — not once per file.
+        $probe = cmsGhProbe($repo, $token);
+        if (empty($probe['ok'])) { cmsGhSyncStateClear(); echo json_encode(['ok' => false, 'reason' => $probe['reason'], 'error' => $probe['error'], 'tokenExpires' => $probe['expires'] ?? '']); return; }
+        $head = cmsGhHead($repo, $branch, $token);
+        if (isset($head['error'])) { cmsGhSyncStateClear(); echo json_encode(['ok' => false, 'reason' => 'github', 'error' => $head['error']]); return; }
+        $remote = !empty($head['empty']) ? [] : cmsGhFetchTree($repo, $branch, $token);
+        if ($remote === null) { cmsGhSyncStateClear(); echo json_encode(['ok' => false, 'reason' => cmsGhReason(cmsGhLast()['code']), 'error' => cmsGhExplain('GitHub could not list the repository, so nothing was pushed')]); return; }
+        $state = ['run' => bin2hex(random_bytes(6)), 'repo' => $repo, 'branch' => $branch, 'head' => (string)($head['sha'] ?? ''), 'baseTree' => (string)($head['tree'] ?? ''), 'empty' => !empty($head['empty']),
+                  'remote' => $remote, 'blobs' => [], 'upToDate' => 0, 'skipped' => 0, 'failed' => 0, 'errors' => [], 'started' => time(), 'tokenExpires' => (string)($probe['expires'] ?? '')];
+    } else {
+        $state = cmsGhSyncStateRead();
+        if (!$state || (string)($body['run'] ?? '') !== (string)($state['run'] ?? '') || ($state['repo'] ?? '') !== $repo) {
+            echo json_encode(['ok' => false, 'reason' => 'restart', 'error' => 'This sync run has expired — start it again from the beginning.']); return;
+        }
+    }
+    $max = cmsGhMaxBytes(); $i = $offset; $fatal = null;
     for (; $i < $total && $i < $offset + $limit; $i++) {
         if ($i > $offset && (microtime(true) - $t0) > $budget) break;   // the client continues from `next`
         $rel  = $files[$i];
         $size = @filesize(PUBLIC_HTML . '/' . $rel);
-        if ($size === false) { $skipped++; continue; }
-        if ($size > $max) { $skipped++; if (count($errors) < 12) $errors[] = $rel . ': too big to mirror (' . round($size / 1048576, 1) . ' MB)'; continue; }
+        if ($size === false) { $state['skipped']++; continue; }
+        if ($size > $max) { $state['skipped']++; if (count($state['errors']) < 12) $state['errors'][] = $rel . ': too big to mirror (' . round($size / 1048576, 1) . ' MB)'; continue; }
         $bytes = @file_get_contents(PUBLIC_HTML . '/' . $rel);
-        if ($bytes === false) { $skipped++; continue; }
-        $remote = ($tree === null) ? null : ($tree[$rel] ?? '');
-        $r = cmsGhMirrorBytes($rel, $bytes, 'Fourge: sync ' . $rel . ' to GitHub', $cfg, $remote);
+        if ($bytes === false) { $state['skipped']++; continue; }
+        if (($state['remote'][$rel] ?? '') === cmsGhBlobSha($bytes)) { $state['upToDate']++; continue; }
+        $r = cmsGhCreateBlob($repo, $token, $bytes);
         unset($bytes);
-        if (!empty($r['ok'])) { if (!empty($r['skipped'])) $upToDate++; else $pushed++; }
-        else { $failed++; if (count($errors) < 12) $errors[] = $rel . ': ' . ($r['error'] ?? $r['reason'] ?? 'failed'); }
+        if (is_array($r)) {
+            $state['failed']++; if (count($state['errors']) < 12) $state['errors'][] = $rel . ': ' . $r['error'];
+            if (in_array($r['reason'], ['bad_token', 'rate_limit', 'network'], true)) { $fatal = $r; $i++; break; }   // no point trying the next file
+            continue;
+        }
+        $state['blobs'][$rel] = $r;
     }
-    echo json_encode(['ok' => true, 'total' => $total, 'done' => $i, 'next' => ($i < $total ? $i : null),
-                      'pushed' => $pushed, 'upToDate' => $upToDate, 'failed' => $failed, 'skipped' => $skipped, 'errors' => $errors]);
+    $next = ($fatal === null && $i < $total) ? $i : null;
+    $commit = null; $pushed = 0;
+    if ($next === null && $fatal === null && $state['blobs']) {
+        $res = cmsGhCommitStaged($repo, $branch, $token, $state, 'Fourge: sync ' . count($state['blobs']) . ' file' . (count($state['blobs']) === 1 ? '' : 's') . ' to GitHub');
+        if (!empty($res['ok'])) { $commit = (string)$res['sha']; $pushed = (int)$res['count']; }
+        else { $state['failed'] += count($state['blobs']); array_unshift($state['errors'], 'Commit: ' . ($res['error'] ?? 'GitHub refused the commit')); $state['errors'] = array_slice($state['errors'], 0, 12); }
+    }
+    if ($next === null) cmsGhSyncStateClear();
+    elseif (!cmsGhSyncStateWrite($state)) {
+        // Without the staged list the next batch cannot continue; say so rather than letting the client restart forever.
+        echo json_encode(['ok' => false, 'reason' => 'state', 'error' => 'The sync could not save its progress (admin/gh-sync-state.php is not writable), so the ' . count($state['blobs']) . ' file(s) staged so far were not committed. Make admin/ writable and run it again.']); return;
+    }
+    echo json_encode(['ok' => true, 'run' => $state['run'], 'total' => $total, 'done' => $i, 'next' => $next,
+                      'staged' => $commit !== null ? 0 : count($state['blobs']), 'pushed' => $pushed, 'upToDate' => $state['upToDate'], 'failed' => $state['failed'], 'skipped' => $state['skipped'],
+                      'errors' => $state['errors'], 'commit' => $commit, 'tokenExpires' => $state['tokenExpires'] ?? '',
+                      'fatal' => $fatal ? ['reason' => $fatal['reason'], 'error' => $fatal['error']] : null]);
+}
+
+// ── EVERY SAVE MIRRORS ───────────────────────────────────────────────────────
+// Server-side writers (the .htaccess blocks, the page gate, synced blog media,
+// reviews, SEO stamps, robots/llms, package data) used to write straight to
+// disk and reach GitHub only through the daily backfill. They go through here
+// now: write, then mirror when the bytes actually changed — within a 20 s
+// budget per request, so a slow GitHub can never stall a sign-in or a save;
+// whatever is left over is picked up by the next backfill. Returns exactly what
+// file_put_contents would (bytes written, or false), and a mirror problem never
+// fails the write.
+function fourgeSitePut($abs, $bytes, $msg = '') {
+    $bytes = (string)$bytes;
+    $prev = is_file($abs) ? @file_get_contents($abs) : null;
+    $r = @file_put_contents($abs, $bytes);
+    if ($r === false) return false;
+    if ($prev === $bytes) return $r;
+    fourgeMirrorLater($abs, $bytes, $msg);
+    return $r;
+}
+function fourgeMirrorLater($abs, $bytes, $msg = '') {
+    static $spent = 0.0;
+    if ($spent > 20.0) return ['ok' => false, 'reason' => 'deferred'];
+    $t = microtime(true);
+    try {
+        $rel = cmsGhRelPath($abs);
+        if (!cmsGhShouldMirror($rel)) return ['ok' => false, 'reason' => 'excluded'];
+        $res = cmsGhMirrorBytes($rel, $bytes, $msg !== '' ? $msg . ' (' . $rel . ')' : 'Fourge: update ' . $rel);
+    } catch (Throwable $e) { $res = ['ok' => false, 'reason' => 'error', 'error' => $e->getMessage()]; }
+    $spent += microtime(true) - $t;
+    return $res;
 }
 
 // Validate token + location with a lightweight read. Returns [bool ok, string message].
@@ -1975,7 +2187,7 @@ HT;
     } else {
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // data/entries.json holds every submitted lead (name/email/phone/message, and
 // now file-upload paths) — unlike pages/posts/site.json, no legitimate visitor
@@ -2007,7 +2219,7 @@ HT;
     } else {
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // Extensions allowed through a form's File Upload field — common document/
 // image types a lead-gen form realistically needs (resumes, photos, quotes).
@@ -2850,7 +3062,7 @@ button:hover{background:#b0481a}.err{background:#fceae6;color:#b3261e;border:1px
 </form>
 </div></body></html>
 GATE;
-    return file_put_contents(PUBLIC_HTML . '/_fourge_gate.php', $src) !== false;
+    return fourgeSitePut(PUBLIC_HTML . '/_fourge_gate.php', $src, 'Fourge: page gate') !== false;
 }
 function fourgeWriteProtectHtaccess($paths) {
     $htPath  = PUBLIC_HTML . '/.htaccess';
@@ -2872,7 +3084,7 @@ function fourgeWriteProtectHtaccess($paths) {
     } else {
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // Clean URLs: serve /page from /page.html and 301 the .html form away, so each
 // page has one extensionless address. Managed as its own delimited block so it
@@ -2916,7 +3128,7 @@ HT;
     } else {
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // ── BROWSER CACHING, MANAGED ──────────────────────────────────────────────────
 // Without an explicit policy Apache sends only Last-Modified, and browsers then
@@ -3016,7 +3228,7 @@ function fourgeWriteCacheHtaccess() {
     $existing = is_file($htPath) ? file_get_contents($htPath) : '';
     $out = fourgeCacheHtaccessApply($existing);
     if ($out === null) return true;   // already exactly in place — nothing to write
-    return file_put_contents($htPath, $out) !== false;
+    return fourgeSitePut($htPath, $out, 'Fourge: server rules') !== false;
 }
 // data/posts.json is the site's public blog feed (the same file every blog
 // page already fetches). This opens it to CROSS-ORIGIN reads so other sites —
@@ -3048,7 +3260,7 @@ HT;
     } else {
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // The 44i SEO platform posts deploy packages to the documented pretty paths
 // /api/seo-platform/package and /api/seo-platform/tick. Apache rewrites them
@@ -3079,7 +3291,7 @@ HT;
         if ($cu !== false) $existing = substr($existing, 0, $cu) . $block . "\n\n" . substr($existing, $cu);
         else $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // ── BLOG SYNC: partner-site syndication ─────────────────────────────────────
 // Copies every post from a source Fourge site (e.g. 44idigital.com blogging
@@ -3130,7 +3342,7 @@ HT;
         if ($cu !== false) $existing = substr($existing, 0, $cu) . $block . "\n\n" . substr($existing, $cu);
         else $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 function fourgeBlogSyncUid() {
     // Mirrors the client's uid(): Math.random().toString(36).slice(2,9) — a
@@ -3341,7 +3553,7 @@ function fourgeBlogSyncDownloadMedia($absUrl) {
     if ($type !== '' && !preg_match('~^(image|video|audio)/|octet-stream~', $type) && !($isSvg && strpos($type, 'svg') !== false)) return null;
     $dir = dirname($dest);
     if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return null;
-    if (@file_put_contents($dest, $body) === false) return null;
+    if (fourgeSitePut($dest, $body, 'Fourge: blog sync media') === false) return null;
     return '/' . $rel;
 }
 // Rewrite one post's media references through $localize(absoluteSourceUrl) →
@@ -4065,7 +4277,7 @@ function fourgeReviewsLoad() {
 function fourgeReviewsSave($data) {
     $dir = PUBLIC_HTML . '/data';
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
-    return @file_put_contents(fourgeReviewsPath(), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) !== false;
+    return fourgeSitePut(fourgeReviewsPath(), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: reviews') !== false;
 }
 // A review has no stable id in the legacy Places response, so identity is a hash
 // of the things that cannot change for a given review: who wrote it, when, and
@@ -4622,7 +4834,7 @@ function fourgeWriteIndexingHtaccess() {
     // The alternate robots file the rule above serves on non-production hosts.
     $nonProd = PUBLIC_HTML . '/_fourge_robots_nonprod.txt';
     if (!is_file($nonProd)) {
-        @file_put_contents($nonProd, "# Served only on non-production hosts (see the Fourge Indexing block in .htaccess).\nUser-agent: *\nDisallow: /\n");
+        fourgeSitePut($nonProd, "# Served only on non-production hosts (see the Fourge Indexing block in .htaccess).\nUser-agent: *\nDisallow: /\n", 'Fourge: server rules');
     }
     return cmsPkgSpliceHtaccess('# BEGIN Fourge Indexing', '# END Fourge Indexing', implode("\n", $L));
 }
@@ -4660,7 +4872,7 @@ HT;
     } else {
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // Prove it, rather than assume it. A deny rule in .htaccess does NOTHING on a
 // host configured with AllowOverride None, and that failure is completely
@@ -4843,7 +5055,7 @@ function fourgeEnsureLlms($force = false) {
     }
     $body = fourgeLlmsFallback();
     if ($body === '') return false;
-    return @file_put_contents($f, FOURGE_LLMS_MARK . "\n" . $body) !== false;
+    return fourgeSitePut($f, FOURGE_LLMS_MARK . "\n" . $body, 'Fourge: llms.txt') !== false;
 }
 // ── AI AUTO-FIX ─────────────────────────────────────────────────────────────
 // Fills the gaps an audit grades — SEO titles, meta descriptions, image alt
@@ -5141,7 +5353,7 @@ function fourgeAiAutofix($opts = []) {
             // exactly this: title, description, canonical, robots, OG, Twitter.
             cmsPkgBackup($file);
             $canon = cmsPkgPageUrl($baseUrl, $file);
-            @file_put_contents($abs, cmsPkgStampSeo($html, $cur, $canon, !empty($rec['draft'])));
+            fourgeSitePut($abs, cmsPkgStampSeo($html, $cur, $canon, !empty($rec['draft'])), 'Fourge: AI auto-fix');
         }
         $rep['metas'][] = ['page' => (string)($rec['title'] ?? $pid), 'wrote' => implode(' + ', $wrote),
                            'was' => ($needT && ($cur['title'] ?? '') !== '' ? 'weak/missing' : 'missing')];
@@ -5195,7 +5407,7 @@ function fourgeAiAutofix($opts = []) {
             return preg_replace('~^<img\b~i', '<img alt="' . htmlspecialchars($alt, ENT_QUOTES, 'UTF-8') . '"', $m[0], 1);
         }, $html);
         if ($next !== null && $next !== $html && $filled > 0) {
-            if (!$dry) { cmsPkgBackup($file); @file_put_contents($abs, $next); $altDone[$pid] = md5($next); }
+            if (!$dry) { cmsPkgBackup($file); fourgeSitePut($abs, $next, 'Fourge: AI auto-fix'); $altDone[$pid] = md5($next); }
             $rep['alts'][] = ['page' => (string)($rec['title'] ?? $pid), 'images' => $filled];
             $done++;
         } else {
@@ -5231,7 +5443,7 @@ function fourgeAiAutofix($opts = []) {
                 $newInner = fourgeAiLinkKeyword($mm[2], $t['kw'], $t['url']);
                 if ($newInner === null) continue;
                 $next = str_replace($mm[0], $mm[1] . $newInner . $mm[3], $dhtml);
-                if (!$dry) { cmsPkgBackup($dfile); @file_put_contents($dabs, $next); }
+                if (!$dry) { cmsPkgBackup($dfile); fourgeSitePut($dabs, $next, 'Fourge: AI auto-fix'); }
                 $rep['links'][] = ['from' => (string)($drec['title'] ?? $did), 'to' => $t['title'], 'keyword' => $t['kw']];
                 $linked++;
                 break;                                          // one inbound link per target per run
@@ -5295,7 +5507,7 @@ function fourgeAiAutofix($opts = []) {
             // schema graph FROM this same aeoFAQs data) cleanly replaces it
             // instead of ending up with two FAQPage blocks.
             cmsPkgBackup($file);
-            @file_put_contents($abs, fourgeAeoStampFaq($html, $faqs));
+            fourgeSitePut($abs, fourgeAeoStampFaq($html, $faqs), 'Fourge: AI auto-fix');
         }
         $rep['aeo'][] = ['page' => (string)($rec['title'] ?? $pid), 'faqs' => count($faqs)];
         $aeoDone++;
@@ -5443,7 +5655,7 @@ function cmsPkgReadJson($name, $fallback) {
 function cmsPkgWriteJson($name, $data) {
     $dir = PUBLIC_HTML . '/data';
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
-    return @file_put_contents(cmsPkgDataPath($name), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) !== false;
+    return fourgeSitePut(cmsPkgDataPath($name), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), 'Fourge: SEO package data') !== false;
 }
 // One-generation backup of any existing file we are about to overwrite.
 function cmsPkgBackup($relPath) {
@@ -5622,7 +5834,7 @@ function cmsPkgSpliceHtaccess($begin, $end, $rules) {
         if ($cu !== false) $existing = substr($existing, 0, $cu) . $block . "\n\n" . substr($existing, $cu);
         else $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
-    return file_put_contents($htPath, $existing) !== false;
+    return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
 }
 // A redirect rule is only accepted when both sides are safe to place in a
 // server config: constrained source path charset, absolute-or-rooted target,
@@ -5947,13 +6159,13 @@ function cmsPkgApply($pkg, $dry) {
             $g['robotsTxt'] = $robots; $seo['__site'] = $g;
             $out = $robots;
             if ($baseUrl !== '' && !preg_match('~^sitemap:~im', $out)) $out .= "\nSitemap: " . $baseUrl . '/sitemap.xml';
-            if (!$dry) { cmsPkgBackup('robots.txt'); @file_put_contents(PUBLIC_HTML . '/robots.txt', $out . "\n"); }
+            if (!$dry) { cmsPkgBackup('robots.txt'); fourgeSitePut(PUBLIC_HTML . '/robots.txt', $out . "\n", 'Fourge: SEO package'); }
             $add('robots_txt', '/robots.txt', 'served, Sitemap line preserved');
         }
     }
     $llms = trim((string)($sf['llms_txt'] ?? ''));
     if ($llms !== '') {
-        if (!$dry) { cmsPkgBackup('llms.txt'); @file_put_contents(PUBLIC_HTML . '/llms.txt', $llms . "\n"); }
+        if (!$dry) { cmsPkgBackup('llms.txt'); fourgeSitePut(PUBLIC_HTML . '/llms.txt', $llms . "\n", 'Fourge: SEO package'); }
         $add('llms_txt', '/llms.txt', strlen($llms) . ' bytes');
     }
     if (trim((string)($sf['sitemap_xml'] ?? '')) !== '') {
@@ -6166,7 +6378,7 @@ function cmsPkgApply($pkg, $dry) {
             if (!$dry) {
                 cmsPkgBackup($file);
                 $canon = cmsPkgPageUrl($baseUrl, $file);   // URL emitter, not the match key
-                @file_put_contents(PUBLIC_HTML . '/' . $file, cmsPkgStampSeo($html, $seo[$pid], $canon, $rec['draft']));
+                fourgeSitePut(PUBLIC_HTML . '/' . $file, cmsPkgStampSeo($html, $seo[$pid], $canon, $rec['draft']), 'Fourge: SEO package');
                 $pages[$pid] = $rec;
             } else { $pages[$pid] = $rec; }
             $add('content_page', $title, ($isNew ? 'created ' : 'updated ') . $file . ($noteBits ? ' — ' . implode('; ', $noteBits) : ''));
@@ -6240,7 +6452,7 @@ function cmsPkgApply($pkg, $dry) {
         $canon = cmsPkgPageUrl($baseUrl, $file);   // URL emitter, not the match key
         $next = cmsPkgStampSeo($html, $seo[$pid], $canon, !empty($rec['draft']));
         if ($next === $html) continue;
-        if (!$dry) { cmsPkgBackup($file); @file_put_contents($abs, $next); }
+        if (!$dry) { cmsPkgBackup($file); fourgeSitePut($abs, $next, 'Fourge: SEO package'); }
     }
 
     if (!$dry) {
@@ -6348,7 +6560,7 @@ function cmsPkgPublishAll($dry = false) {
                     cmsPkgBackup($file);
                     $canon = cmsPkgPageUrl($baseUrl, $file);
                     $srec  = is_array($seo[$pid] ?? null) ? $seo[$pid] : [];
-                    @file_put_contents($full, cmsPkgStampSeo($html, $srec, $canon, false));
+                    fourgeSitePut($full, cmsPkgStampSeo($html, $srec, $canon, false), 'Fourge: SEO package');
                 }
             }
         }
@@ -6490,7 +6702,7 @@ function fourgeApiRepoFetch($me, $body) {
     try { $pat = fourgeGetSecret(fourgeDb(), 'github_pat'); } catch (Throwable $e) { $pat = null; }
     $patNote = ' No GitHub token is saved (Settings → GitHub), which a private repo needs.';
     if ($pat) {
-        $api = "https://api.github.com/repos/{$repo}/contents/" . $path . '?ref=' . rawurlencode($branch);
+        $api = cmsGhBase() . "/repos/{$repo}/contents/" . $path . '?ref=' . rawurlencode($branch);
         $ch  = curl_init($api);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
