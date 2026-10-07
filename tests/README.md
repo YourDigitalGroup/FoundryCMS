@@ -22,8 +22,8 @@ browser suites never depend on the CDN.
 | Step | What | Where |
 |---|---|---|
 | Browser suites | Headless Chromium drives the **real** `admin/index.html`; `apiCall`, `toast` and `ghMirror` are stubbed with an in-memory file store, `data/*.json` answered inline, third-party requests aborted | `browser/*.mjs` |
-| PHP suites | Functions lifted out of `admin/api.php` by name and run on their own (no dispatcher, no server): currently the managed browser-caching block (`htaccess_cache.php`) | `api/*.php` |
-| Dispatcher end to end | A throwaway copy of the site with its own `config.secret.php` and SQLite DB, served by `php -S` on port 8932 with `display_errors` on; a real login, one request per action, every response must be valid JSON, and the server log must stay free of PHP notices | `api/e2e_dispatcher.sh` |
+| PHP suites | Functions lifted out of `admin/api.php` by name and run on their own (no dispatcher, no server): the managed browser-caching block (`htaccess_cache.php`) and the GitHub client — failure explanations, `[skip ci]`, the mirroring writer `fourgeSitePut` (`gh_client.php`) | `api/*.php` |
+| Dispatcher end to end | A throwaway copy of the site with its own `config.secret.php` and SQLite DB, served by `php -S` on port 8932 with `display_errors` on; a real login, one request per action, every response must be valid JSON, and the server log must stay free of PHP notices GitHub is a stub `php -S` on port 8934 (`lib/gh_stub.php`: `/user` with the token-expiry header, the repo, the Git Data API and the Contents API; modes `ok` / `401` / `ratelimit` / `notfound`, every request logged), reached through `FOURGE_GH_API_BASE`, so the one-commit sync, `[skip ci]`, fail-fast on a rejected token and the server-side writers' mirroring are proven request by request | `api/e2e_dispatcher.sh`, `lib/gh_stub.php` |
 | Static checks | `php -l admin/api.php`; every inline `<script>` in the admin parses; `version.json` = `CMS_VERSION` = `FOURGE_API_VERSION` | `run.sh` |
 
 ### Browser suites
@@ -39,6 +39,7 @@ browser suites never depend on the CDN.
 | `site_css.mjs` | 1.14.138: Site CSS — every stylesheet on the site listed (site-wide, files + @imports, page blocks), live preview, each save path, drift refusal, filter, Save all, close guard |
 | `site_identity.mjs` | 1.14.135: Site Name / Website URL detected from the site (og:site_name → structured data → logo alt → title suffix → domain; canonical → og:url), Design-tab fill, sign-in fill |
 | `ui_dialogs.mjs` | 1.14.137: no bare `confirm(`/`prompt(`/`alert(` in the admin or the fleet dashboard; `uiConfirm`/`uiPrompt`/`uiAlert` behaviour incl. Enter/Esc; a converted call site end to end |
+| `github_sync.mjs` | GitHub sync in the admin: the one-commit run protocol (cumulative counts, run id handed back, one restart), the older per-batch protocol summed, a rejected token reported in one sentence, an api.php without `gh_sync_all` reported as out of date with the install button and the api banner, Test Connection via `gh_test` with the token expiry on the Settings line (red inside two weeks), the daily tick's expiry warning, `[skip ci]` on browser-side commits |
 
 Each suite prints one `ok`/`FAIL` line per assertion and exits non-zero on any failure; `run.sh` exits non-zero if anything failed.
 
