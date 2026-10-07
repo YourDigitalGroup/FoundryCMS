@@ -22,6 +22,7 @@ browser suites never depend on the CDN.
 | Step | What | Where |
 |---|---|---|
 | Browser suites | Headless Chromium drives the **real** `admin/index.html`; `apiCall`, `toast` and `ghMirror` are stubbed with an in-memory file store, `data/*.json` answered inline, third-party requests aborted | `browser/*.mjs` |
+| PHP suites | Functions lifted out of `admin/api.php` by name and run on their own (no dispatcher, no server): currently the managed browser-caching block (`htaccess_cache.php`) | `api/*.php` |
 | Dispatcher end to end | A throwaway copy of the site with its own `config.secret.php` and SQLite DB, served by `php -S` on port 8932 with `display_errors` on; a real login, one request per action, every response must be valid JSON, and the server log must stay free of PHP notices | `api/e2e_dispatcher.sh` |
 | Static checks | `php -l admin/api.php`; every inline `<script>` in the admin parses; `version.json` = `CMS_VERSION` = `FOURGE_API_VERSION` | `run.sh` |
 
@@ -33,7 +34,9 @@ browser suites never depend on the CDN.
 | `code_editor.mjs` | 1.14.137: line-number click / shift-click selection, active line, ⌘/Ctrl+F in-editor search finding off-screen matches, Esc, document-level routing of the shortcut |
 | `element_css.mjs` | 1.14.137: Element CSS — every rule that applies to a selected element (inline, `<style>` blocks, `.css` files, @media/state/pseudo variants, editor overrides, engine read-only, inherited), surgical textual edits, file save with backup and drift refusal, bridge overrides, Add-a-rule, Revert. Loads `fixtures/elcss/` through the normal Pages flow |
 | `find_replace.mjs` | 1.14.136: site-wide Find & Replace — text vs. everything scope, match case, whole word, case-preserving replacement, JSON identifier skipping, backups, sitemap/robots rebuild |
+| `panels.mjs` | 1.14.139: every panel lives inside `.main` and fills it when opened, every modal opens centred, no errors — the guard against the stray-div layout break |
 | `media_dnd.mjs` | 1.14.137: drop files on the Media panel → upload, overlay, type filter, swallowing drops elsewhere, ignoring non-file drags |
+| `site_css.mjs` | 1.14.138: Site CSS — every stylesheet on the site listed (site-wide, files + @imports, page blocks), live preview, each save path, drift refusal, filter, Save all, close guard |
 | `site_identity.mjs` | 1.14.135: Site Name / Website URL detected from the site (og:site_name → structured data → logo alt → title suffix → domain; canonical → og:url), Design-tab fill, sign-in fill |
 | `ui_dialogs.mjs` | 1.14.137: no bare `confirm(`/`prompt(`/`alert(` in the admin or the fleet dashboard; `uiConfirm`/`uiPrompt`/`uiAlert` behaviour incl. Enter/Esc; a converted call site end to end |
 
