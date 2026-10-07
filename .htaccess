@@ -46,3 +46,17 @@
   RewriteCond %{REQUEST_FILENAME}\.html -f
   RewriteRule ^(.+?)/?$ $1.html [L]
 </IfModule>
+
+# BEGIN Fourge cache headers — managed by Fourge, do not edit by hand
+# Pages, styles, scripts and data aren't versioned in their filenames, so browsers revalidate them on every
+# load. When nothing changed, Apache answers 304 Not Modified, so this stays fast. Images and fonts are
+# kept for a day.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html?|css|js|json)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(jpe?g|png|gif|webp|svg|ico|woff2?)$">
+    Header set Cache-Control "public, max-age=86400"
+  </FilesMatch>
+</IfModule>
+# END Fourge cache headers

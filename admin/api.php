@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.139');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.140');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -2918,6 +2918,106 @@ HT;
     }
     return file_put_contents($htPath, $existing) !== false;
 }
+// ── BROWSER CACHING, MANAGED ──────────────────────────────────────────────────
+// Without an explicit policy Apache sends only Last-Modified, and browsers then
+// GUESS how long to keep a file (roughly 10% of its age). A site.js last changed
+// months ago could be served from cache for weeks, so deploys and CMS edits
+// looked like they "didn't take" until a hard refresh (dev.renewalsf.fourge.com,
+// Oct 2026). Pages, styles, scripts and data carry no version in their file
+// names, so browsers must revalidate them on every load — Apache answers 304
+// Not Modified when nothing changed, so this stays fast; images and fonts are
+// kept for a day. Marker-spliced like every other managed block, and wrapped in
+// <IfModule mod_headers.c> so a host without mod_headers simply skips it. A
+// hand-written, unmarked block that already sets Cache-Control for these file
+// types (renewalsf had one) is swapped for the marked version, never duplicated.
+// Runs on every sign-in with the clean-URL self-heal, so existing sites pick it
+// up at their next login; new sites carry it in the template .htaccess.
+function fourgeCacheHtMarkers() {
+    return ['# BEGIN Fourge cache headers — managed by Fourge, do not edit by hand', '# END Fourge cache headers'];
+}
+function fourgeCacheHtaccessBlock() {
+    list($begin, $end) = fourgeCacheHtMarkers();
+    $rules = <<<'HT'
+# Pages, styles, scripts and data aren't versioned in their filenames, so browsers revalidate them on every
+# load. When nothing changed, Apache answers 304 Not Modified, so this stays fast. Images and fonts are
+# kept for a day.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html?|css|js|json)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(jpe?g|png|gif|webp|svg|ico|woff2?)$">
+    Header set Cache-Control "public, max-age=86400"
+  </FilesMatch>
+</IfModule>
+HT;
+    return $begin . "\n" . $rules . "\n" . $end;
+}
+// [from, to] offsets of a hand-written cache block — outside every Fourge marker
+// pair — that sets Cache-Control for these file types, or null. The comment lines
+// directly above it come along, so the swap leaves no orphaned heading behind.
+function fourgeCacheHtaccessFindUnmarked($text) {
+    $text = (string)$text;
+    // Blank out every managed block (same length, so offsets still point into $text).
+    $masked = preg_replace_callback('~# BEGIN Fourge[^\n]*\n.*?# END Fourge[^\n]*~s', function ($m) { return str_repeat(' ', strlen($m[0])); }, $text);
+    if ($masked === null) $masked = $text;
+    $isCache = function ($inner) {
+        return stripos($inner, 'Cache-Control') !== false
+            && stripos($inner, '<FilesMatch') !== false
+            && preg_match('~\b(html?|css|js|json|jpe?g|png|gif|webp|svg|ico|woff2?)\b~i', $inner);
+    };
+    $from = null; $to = null; $mm = [];
+    if (preg_match_all('~<IfModule\s+mod_headers\.c>.*?</IfModule>~is', $masked, $mm, PREG_OFFSET_CAPTURE)) {
+        foreach ($mm[0] as $hit) { if ($isCache($hit[0])) { $from = $hit[1]; $to = $hit[1] + strlen($hit[0]); break; } }
+    }
+    if ($from === null && preg_match_all('~<FilesMatch\b[^>]*>.*?</FilesMatch>~is', $masked, $mm, PREG_OFFSET_CAPTURE)) {
+        // Bare blocks (no IfModule): the run of consecutive cache blocks, comments allowed between them.
+        $run = [];
+        foreach ($mm[0] as $hit) {
+            if (!$isCache($hit[0])) { if ($run) break; continue; }
+            if ($run) {
+                $prevEnd = $run[count($run) - 1][1];
+                $gap = preg_replace('~^[ \t]*#[^\n]*$~m', '', substr($masked, $prevEnd, $hit[1] - $prevEnd));
+                if (trim((string)$gap) !== '') break;
+            }
+            $run[] = [$hit[1], $hit[1] + strlen($hit[0])];
+        }
+        if ($run) { $from = $run[0][0]; $to = $run[count($run) - 1][1]; }
+    }
+    if ($from === null) return null;
+    $before = substr($text, 0, $from);
+    if (preg_match('~(?:^|\n)((?:[ \t]*#[^\n]*\n)+)[ \t]*$~', $before, $cm, PREG_OFFSET_CAPTURE)) $from = $cm[1][1];
+    return [$from, $to];
+}
+// Pure: the .htaccess text with the managed block in place — or null when it is
+// already there, byte for byte (so the writer leaves the file untouched).
+function fourgeCacheHtaccessApply($existing) {
+    $existing = (string)$existing;
+    list($begin, $end) = fourgeCacheHtMarkers();
+    $block = fourgeCacheHtaccessBlock();
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) {
+        $out = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+        return $out === $existing ? null : $out;
+    }
+    $span = fourgeCacheHtaccessFindUnmarked($existing);
+    if ($span) return substr($existing, 0, $span[0]) . $block . substr($existing, $span[1]);
+    // New block: right after the clean-URL block when there is one (the template
+    // keeps the two together); headers do not care about rewrite order.
+    $cuEnd = strpos($existing, '# END Fourge Clean URLs');
+    if ($cuEnd !== false) {
+        $at = $cuEnd + strlen('# END Fourge Clean URLs');
+        return substr($existing, 0, $at) . "\n\n" . $block . substr($existing, $at);
+    }
+    return ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+}
+function fourgeWriteCacheHtaccess() {
+    $htPath   = PUBLIC_HTML . '/.htaccess';
+    $existing = is_file($htPath) ? file_get_contents($htPath) : '';
+    $out = fourgeCacheHtaccessApply($existing);
+    if ($out === null) return true;   // already exactly in place — nothing to write
+    return file_put_contents($htPath, $out) !== false;
+}
 // data/posts.json is the site's public blog feed (the same file every blog
 // page already fetches). This opens it to CROSS-ORIGIN reads so other sites —
 // e.g. white-label group sites syndicating the flagship blog — can render it
@@ -5257,11 +5357,12 @@ function fourgeApiInstallCleanUrls($me) {
         echo json_encode(['error' => 'Could not write .htaccess (check that the site root is writable by PHP)']);
         return;
     }
-    // Best-effort riders on the same login self-heal: open the public posts feed
-    // to cross-site reads, install the SEO-platform endpoints, and publish any
-    // scheduled deploy-package content that has come due. None of these can
-    // fail the clean-URL install.
-    $cors = false; $seoApi = false; $idx = false; $due = [];
+    // Best-effort riders on the same login self-heal: the browser-caching policy,
+    // open the public posts feed to cross-site reads, install the SEO-platform
+    // endpoints, and publish any scheduled deploy-package content that has come
+    // due. None of these can fail the clean-URL install.
+    $cache = false; $cors = false; $seoApi = false; $idx = false; $due = [];
+    try { $cache  = fourgeWriteCacheHtaccess();    } catch (Throwable $e) { $cache = false; }
     try { $cors   = fourgeWritePostsCorsHtaccess(); } catch (Throwable $e) { $cors = false; }
     try { $seoApi = fourgeWriteSeoApiHtaccess();    } catch (Throwable $e) { $seoApi = false; }
     try { $idx    = fourgeWriteIndexingHtaccess(); } catch (Throwable $e) { $idx = false; }
@@ -5290,7 +5391,7 @@ function fourgeApiInstallCleanUrls($me) {
     $blogSyncApi = false; $blogSync = null;
     try { $blogSyncApi = fourgeWriteBlogSyncApiHtaccess(); } catch (Throwable $e) { $blogSyncApi = false; }
     try { $blogSync     = fourgeBlogSyncTickIfDue();       } catch (Throwable $e) { $blogSync = null; }
-    echo json_encode(['ok' => true, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
+    echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
         'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
         'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard]);

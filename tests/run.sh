@@ -52,6 +52,9 @@ done
 # 5. the real api.php dispatcher, end to end
 bash "$HERE/api/e2e_dispatcher.sh" || overall=1
 
+# 5b. pure PHP suites lifted out of api.php (no dispatcher, no server)
+for f in "$HERE"/api/*.php; do echo "=== $(basename "$f") ==="; php "$f" || overall=1; echo; done
+
 # 6. static checks
 php -l "$ROOT/admin/api.php" || overall=1
 node -e "

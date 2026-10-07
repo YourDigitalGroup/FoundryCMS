@@ -40,6 +40,24 @@ V=$(python3 -c "import json;print(json.load(open('$SRC/admin/version.json'))['ve
 printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('api_version')=='$V' and d.get('version')=='$V', d" && chk 0 "ping reports api_version $V (1.14.136: the sign-in stale-api check reads this)" || chk 1 "ping api_version — got: $LAST"
 call "session" '{"action":"session"}'
 call "install_clean_urls (login self-heal chain: htaccess, blog sync tick…)" '{"action":"install_clean_urls"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("cacheHeaders") is True, d' && chk 0 "install_clean_urls reports cacheHeaders:true (the managed browser-caching block)" || chk 1 "cacheHeaders — got: $(printf '%s' "$LAST" | head -c 200)"
+HT="$S/.htaccess"
+grep -q '^# BEGIN Fourge cache headers' "$HT" && grep -q '^# END Fourge cache headers' "$HT" && [ "$(grep -c '^# BEGIN Fourge cache headers' "$HT")" = 1 ] && chk 0 ".htaccess carries exactly one managed cache block after sign-in" || chk 1 "cache block markers in .htaccess: $(grep -c 'Fourge cache headers' "$HT")"
+python3 - "$HT" <<'PY' && chk 0 "the block sets no-cache for html/css/js/json and a day for images/fonts, inside <IfModule mod_headers.c>" || chk 1 "cache block content"
+import re,sys; t=open(sys.argv[1]).read(); b=t[t.index('# BEGIN Fourge cache headers'):t.index('# END Fourge cache headers')]
+assert '<IfModule mod_headers.c>' in b and '</IfModule>' in b
+assert re.search(r'<FilesMatch "\\\.\(html\?\|css\|js\|json\)\$">\s*Header set Cache-Control "no-cache"', b), b
+assert re.search(r'<FilesMatch "\\\.\(jpe\?g\|png\|gif\|webp\|svg\|ico\|woff2\?\)\$">\s*Header set Cache-Control "public, max-age=86400"', b), b
+PY
+M1=$(md5sum "$HT" | cut -d' ' -f1)
+call "install_clean_urls again (idempotent)" '{"action":"install_clean_urls"}'
+[ "$(md5sum "$HT" | cut -d' ' -f1)" = "$M1" ] && chk 0 "running the self-heal twice leaves .htaccess byte-identical" || chk 1 ".htaccess changed on the second run"
+printf '<html><head><title>gate</title></head><body>secret</body></html>' > "$S/e2e-gate.html"
+call "set_page_password ON (password gate writes its own .htaccess block)" '{"action":"set_page_password","path":"e2e-gate.html","password":"hunter22"}'
+grep -q '^# BEGIN Fourge cache headers' "$HT" && [ "$(grep -c '^# BEGIN Fourge cache headers' "$HT")" = 1 ] && grep -q '_fourge_gate.php?p=e2e-gate.html' "$HT" && chk 0 "password gate ON: its rule is in, the cache block is still there once" || chk 1 "gate ON clobbered the cache block"
+call "set_page_password OFF" '{"action":"set_page_password","path":"e2e-gate.html","password":""}'
+grep -q '^# BEGIN Fourge cache headers' "$HT" && [ "$(grep -c '^# BEGIN Fourge cache headers' "$HT")" = 1 ] && ! grep -q 'e2e-gate.html' "$HT" && chk 0 "password gate OFF: its rule is gone, the cache block is still there once" || chk 1 "gate OFF clobbered the cache block"
+rm -f "$S/e2e-gate.html" "$S/_fourge_gate.php"
 printf '<html><head><title>E2E list</title></head><body><div data-fourge-posts></div></body></html>' > "$S/e2e-postlist.html"; printf '<html><head><title>E2E plain</title></head><body>plain</body></html>' > "$S/e2e-plain.html"; rm -f "$S/posts.html"
 call "list_pages" '{"action":"list_pages"}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("postsHtml") is False; m={p["path"]:p for p in d["pages"]}; assert m["e2e-postlist.html"]["has_post_list"] is True and m["e2e-plain.html"]["has_post_list"] is False' && chk 0 "list_pages reports postsHtml and has_post_list" || chk 1 "list_pages keys — got: $(printf '%s' "$LAST" | head -c 300)"
