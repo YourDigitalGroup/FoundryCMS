@@ -115,4 +115,44 @@ const w = await p.evaluate(async () => {
 chk(w.seen.length === 2 && w.seen[0].body.message === 'Fourge: add page "x" [skip ci]' && w.seen[1].body.message === 'Fourge: upload a.png [skip ci]', 'ghWrite/ghBin commit messages end with [skip ci] — ' + JSON.stringify(w.seen.map(s => s.body && s.body.message)));
 chk(w.skip[0] === 'Fourge: x [skip ci]' && w.skip[1] === 'Fourge: x [skip ci]' && w.skip[2] === 'Fourge: update [skip ci]', 'ghSkipCi adds the marker once and gives an empty message a default');
 
+// 9. who sees it (1.14.142): Super Admins and the Architect get the GitHub Sync card (sync + Test Connection); only the Architect sees the token card
+const vis = (user) => p.evaluate((user) => {
+  localStorage.setItem('cd_user', JSON.stringify(user));
+  applyRole();
+  const d = id => getComputedStyle(document.getElementById(id)).display;
+  return { sync: d('s-gh-sync-card'), token: d('s-gh-token-card'), btn: !!document.getElementById('s-gh-sync-btn') };
+}, user);
+let v = await vis({ username: 'erik@example.com', role: 'superadmin' });
+chk(v.sync !== 'none' && v.token === 'none' && v.btn, 'a Super Admin sees the GitHub Sync card (Sync Now + Test Connection) but not the token card — ' + JSON.stringify(v));
+v = await vis({ username: 'ann@example.com', role: 'admin' });
+chk(v.sync === 'none' && v.token === 'none', 'an Admin sees neither card (the daily automatic sync still runs for them)');
+v = await vis({ username: 'ed@example.com', role: 'editor' });
+chk(v.sync === 'none' && v.token === 'none', 'an Editor sees neither');
+v = await vis({ username: 'scott@44interactive.com', role: 'superadmin' });
+chk(v.sync !== 'none' && v.token !== 'none', 'the Architect sees both');
+
+// 10. a Super Admin's browser holds no token and no repo override — the sync and the test still run, through the server
+const sa = await p.evaluate(async () => {
+  localStorage.setItem('cd_user', JSON.stringify({ username: 'erik@example.com', role: 'superadmin' })); applyRole();
+  _site.github = {}; _secrets = {}; _secretStatus = {};   // nothing GitHub-related reaches this browser
+  _ghRepoSeen = ''; _ghTokenExpires = '';                 // and nothing remembered from the earlier scenarios
+  window.__toasts.length = 0; window.__calls.length = 0;
+  ghShowTokenInfo(null); const info0 = document.getElementById('s-repo-info').textContent;
+  window.__gh.sync = [{ ok: true, run: 'r5', repo: 'org/site', total: 2, done: 2, next: null, staged: 0, pushed: 1, upToDate: 1, failed: 0, skipped: 0, errors: [], commit: 'fedcba9876543210' }];
+  window.__gh.priv = { ok: true, already: true };
+  await ghSyncNow();
+  const status = document.getElementById('s-gh-sync-status').textContent;
+  ghShowTokenInfo(null); const info1 = document.getElementById('s-repo-info').textContent;
+  window.__gh.test = { ok: true, login: 'octo', repo: 'org/site', branch: 'main', private: true, canPush: true, expires: '', scopes: '' };
+  await testGH(); const info2 = document.getElementById('s-repo-info').textContent;
+  window.__gh.test = { ok: false, reason: 'no_token', error: 'No GitHub token is saved yet.' };
+  await testGH(); const info3 = document.getElementById('s-repo-info').textContent;
+  return { info0, status, info1, info2, info3, calls: window.__calls.map(c => c.action), toasts: window.__toasts.slice() };
+});
+chk(/Repo: set on the server — Test Connection shows it/.test(sa.info0), 'before any check the line says the repo is on the server (never "Not set", which only the Architect can fix) — ' + sa.info0);
+chk(/2 files checked — 1 pushed in one commit \(fedcba9\)/.test(sa.status), 'a Super Admin runs the sync through the server — ' + sa.status);
+chk(/Repo: org\/site/.test(sa.info1), 'the repo the server synced to is shown although this browser never held it — ' + sa.info1);
+chk(sa.calls.includes('gh_test') && /connected as octo/.test(sa.info2), 'Test Connection asks the server instead of refusing for want of a browser-side token — ' + sa.info2);
+chk(/No GitHub token is saved yet\. An Architect sets this up under Settings → GitHub Integration\./.test(sa.info3), 'a missing token tells a Super Admin who can add it — ' + sa.info3);
+
 await done('github sync');

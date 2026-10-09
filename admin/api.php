@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.141');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.142');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -1785,7 +1785,9 @@ function fourgeApiGhTest($me, $body) {
 // the client calls with {offset, run} and keeps calling while `next` isn't
 // null; the final batch commits. Counts in every response are cumulative for
 // the run. Admin+ only, like gh_set_private.
-// Response: {ok,run,total,done,next,staged,pushed,upToDate,failed,skipped,errors,commit,tokenExpires}.
+// Response: {ok,run,repo,total,done,next,staged,pushed,upToDate,failed,skipped,errors,commit,tokenExpires}.
+// The admin shows `repo` on its Settings line: a Super Admin's browser never
+// holds the Repository Override, so the server says which repo it synced to.
 function fourgeApiGhSyncAll($me, $body) {
     if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin access required']); return; }
     $cfg = cmsGhMirrorCfg(); list($repo, $branch, $token) = $cfg;
@@ -1799,7 +1801,7 @@ function fourgeApiGhSyncAll($me, $body) {
     if ($offset === 0) {
         // One look at the repo first: a rejected token stops here, with the reason — not once per file.
         $probe = cmsGhProbe($repo, $token);
-        if (empty($probe['ok'])) { cmsGhSyncStateClear(); echo json_encode(['ok' => false, 'reason' => $probe['reason'], 'error' => $probe['error'], 'tokenExpires' => $probe['expires'] ?? '']); return; }
+        if (empty($probe['ok'])) { cmsGhSyncStateClear(); echo json_encode(['ok' => false, 'reason' => $probe['reason'], 'error' => $probe['error'], 'repo' => $repo, 'tokenExpires' => $probe['expires'] ?? '']); return; }
         $head = cmsGhHead($repo, $branch, $token);
         if (isset($head['error'])) { cmsGhSyncStateClear(); echo json_encode(['ok' => false, 'reason' => 'github', 'error' => $head['error']]); return; }
         $remote = !empty($head['empty']) ? [] : cmsGhFetchTree($repo, $branch, $token);
@@ -1843,7 +1845,7 @@ function fourgeApiGhSyncAll($me, $body) {
         // Without the staged list the next batch cannot continue; say so rather than letting the client restart forever.
         echo json_encode(['ok' => false, 'reason' => 'state', 'error' => 'The sync could not save its progress (admin/gh-sync-state.php is not writable), so the ' . count($state['blobs']) . ' file(s) staged so far were not committed. Make admin/ writable and run it again.']); return;
     }
-    echo json_encode(['ok' => true, 'run' => $state['run'], 'total' => $total, 'done' => $i, 'next' => $next,
+    echo json_encode(['ok' => true, 'run' => $state['run'], 'repo' => $repo, 'total' => $total, 'done' => $i, 'next' => $next,
                       'staged' => $commit !== null ? 0 : count($state['blobs']), 'pushed' => $pushed, 'upToDate' => $state['upToDate'], 'failed' => $state['failed'], 'skipped' => $state['skipped'],
                       'errors' => $state['errors'], 'commit' => $commit, 'tokenExpires' => $state['tokenExpires'] ?? '',
                       'fatal' => $fatal ? ['reason' => $fatal['reason'], 'error' => $fatal['error']] : null]);
