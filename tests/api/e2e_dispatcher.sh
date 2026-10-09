@@ -21,7 +21,7 @@ return [
   'require_https' => false,
 ];
 PHP
-php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"admin@44interactive.com","E2ePass!234"); $pdo->exec("UPDATE users SET must_change_password=0, is_architect=1 WHERE username=\"admin@44interactive.com\""); $u=fourgeGetUser($pdo,"admin@44interactive.com"); echo "user ready: role=",($u["role"]??"?"),"\n";' "$S" || { echo "FAIL could not prepare the test DB"; exit 1; }
+php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"admin@44interactive.com","E2ePass!234"); $pdo->exec("UPDATE users SET must_change_password=0, is_architect=1 WHERE username=\"admin@44interactive.com\""); fourgeSetPassword($pdo,"editor44i","E2ePass!234"); $pdo->exec("UPDATE users SET role=\"superadmin\", must_change_password=0, is_architect=0 WHERE username=\"editor44i\""); $u=fourgeGetUser($pdo,"admin@44interactive.com"); echo "user ready: role=",($u["role"]??"?"),"\n";' "$S" || { echo "FAIL could not prepare the test DB"; exit 1; }
 # the stand-in for api.github.com (tests/lib/gh_stub.php) — the engine is pointed at it with FOURGE_GH_API_BASE
 mkdir -p "$S.ghroot"; rm -f "$GHLOG" "$GHSTATE"; echo ok > "$GHMODE"
 php -S 127.0.0.1:$GHPORT -t "$S.ghroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/gh_stub.php" > "$S.ghstub.log" 2>&1 &
@@ -134,6 +134,22 @@ PY
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["pushed"]==0 and d.get("commit") is None and d["failed"]==0 and d["upToDate"]==d["total"]-d["skipped"], d' && ghlog 'assert not [l for l in log if l["m"] in ("POST","PUT","PATCH")], log' && chk 0 "a second sync finds everything current: 0 pushed, no commit, nothing written to GitHub" || chk 1 "second sync — got: $(printf '%s' "$LAST" | head -c 300)"
 call "gh_test" '{"action":"gh_test"}'
 printf '%s' "$LAST" | python3 -c 'import json,sys,re; d=json.load(sys.stdin); assert d.get("ok") and d["login"]=="stub-user" and d["repo"]=="stub/site" and d["private"] is True and d["canPush"] is True and re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$", d.get("expires","")), d' && chk 0 "gh_test: login, repo, private, canPush and the token expiry from GitHub's header ($(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["expires"])'))" || chk 1 "gh_test — got: $(printf '%s' "$LAST" | head -c 300)"
+# a Super Admin (no architect flag) runs the sync and the test; the token itself stays Architect-only (1.14.142)
+ARCH_TOK="$TOK"
+call "login as a Super Admin" '{"action":"login","username":"editor44i","password":"E2ePass!234"}'
+TOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
+[ -n "$TOK" ] && chk 0 "the Super Admin session has a token" || chk 1 "Super Admin login — got: $(printf '%s' "$LAST" | head -c 200)"
+call "gh_test as a Super Admin" '{"action":"gh_test"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["login"]=="stub-user" and d["repo"]=="stub/site", d' && chk 0 "a Super Admin can test the connection (the server holds the token; only the verdict comes back)" || chk 1 "gh_test as a Super Admin — got: $(printf '%s' "$LAST" | head -c 300)"
+: > "$GHLOG"; gh_sync
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d.get("next") is None and d["failed"]==0 and d.get("repo")=="stub/site", d' && chk 0 "a Super Admin can run the sync, and the answer names the repo it synced to ($(printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["repo"],"—",d["pushed"],"pushed,",d["upToDate"],"already current")'))" || chk 1 "gh_sync_all as a Super Admin — got: $(printf '%s' "$LAST" | head -c 300)"
+call "gh_set_private as a Super Admin" '{"action":"gh_set_private"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True, d' && chk 0 "…and keep the repo private" || chk 1 "gh_set_private as a Super Admin — got: $(printf '%s' "$LAST" | head -c 200)"
+call "set_secret github_pat as a Super Admin (refused)" '{"action":"set_secret","name":"github_pat","value":"nope"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "error" in d and "access" in d["error"].lower(), d' && chk 0 "…but cannot change the token (Architect only)" || chk 1 "set_secret as a Super Admin — got: $(printf '%s' "$LAST" | head -c 200)"
+call "get_secrets as a Super Admin" '{"action":"get_secrets"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "github_pat" not in (d.get("secrets") or {}) and "github_pat" not in (d.get("status") or {}) and "repo_override" not in (d.get("secrets") or {}), d' && chk 0 "…and neither the token nor the repo override ever reaches a Super Admin's browser" || chk 1 "get_secrets as a Super Admin — got: $(printf '%s' "$LAST" | head -c 200)"
+TOK="$ARCH_TOK"
 printf '<html><body>gate 2</body></html>' > "$S/e2e-gate2.html"; : > "$GHLOG"
 call "set_page_password ON (server-side writers mirror: .htaccess + the gate script)" '{"action":"set_page_password","path":"e2e-gate2.html","password":"hunter22"}'
 ghlog 'puts={l["p"].split("/contents/",1)[1]:l["msg"] for l in log if l["m"]=="PUT"}; assert ".htaccess" in puts and "_fourge_gate.php" in puts and all(m.endswith("[skip ci]") for m in puts.values()), puts' && chk 0 "the password gate's .htaccess rule and _fourge_gate.php were pushed the moment they were written, each [skip ci]" || chk 1 "gate ON mirror — log: $(head -c 400 "$GHLOG")"

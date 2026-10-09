@@ -1993,16 +1993,17 @@ textarea.fb-input{resize:vertical}
 
       <div class="panel" id="p-settings">
         <div style="max-width:680px">
-        <div class="si-sec architect-only"><h2>GitHub Integration</h2><div class="desc">Repo is read from <code>data/site.json</code>. The token is stored encrypted on the server — page saves and revisions mirror to GitHub for every editor, from any browser.</div>
-          <div class="fg"><label>GitHub Token</label><input type="password" id="s-pat" placeholder="ghp_…"><small>Classic token: <code>repo</code> scope. Fine-grained: Contents read &amp; write on this repository (plus Administration read &amp; write to set it private).</small></div>
-          <div style="display:flex;gap:8px"><button class="fd-btn-primary" onclick="saveGHToken()">Save Token</button><button class="fd-btn-secondary" onclick="testGH()">Test Connection</button></div>
+        <!-- Super Admins and the Architect run the sync and check the connection; only the
+             Architect sees or changes the token (the card below). The server gates the sync
+             actions at admin level, so the daily automatic sync runs for Admins too. -->
+        <div class="si-sec superadmin-only" id="s-gh-sync-card" style="display:none"><h2>GitHub Sync</h2><div class="desc">This site's content is mirrored to its GitHub repository: every save goes straight there, and once a day — or right now, with the button — every page, post, event, image, document and data file is compared with the repo and whatever differs is pushed in <strong>one commit</strong> (marked <code>[skip ci]</code>, so the repo's own deploy workflow does not run), and the repo itself is set to private.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="fd-btn-primary" onclick="ghSyncNow()" id="s-gh-sync-btn">Sync Site to GitHub Now</button><button class="fd-btn-secondary" onclick="testGH()">Test Connection</button></div>
           <div id="s-repo-info" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
-          <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
-            <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Backfill to GitHub</div>
-            <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:8px">Runs on its own once a day when an admin signs in. Use this to run it right now: every page, post, event, image, document and data file is compared with the repo above and whatever differs is pushed in <strong>one commit</strong> (marked <code>[skip ci]</code>, so the repo's own deploy workflow does not run), and the repo itself is set to private.</div>
-            <button class="fd-btn-secondary" onclick="ghSyncNow()" id="s-gh-sync-btn">Sync Site to GitHub Now</button>
-            <div id="s-gh-sync-status" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
-          </div>
+          <div id="s-gh-sync-status" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
+        </div>
+        <div class="si-sec architect-only" id="s-gh-token-card"><h2>GitHub Integration</h2><div class="desc">Repo is read from <code>data/site.json</code> (or the Repository Override below). The token is stored encrypted on the server — page saves and revisions mirror to GitHub for every editor, from any browser.</div>
+          <div class="fg"><label>GitHub Token</label><input type="password" id="s-pat" placeholder="ghp_…"><small>Classic token: <code>repo</code> scope. Fine-grained: Contents read &amp; write on this repository (plus Administration read &amp; write to set it private).</small></div>
+          <button class="fd-btn-primary" onclick="saveGHToken()">Save Token</button>
         </div>
         <div class="si-sec architect-only"><h2>Repository Override</h2><div class="desc">Manually set GitHub repo if <code>data/site.json</code> hasn't been configured yet.</div>
           <div class="fg"><label>Repository (owner/repo)</label><input type="text" id="s-repo-override" placeholder="YourDigitalGroup/my-client-site"></div>
@@ -2842,7 +2843,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.141';
+const CMS_VERSION='1.14.142';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3279,7 +3280,7 @@ async function ghSyncSiteContent(verbose){
   // Admin+ only, so a plain editor's login is never held up by (or shown a
   // toast about) a GitHub sync they have no context for; the next
   // admin/superadmin/architect login still picks it up. (The manual button is
-  // only ever shown to Architect sessions, so this never blocks it.)
+  // shown to Super Admins and the Architect, so this never blocks it.)
   if(accessLevel(getSessionUser())<2){ if(verbose) toast('Admin access required','err'); return; }
   // The walk is server-side (gh_sync_all): api.php lists every file under the
   // web root that belongs in the repo — pages, data/*.json, images, video,
@@ -3311,11 +3312,12 @@ async function ghSyncSiteContent(verbose){
       // The server lost the staged run (another admin synced meanwhile, or it
       // timed out): once more from the top, never twice.
       if(r&&r.reason==='restart'&&!restarted){ restarted=true; offset=0; run=''; acc=fresh(); continue; }
+      if(r&&r.repo) _ghRepoSeen=r.repo;
       acc.fatal={reason:(r&&r.reason)||'github', error:(r&&(r.error||r.reason))||'GitHub sync failed'};
       acc.failed++; acc.errors.push(acc.fatal.error); if(r&&r.tokenExpires) acc.tokenExpires=r.tokenExpires; break;
     }
     if(r.run){
-      run=r.run; acc.total=r.total||0; acc.pushed=r.pushed||0; acc.upToDate=r.upToDate||0; acc.failed=r.failed||0; acc.skipped=r.skipped||0;
+      run=r.run; if(r.repo) _ghRepoSeen=r.repo; acc.total=r.total||0; acc.pushed=r.pushed||0; acc.upToDate=r.upToDate||0; acc.failed=r.failed||0; acc.skipped=r.skipped||0;
       acc.errors=Array.isArray(r.errors)?r.errors.slice():[]; acc.commit=r.commit||null; if(r.tokenExpires) acc.tokenExpires=r.tokenExpires;
       if(r.fatal) acc.fatal=r.fatal;
     }else{
@@ -3332,7 +3334,7 @@ async function ghSyncSiteContent(verbose){
     // Silent on the automatic login-triggered path (matches every other
     // optional GitHub feature); the manual button says so explicitly, since
     // someone who just clicked "Sync Now" deserves to know why nothing moved.
-    if(verbose) toast("GitHub isn't configured for this site yet — add a token and repo above, then try again.",'err');
+    if(verbose) toast("GitHub isn't configured for this site yet — an Architect adds the token and repo under Settings → GitHub Integration.",'err');
     return {ok:true, ...acc};
   }
   // A rejected token or an unreachable GitHub is a real problem for every
@@ -3343,7 +3345,7 @@ async function ghSyncSiteContent(verbose){
 }
 // What the server said about the token's expiry, from the last sync or test
 // (GitHub's github-authentication-token-expiration header, "YYYY-MM-DD HH:MM:SS UTC").
-let _ghTokenExpires='';
+let _ghTokenExpires='', _ghRepoSeen='';
 function ghParseExpiry(s){ if(!s) return null; const m=String(s).match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/); const d=m?new Date(m[1]+'T'+m[2]+(m[2].length===5?':00':'')+'Z'):new Date(s); return isNaN(d.getTime())?null:d; }
 function ghExpiryDays(s){ const d=ghParseExpiry(s); return d?Math.floor((d.getTime()-Date.now())/86400000):null; }
 function ghExpiryNote(s){
@@ -3358,8 +3360,10 @@ function ghEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;
 // and when the token expires (red inside two weeks).
 function ghShowTokenInfo(r){
   const el=document.getElementById('s-repo-info'); if(!el) return;
-  const{repo}=ghCfg();
-  const parts=[`Repo: <strong>${ghEsc(repo||'Not set — add github.repo to data/site.json')}</strong>`];
+  const repo=(r&&r.repo)||_ghRepoSeen||ghCfg().repo;
+  // Only the Architect's browser holds the Repository Override; for anyone else the repo is simply "on the server" until a test or sync has reported it.
+  const unknown=isArchitect(getSessionUser())?'Not set — add github.repo to data/site.json':'set on the server — Test Connection shows it';
+  const parts=[`Repo: <strong>${ghEsc(repo||unknown)}</strong>`];
   if(r&&r.ok){
     parts.push(`connected as <strong>${ghEsc(r.login||'?')}</strong>`, r.private?'private':'<span style="color:var(--red)">PUBLIC — the sync will set it private</span>', r.canPush?'token can push':'<span style="color:var(--red)">token cannot push to this repo</span>');
   }else if(r&&r.error){ parts.push(`<span style="color:var(--red)">${ghEsc(r.error)}</span>`); }
@@ -3435,7 +3439,7 @@ async function ghSyncNow(){
     }
     const priv=await ghEnsureRepoPrivate(true);
     if(st){
-      if(sync&&sync.notConfigured) st.textContent="GitHub isn't configured for this site — add a token and repo above first.";
+      if(sync&&sync.notConfigured) st.textContent="GitHub isn't configured for this site yet — an Architect adds the token and repo under Settings → GitHub Integration.";
       else if(sync&&sync.fatal){
         // One sentence about what went wrong (a rejected token, the rate limit, an unreachable GitHub) — not a count of a thousand failures.
         st.textContent=sync.fatal.error+(sync.total?` (${sync.total} files checked, ${sync.pushed} pushed, ${sync.upToDate} already current.)`:'');
@@ -3482,23 +3486,26 @@ async function saveGHToken(){
 }
 // Settings → "Test Connection": the server checks with the saved token (gh_test,
 // 1.14.141) — who the token is, whether it sees and can push to the repo, and
-// when it expires — and the result stays on the line under the fields.
+// when it expires — and the result stays on the line under the buttons. The
+// token and the repo live on the server, so this works for a Super Admin whose
+// browser never sees either (1.14.142); the server answers "no token"/"no repo".
 async function testGH(){
-  const{repo,pat}=ghCfg();
-  if(!pat && !(_secretStatus&&_secretStatus.github_pat)){toast('No token saved','err');return;}
-  if(!repo){toast('Repo not configured','err');return;}
+  if(!canCallApi()){ toast('Sign in again first','err'); return; }
   toast('Testing\u2026');
   let r=null;
   try{ r=await apiCall('gh_test',{}); }
   catch(e){
-    if(/unknown action/i.test(e.message||'')){ apiStaleHint('gh_test'); return testGHBrowser(); }   // api.php older than 1.14.141: the browser-side check, as before
+    // api.php older than 1.14.141: the browser-side check, when this browser holds the token (Architect)
+    if(/unknown action/i.test(e.message||'')){ apiStaleHint('gh_test'); if(ghCfg().pat) return testGHBrowser(); toast(apiStaleText('gh_test'),'err'); return; }
     toast('Could not test: '+e.message,'err'); return;
   }
   if(r&&r.expires) _ghTokenExpires=r.expires;
+  if(r&&r.repo) _ghRepoSeen=r.repo;
+  if(r&&!r.ok&&(r.reason==='no_token'||r.reason==='no_repo')&&!isArchitect(getSessionUser())) r.error=(r.error||'')+' An Architect sets this up under Settings → GitHub Integration.';
   ghShowTokenInfo(r);
   if(!r||!r.ok){ toast((r&&r.error)||'GitHub test failed','err'); return; }
   toast('\u2713 Connected as '+r.login+' \u2192 '+r.repo+(r.private?'':' (public!)'), r.private?'ok':'err');
-  await checkGH();
+  if(ghCfg().pat) await checkGH();   // the dashboard dot checks with the browser-side token (Architect only)
 }
 async function testGHBrowser(){const{repo,pat}=ghCfg();if(!pat){toast('No token saved','err');return;}if(!repo){toast('Repo not configured','err');return;}toast('Testing\u2026');try{const uRes=await fetch('https://api.github.com/user',{headers:ghH()});if(uRes.status===401){toast('Token invalid','err');return;}const user=await uRes.json();const rRes=await fetch('https://api.github.com/repos/'+repo,{headers:ghH()});if(rRes.status===404){toast('Repo not found: '+repo,'err');return;}if(!rRes.ok){toast('Repo error '+rRes.status,'err');return;}toast('\u2713 Connected as '+user.login+' \u2192 '+repo,'ok');await checkGH();}catch(e){toast('Network error: '+e.message,'err');}}
 
