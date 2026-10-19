@@ -89,6 +89,51 @@
     if (position.indexOf('mid') === 0) return 'top:50%;transform:translateY(-50%)';
     return 'bottom:64px';
   }
+  function panelAnchorEdge(position) {
+    if (position.indexOf('top') === 0) return 'top';
+    if (position.indexOf('mid') === 0) return 'mid';
+    return 'bottom';
+  }
+
+  // ── KEEP THE PANEL INSIDE THE WINDOW ────────────────────────────────────
+  // The panel is anchored to one edge and grows away from it, so its height is
+  // capped to the room between that anchor and the opposite edge of the
+  // VISIBLE window. A fixed "100vh − 96px" cap assumed the panel always sat
+  // 64px from the bottom: lifted above a reCAPTCHA badge (see below), or on a
+  // short or phone-sized window, it ran past the top of the screen and its
+  // header and first rows could never be reached. Measured from the real
+  // viewport (window.innerHeight — 100vh is taller than the visible area on
+  // phones with the address bar shown) and the panel's own offset, again
+  // whenever either changes; anything taller scrolls inside the panel.
+  var FIT_GAP = 12;
+  function fitPanel(pnl) {
+    if (!pnl) return;
+    var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (!vh) return;
+    var off, room;
+    if (pnl.getAttribute('data-anchor') === 'mid') room = vh - FIT_GAP * 2;
+    else {
+      off = parseFloat(pnl.getAttribute('data-anchor') === 'top' ? pnl.style.top : pnl.style.bottom);
+      if (!isFinite(off)) off = 64;
+      room = vh - off - FIT_GAP;
+    }
+    // max-height is a content-box measure unless the panel is border-box, so
+    // its own padding and borders would otherwise push the edge back out.
+    try {
+      var cs = window.getComputedStyle(pnl);
+      if (cs.boxSizing !== 'border-box') {
+        room -= (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+              + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+      }
+    } catch (e) {}
+    pnl.style.maxHeight = Math.max(120, Math.round(room)) + 'px';
+  }
+  function fitOnChange(pnl) {
+    var again = function () { fitPanel(pnl); };
+    window.addEventListener('resize', again);
+    window.addEventListener('orientationchange', again);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', again);
+  }
 
   // reCAPTCHA drops a floating badge into a bottom corner (default bottom-right).
   // When ADAptify shares that corner the two overlap (see the widget sitting on
@@ -100,7 +145,7 @@
     var wantRight = position.indexOf('right') !== -1;
     function apply() {
       var badge = document.querySelector('.grecaptcha-badge');
-      if (!badge) { btn.style.bottom = '20px'; if (pnl) pnl.style.bottom = '64px'; return false; }
+      if (!badge) { btn.style.bottom = '20px'; if (pnl) { pnl.style.bottom = '64px'; fitPanel(pnl); } return false; }
       var r = badge.getBoundingClientRect();
       if (!r.width || !r.height) return false;              // in the DOM but not laid out yet — keep waiting
       var badgeOnRight = (r.left + r.width / 2) > (window.innerWidth / 2);
@@ -108,7 +153,7 @@
       // they don't overlap and we leave the widget where the site placed it.
       var b = (badgeOnRight === wantRight) ? Math.max(20, Math.round(window.innerHeight - r.top) + 10) : 20;
       btn.style.bottom = b + 'px';
-      if (pnl) pnl.style.bottom = (b + 44) + 'px';          // panel opens just above the button (matches the 20→64 default)
+      if (pnl) { pnl.style.bottom = (b + 44) + 'px'; fitPanel(pnl); }   // panel opens just above the button (matches the 20→64 default) and is re-fitted to the room left above it
       return true;                                          // measured — final decision made
     }
     if (apply()) return;
@@ -182,7 +227,7 @@
       style(cfg)
       + '<button type="button" class="adaptify-launch" aria-label="Accessibility options" aria-expanded="false" '
       + 'style="' + posStyle(cfg.position) + ';background:' + esc(cfg.color) + '">' + manIcon(cfg.iconColor) + '</button>'
-      + '<div class="adaptify-panel" role="dialog" aria-label="Accessibility menu" style="' + panelAnchor(cfg.position) + ';' + panelVert(cfg.position) + '">'
+      + '<div class="adaptify-panel" role="dialog" aria-label="Accessibility menu" data-anchor="' + panelAnchorEdge(cfg.position) + '" style="' + panelAnchor(cfg.position) + ';' + panelVert(cfg.position) + '">'
       + '  <div class="adaptify-head"><span>Accessibility</span>'
       + '    <button type="button" class="adaptify-x" aria-label="Close">&times;</button></div>'
       + '  <div class="adaptify-body">' + content + color + nav + '</div>'
@@ -198,7 +243,7 @@
 
     var btn = root.querySelector('.adaptify-launch');
     var pnl = root.querySelector('.adaptify-panel');
-    function setOpen(o) { pnl.classList.toggle('open', o); btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }
+    function setOpen(o) { if (o) fitPanel(pnl); pnl.classList.toggle('open', o); btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }
     btn.addEventListener('click', function () { setOpen(!pnl.classList.contains('open')); });
     root.querySelector('.adaptify-x').addEventListener('click', function () { setOpen(false); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
@@ -208,6 +253,7 @@
     });
 
     applyAll(prefs); reflect(root, prefs);
+    fitPanel(pnl); fitOnChange(pnl);
     avoidRecaptcha(btn, pnl, cfg.position);
   }
 
@@ -393,7 +439,7 @@
       + '#adaptify-root{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}'
       + '.adaptify-launch{position:fixed;z-index:2147483600;width:48px;height:48px;border:0;border-radius:50%;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;padding:0;transition:transform .15s}'
       + '.adaptify-launch:hover{transform:scale(1.08)}.adaptify-launch:focus-visible{outline:3px solid #fff;outline-offset:2px}'
-      + '.adaptify-panel{position:fixed;z-index:2147483600;width:332px;max-width:calc(100vw - 24px);max-height:calc(100vh - 96px);overflow:auto;background:#fff!important;color:#1a1a1a!important;border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.32);padding:14px;display:none}'
+      + '.adaptify-panel{position:fixed;box-sizing:border-box;z-index:2147483600;width:332px;max-width:calc(100vw - 24px);max-height:calc(100vh - 96px);max-height:calc(100dvh - 96px);overflow:auto;background:#fff!important;color:#1a1a1a!important;border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.32);padding:14px;display:none}'
       + '.adaptify-panel.open{display:block}'
       + '.adaptify-head{display:flex;align-items:center;justify-content:space-between;font-weight:800;font-size:15px;margin-bottom:10px;color:#1a1a1a!important}'
       + '.adaptify-x{border:0;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#666!important}'
