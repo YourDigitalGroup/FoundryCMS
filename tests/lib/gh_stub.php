@@ -19,6 +19,8 @@ $path = rawurldecode((string)parse_url($uri, PHP_URL_PATH)); parse_str((string)p
 $raw = (string)file_get_contents('php://input'); $body = $raw !== '' ? json_decode($raw, true) : null; if (!is_array($body)) $body = [];
 file_put_contents($logFile, json_encode(['m' => $method, 'p' => $path, 'q' => $q, 'msg' => $body['message'] ?? null, 'bytes' => strlen($raw)]) . "\n", FILE_APPEND | LOCK_EX);
 $mode = is_file($modeFile) ? trim((string)file_get_contents($modeFile)) : 'ok';
+// Also "some other Fourge installation": the canonical-host check POSTs host_probe here.
+if ($path === '/admin/api.php') { header('Content-Type: application/json'); echo json_encode(['ok' => true, 'install' => 'stub-install']); exit; }
 $EXP = gmdate('Y-m-d H:i:s', time() + 30 * 86400) . ' UTC';   // GitHub's format: "2026-11-06 20:44:45 UTC"
 header('Content-Type: application/json; charset=utf-8');
 header('X-RateLimit-Limit: 5000'); header('X-RateLimit-Remaining: ' . ($mode === 'ratelimit' ? '0' : '4999')); header('X-RateLimit-Reset: ' . (time() + 1800));

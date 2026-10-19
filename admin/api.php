@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.143');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.144');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -203,7 +203,7 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //  • 'check_form_password' / 'form_view' are public for the same reason as
 //    'send_form': a site visitor has no token or session. Neither exposes
 //    anything beyond a single form's own pass/fail check or view counter.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe'];
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe', 'host_probe'];
 $SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
@@ -265,6 +265,9 @@ try {
         case 'gh_set_private':  ob_end_clean(); fourgeApiGhSetPrivate($authUser, $body); break;
         case 'gh_sync_all':     ob_end_clean(); fourgeApiGhSyncAll($authUser, $body); break;
         case 'gh_test':         ob_end_clean(); fourgeApiGhTest($authUser, $body); break;
+        // Which installation answers at this address? (public; the canonical-host check asks the Website URL this before redirecting other domains there)
+        case 'host_probe':      ob_end_clean(); echo json_encode(['ok' => true, 'install' => fourgeInstallId()]); break;
+        case 'canonical_host':  ob_end_clean(); fourgeApiCanonicalHost($authUser, $body); break;
         case 'send_test_email': ob_end_clean(); fourgeApiSendTestEmail($authUser, $body); break;
         case 'recaptcha_status': ob_end_clean(); fourgeApiRecaptchaStatus($authUser, $body); break;
         case 'ai_endpoint_test': ob_end_clean(); fourgeApiAiEndpointTest($authUser, $body); break;
@@ -4840,6 +4843,186 @@ function fourgeWriteIndexingHtaccess() {
     }
     return cmsPkgSpliceHtaccess('# BEGIN Fourge Indexing', '# END Fourge Indexing', implode("\n", $L));
 }
+// ── ONE ADDRESS FOR THE SITE (parked domains → the Website URL) ─────────────
+// A client's extra domains are parked on the same hosting, so they open the
+// site — under the parked name, which then stays in the address bar. The
+// Website URL in Site Foundry is the one address the site should answer to, so
+// the CMS writes a redirect block that sends every other host there (www and
+// bare included, path and query kept, 301). Two things keep it from ever
+// sending a site to the wrong place:
+//   • it is written only after the Website URL has answered as THIS very
+//     installation (host_probe → the install id below), and taken out again
+//     when that address answers as a different installation, redirects
+//     somewhere else, or is cleared; an address that cannot be reached at all
+//     changes nothing either way;
+//   • the rule never fires on a non-production host — the same explicit shapes
+//     the Indexing block uses (dev./staging./…, *.fourge.com, localhost,
+//     *.local, bare IPs) — so a staging copy carrying the production URL in its
+//     site.json keeps serving as staging.
+function fourgeInstallId() {
+    $k = ''; try { $k = fourgePassphrase(); } catch (Throwable $e) { $k = ''; }
+    return hash('sha256', 'fourge-install:' . $k . ':' . (string)realpath(PUBLIC_HTML));
+}
+function fourgeCanonicalHostMarkers() { return ['# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand', '# END Fourge Canonical Host']; }
+// The Website URL as a redirect target — scheme + host[:port] — or null when
+// the value is empty or not a plain web address.
+function fourgeCanonicalHostTarget($website) {
+    $w = trim((string)$website);
+    if ($w === '') return null;
+    if (!preg_match('~^https?://~i', $w)) $w = 'https://' . $w;
+    $p = @parse_url($w);
+    if (!$p || empty($p['host'])) return null;
+    $host = strtolower((string)$p['host']);
+    if (!preg_match('~^[a-z0-9.\-]+$~', $host) || strpos($host, '..') !== false) return null;
+    $scheme = (strtolower((string)($p['scheme'] ?? 'https')) === 'http') ? 'http' : 'https';
+    $port = !empty($p['port']) ? (int)$p['port'] : 0;
+    $std = ($scheme === 'https' && $port === 443) || ($scheme === 'http' && $port === 80);
+    $hostPort = $host . (($port && !$std) ? ':' . $port : '');
+    return ['scheme' => $scheme, 'host' => $host, 'hostPort' => $hostPort, 'url' => $scheme . '://' . $hostPort];
+}
+function fourgeCanonicalHostBlock($t) {
+    list($B, $E) = fourgeCanonicalHostMarkers();
+    $hostRe = str_replace('.', '\\.', $t['host']);
+    $L = [];
+    $L[] = $B;
+    $L[] = '# Every other address this site answers on (a parked or alias domain, www';
+    $L[] = '# when the site is bare, or the reverse) lands on ' . $t['url'] . ' — the';
+    $L[] = '# Website URL in Site Foundry — so that is what the address bar shows.';
+    $L[] = '# Written only after that address answered as this very installation.';
+    $L[] = '# Non-production hosts (dev./staging./…, *.fourge.com, localhost, *.local,';
+    $L[] = '# bare IPs) are never redirected, so a staging copy stays staging.';
+    $L[] = '<IfModule mod_rewrite.c>';
+    $L[] = '  RewriteEngine On';
+    $L[] = '  RewriteCond %{HTTP_HOST} !^' . $hostRe . '(:[0-9]+)?$ [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !^(dev|staging|stg|test|qa|uat|preview|beta|demo|sandbox)[.\-] [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !\.fourge\.com(:[0-9]+)?$ [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !^localhost [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !\.local(:[0-9]+)?$ [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !^[0-9.]+(:[0-9]+)?$';
+    $L[] = '  RewriteCond %{HTTP_HOST} !^\[';
+    $L[] = '  RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]';
+    $L[] = '  RewriteRule ^ ' . $t['url'] . '%{REQUEST_URI} [R=301,L]';
+    $L[] = '</IfModule>';
+    $L[] = $E;
+    return implode("\n", $L);
+}
+// The address the block in $text currently redirects to ('' when there is none).
+function fourgeCanonicalHostCurrent($text) {
+    list($B, $E) = fourgeCanonicalHostMarkers();
+    $s = strpos((string)$text, $B); if ($s === false) return '';
+    $e = strpos((string)$text, $E, $s); if ($e === false) return '';
+    return preg_match('~RewriteRule \^ (\S+?)%\{REQUEST_URI\}~', substr($text, $s, $e - $s), $m) ? $m[1] : '';
+}
+// Pure: $text with the block set to $block, or removed when $block is null.
+// Returns null when nothing would change. A new block goes at the very top —
+// a host redirect must run before every rewrite below it, force-HTTPS included,
+// so a visitor on a parked http:// address lands on the right https:// one in
+// a single hop.
+function fourgeCanonicalHostApplyText($text, $block) {
+    list($B, $E) = fourgeCanonicalHostMarkers();
+    $text = (string)$text;
+    $s = strpos($text, $B); $e = ($s !== false) ? strpos($text, $E, $s) : false;
+    if ($s !== false && $e !== false) {
+        $end = $e + strlen($E);
+        if ($block === null) {
+            $before = rtrim(substr($text, 0, $s), "\n"); $after = ltrim(substr($text, $end), "\n");
+            $out = ($before === '') ? $after : ($after === '' ? $before . "\n" : $before . "\n\n" . $after);
+        } else {
+            $out = substr($text, 0, $s) . $block . substr($text, $end);
+        }
+        return ($out === $text) ? null : $out;
+    }
+    if ($block === null) return null;
+    $rest = ltrim($text, "\n");
+    return $block . "\n" . ($rest === '' ? '' : "\n" . $rest);
+}
+// Does the Website URL answer as THIS installation? 'match'; 'mismatch' (some
+// other site or installation answers there, or it redirects to another host —
+// a redirect of ours on top of that would loop); 'unreachable' (nothing
+// conclusive: refused, timed out, a non-JSON answer).
+function fourgeCanonicalHostVerify($t) {
+    $host = $t['host'];
+    // Operator-supplied address: never let it point the server at its own
+    // network (loopback and private ranges) — except in the test harness.
+    if (!getenv('FOURGE_PROBE_ALLOW_LOCAL')) {
+        if ($host === 'localhost' || substr($host, -6) === '.local') return ['verdict' => 'unreachable', 'detail' => 'a local address'];
+        $ips = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : (@gethostbynamel($host) ?: []);
+        foreach ($ips as $ip) if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return ['verdict' => 'unreachable', 'detail' => 'a private address'];
+    }
+    $ch = curl_init($t['url'] . '/admin/api.php');
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true, CURLOPT_POSTFIELDS => json_encode(['action' => 'host_probe']),
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_SSL_VERIFYPEER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 3, CURLOPT_POSTREDIR => 7,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_USERAGENT => 'FourgeCMS host check',
+    ]);
+    $raw = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $eff = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL); $err = (string)curl_error($ch);
+    curl_close($ch);
+    if ($raw === false || $code === 0) return ['verdict' => 'unreachable', 'detail' => $err !== '' ? $err : 'no answer'];
+    $effHost = strtolower((string)@parse_url($eff, PHP_URL_HOST));
+    if ($effHost !== '' && $effHost !== $host) return ['verdict' => 'mismatch', 'detail' => 'it redirects to ' . $effHost . ' — set the Website URL to the address the site settles on'];
+    $j = json_decode((string)$raw, true);
+    if ($code === 200 && is_array($j) && !empty($j['install'])) {
+        return ((string)$j['install'] === fourgeInstallId()) ? ['verdict' => 'match', 'detail' => ''] : ['verdict' => 'mismatch', 'detail' => 'another installation answers there'];
+    }
+    return ['verdict' => 'unreachable', 'detail' => 'HTTP ' . $code];
+}
+// The last verdict, kept in admin/ (PHP exits before the JSON, so it is never
+// served): a sign-in must not wait on a timeout every time.
+function fourgeCanonicalHostStatePath() { return __DIR__ . '/canonical-host.php'; }
+function fourgeCanonicalHostRemember($set = false) {
+    $f = fourgeCanonicalHostStatePath();
+    if ($set === false) {
+        if (!is_file($f)) return null;
+        $raw = (string)@file_get_contents($f); $p = strpos($raw, "\n");
+        $j = json_decode($p === false ? '' : substr($raw, $p + 1), true);
+        return is_array($j) ? $j : null;
+    }
+    if ($set === null) { @unlink($f); return null; }
+    @file_put_contents($f, "<?php exit; ?>\n" . json_encode($set));
+    return $set;
+}
+// Decide and write. Returns {on, host, url, reason, detail, changed, checkedAt}:
+// reason = verified | elsewhere | unreachable | kept | no_website.
+function fourgeWriteCanonicalHostHtaccess($force = false) {
+    $htPath = PUBLIC_HTML . '/.htaccess';
+    $existing = is_file($htPath) ? (string)file_get_contents($htPath) : '';
+    $current = fourgeCanonicalHostCurrent($existing);
+    $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+    $t = fourgeCanonicalHostTarget(is_array($site) ? ($site['website'] ?? '') : '');
+    $res = ['on' => $current !== '', 'host' => $t ? $t['hostPort'] : '', 'url' => $t ? $t['url'] : '', 'reason' => '', 'detail' => '', 'changed' => false, 'checkedAt' => ''];
+    $write = function ($block) use ($htPath, $existing, &$res) {
+        $out = fourgeCanonicalHostApplyText($existing, $block);
+        if ($out !== null) $res['changed'] = fourgeSitePut($htPath, $out, 'Fourge: server rules') !== false;
+        $res['on'] = ($block !== null);
+    };
+    if (!$t) { $res['reason'] = 'no_website'; $write(null); fourgeCanonicalHostRemember(null); return $res; }
+    // Re-check at most every 6 h while it matches, every 20 min otherwise.
+    $prev = fourgeCanonicalHostRemember();
+    $ttl = ($prev && ($prev['verdict'] ?? '') === 'match') ? 6 * 3600 : 20 * 60;
+    if (!$force && $prev && ($prev['url'] ?? '') === $t['url'] && (time() - (int)($prev['at'] ?? 0)) < $ttl) {
+        $v = ['verdict' => (string)$prev['verdict'], 'detail' => (string)($prev['detail'] ?? '')];
+        $res['checkedAt'] = date('c', (int)$prev['at']);
+    } else {
+        $v = fourgeCanonicalHostVerify($t);
+        fourgeCanonicalHostRemember(['url' => $t['url'], 'verdict' => $v['verdict'], 'detail' => $v['detail'], 'at' => time()]);
+        $res['checkedAt'] = date('c');
+    }
+    $res['detail'] = $v['detail'];
+    if ($v['verdict'] === 'match')         { $res['reason'] = 'verified';  $write(fourgeCanonicalHostBlock($t)); }
+    elseif ($v['verdict'] === 'mismatch')  { $res['reason'] = 'elsewhere'; $write(null); }
+    elseif ($current !== '' && $current !== $t['url']) { $res['reason'] = 'unreachable'; $write(null); }   // the block pointed at an address the operator has since replaced
+    else                                   { $res['reason'] = ($current !== '') ? 'kept' : 'unreachable'; }   // nothing conclusive: the file stays as it is
+    return $res;
+}
+function fourgeApiCanonicalHost($me, $body) {
+    if (fourgeLevel($me) < 2) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin access required']); return; }
+    $r = fourgeWriteCanonicalHostHtaccess(!empty($body['force']));
+    echo json_encode(['ok' => true] + $r);
+}
+
 // ── SECRETS ARE NOT DOWNLOADABLE ────────────────────────────────────────────
 // admin/.htaccess denies direct HTTP access to the SQLite database (password
 // hashes + encrypted secrets), config.secret.php (the key those secrets are
@@ -5575,8 +5758,10 @@ function fourgeApiInstallCleanUrls($me) {
     // open the public posts feed to cross-site reads, install the SEO-platform
     // endpoints, and publish any scheduled deploy-package content that has come
     // due. None of these can fail the clean-URL install.
-    $cache = false; $cors = false; $seoApi = false; $idx = false; $due = [];
+    $cache = false; $cors = false; $seoApi = false; $idx = false; $due = []; $canon = null;
     try { $cache  = fourgeWriteCacheHtaccess();    } catch (Throwable $e) { $cache = false; }
+    // Parked domains → the Website URL, once that address has answered as this installation (cached verdict; see fourgeWriteCanonicalHostHtaccess).
+    try { $canon  = fourgeWriteCanonicalHostHtaccess(false); } catch (Throwable $e) { $canon = null; }
     try { $cors   = fourgeWritePostsCorsHtaccess(); } catch (Throwable $e) { $cors = false; }
     try { $seoApi = fourgeWriteSeoApiHtaccess();    } catch (Throwable $e) { $seoApi = false; }
     try { $idx    = fourgeWriteIndexingHtaccess(); } catch (Throwable $e) { $idx = false; }
@@ -5605,7 +5790,7 @@ function fourgeApiInstallCleanUrls($me) {
     $blogSyncApi = false; $blogSync = null;
     try { $blogSyncApi = fourgeWriteBlogSyncApiHtaccess(); } catch (Throwable $e) { $blogSyncApi = false; }
     try { $blogSync     = fourgeBlogSyncTickIfDue();       } catch (Throwable $e) { $blogSync = null; }
-    echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
+    echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
         'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
         'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard]);

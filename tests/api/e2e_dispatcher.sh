@@ -1,6 +1,7 @@
 #!/bin/bash
 # End-to-end through the REAL api.php dispatcher: a throwaway copy of the site with its
-# own config.secret.php + SQLite DB, served by php -S with display_errors=On, a real
+# own config.secret.php + SQLite DB, served by php -S (with worker processes: the canonical-host
+# check POSTs to the site itself) with display_errors=On, a real
 # login session, one request per action. Every response must be valid JSON.
 set -u
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,7 +27,7 @@ php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/
 mkdir -p "$S.ghroot"; rm -f "$GHLOG" "$GHSTATE"; echo ok > "$GHMODE"
 php -S 127.0.0.1:$GHPORT -t "$S.ghroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/gh_stub.php" > "$S.ghstub.log" 2>&1 &
 GHSRV=$!
-FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_PROBE_ALLOW_LOCAL=1 PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$PORT/admin/index.html" && break; sleep 0.2; done
@@ -170,6 +171,36 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 # so the first file goes through the Contents API and everything else follows in one commit
 echo ok > "$GHMODE"; rm -f "$GHSTATE"; : > "$GHLOG"; gh_sync
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d.get("next") is None and d["failed"]==0 and d["pushed"]==d["total"]-d["skipped"] and d.get("commit"), d' && ghlog 'puts=[l for l in log if l["m"]=="PUT"]; c=[l for l in log if l["m"]=="POST" and l["p"].endswith("/git/commits")]; assert len(puts)==1 and len(c)==1 and puts[0]["msg"].endswith("[skip ci]") and c[0]["msg"].endswith("[skip ci]"), (puts,c)' && python3 -c "import json; s=json.load(open('$GHSTATE')); assert len(s['commits'])==2 and 'main' in s['refs'], len(s['commits'])" && chk 0 "an empty repository gets its first file through the Contents API and the rest in ONE commit (2 commits total, both [skip ci]): $(printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["pushed"],"of",d["total"],"pushed")')" || chk 1 "empty-repo sync — got: $(printf '%s' "$LAST" | head -c 300) / log: $(python3 -c "import json,collections; print(collections.Counter((json.loads(l)['m'],json.loads(l)['p'].split('/')[-1]) for l in open('$GHLOG')))")"
+# ── One address for the site: parked domains → the Website URL (1.14.144) ─────────────────
+call "host_probe (public)" '{"action":"host_probe"}'
+INSTALL=$(printf '%s' "$LAST" | python3 -c 'import json,sys,re; d=json.load(sys.stdin); i=d.get("install",""); assert d.get("ok") and re.match(r"^[0-9a-f]{64}$", i), d; print(i)') && chk 0 "host_probe answers this installation's id ($(printf '%s' "$INSTALL" | head -c 12)…)" || chk 1 "host_probe — got: $(printf '%s' "$LAST" | head -c 200)"
+canon_site(){ call "write_file data/site.json (Website URL = $1)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":\"{\\\"name\\\":\\\"E2E\\\",\\\"website\\\":\\\"$1\\\"}\"}"; }
+canon_site "http://127.0.0.1:$PORT"
+call "canonical_host (force: this server answers as itself)" '{"action":"canonical_host","force":true}'
+printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') and d['on'] is True and d['reason']=='verified' and d['host']=='127.0.0.1:$PORT' and d['changed'] is True, d" && chk 0 "the Website URL answered as this installation → on, verified, written" || chk 1 "canonical_host verified — got: $(printf '%s' "$LAST" | head -c 300)"
+[ "$(head -1 "$HT")" = "# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand" ] && [ "$(grep -c '^# BEGIN Fourge Canonical Host' "$HT")" = 1 ] && grep -q "RewriteRule ^ http://127.0.0.1:$PORT%{REQUEST_URI} \[R=301,L\]" "$HT" && grep -q 'RewriteCond %{HTTP_HOST} !\\.fourge\\.com' "$HT" && chk 0 "the block sits on line 1 of .htaccess, once, redirecting to http://127.0.0.1:$PORT and sparing non-production hosts" || chk 1 ".htaccess canonical block: $(head -3 "$HT" | tr '\n' ' ')"
+M2=$(md5sum "$HT" | cut -d' ' -f1)
+call "canonical_host again (cached verdict)" '{"action":"canonical_host"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is True and d["changed"] is False, d' && [ "$(md5sum "$HT" | cut -d' ' -f1)" = "$M2" ] && chk 0 "a second run changes nothing (byte-identical .htaccess, verdict from the cache)" || chk 1 "canonical_host second run — got: $(printf '%s' "$LAST" | head -c 200)"
+printf '<html><body>gate 3</body></html>' > "$S/e2e-gate3.html"
+call "set_page_password ON with the canonical block in place" '{"action":"set_page_password","path":"e2e-gate3.html","password":"hunter22"}'
+call "set_page_password OFF" '{"action":"set_page_password","path":"e2e-gate3.html","password":""}'
+rm -f "$S/e2e-gate3.html" "$S/_fourge_gate.php"
+[ "$(head -1 "$HT")" = "# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand" ] && [ "$(grep -c '^# BEGIN Fourge Canonical Host' "$HT")" = 1 ] && chk 0 "the password gate on/off leaves the canonical block on top, once" || chk 1 "gate clobbered the canonical block"
+call "install_clean_urls (sign-in chain reports it)" '{"action":"install_clean_urls"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); c=d.get("canonicalHost") or {}; assert c.get("on") is True and c.get("reason")=="verified", d' && chk 0 "install_clean_urls reports canonicalHost on/verified" || chk 1 "install_clean_urls canonicalHost — got: $(printf '%s' "$LAST" | head -c 300)"
+canon_site "http://127.0.0.1:$GHPORT"
+call "canonical_host (force: another installation answers there)" '{"action":"canonical_host","force":true}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="elsewhere" and "another installation" in d["detail"], d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "a Website URL that answers as a different installation → off, elsewhere, block removed" || chk 1 "canonical_host elsewhere — got: $(printf '%s' "$LAST" | head -c 300)"
+canon_site "http://127.0.0.1:1"
+call "canonical_host (force: nothing listens there)" '{"action":"canonical_host","force":true}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="unreachable", d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "an address that cannot be reached → off, unreachable, nothing written" || chk 1 "canonical_host unreachable — got: $(printf '%s' "$LAST" | head -c 300)"
+canon_site "http://127.0.0.1:$PORT"
+call "canonical_host (force: back to this server)" '{"action":"canonical_host","force":true}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is True and d["reason"]=="verified", d' && grep -q 'Fourge Canonical Host' "$HT" && chk 0 "…and back on once the address answers as this site again" || chk 1 "canonical_host back on — got: $(printf '%s' "$LAST" | head -c 300)"
+canon_site ""
+call "canonical_host (force: Website URL cleared)" '{"action":"canonical_host","force":true}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="no_website", d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "clearing the Website URL takes the block out" || chk 1 "canonical_host no_website — got: $(printf '%s' "$LAST" | head -c 300)"
 call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
 rm -f "$S/e2e-mirror.html"
 call "blog_sync_admin status" '{"action":"blog_sync_admin","op":"status"}'
