@@ -1771,6 +1771,7 @@ textarea.fb-input{resize:vertical}
           <div class="si-sec"><h2>Site Identity</h2><div class="desc">Basic information about this website.</div>
             <div class="fr"><div class="fg"><label>Site Name</label><input type="text" id="si-name"></div><div class="fg"><label>Tagline</label><input type="text" id="si-tagline"></div></div>
             <div class="fr"><div class="fg"><label>Website URL</label><input type="text" id="si-website"></div><div class="fg"><label>Notify Email</label><input type="text" id="si-notify"></div></div>
+            <div id="si-canonical" style="font-size:11.5px;line-height:1.6;margin-top:-4px;margin-bottom:6px;color:var(--muted)"></div>
             <div id="si-identity-hint" style="font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:-4px">Site Name and Website URL are read from your site itself (its title tags, logo and canonical address) — nothing to type. <a href="#" onclick="siteIdentityRedetect();return false;" style="color:var(--ember);font-weight:600">Detect again</a></div>
           </div>
         </div>
@@ -2843,7 +2844,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.143';
+const CMS_VERSION='1.14.144';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -11078,6 +11079,29 @@ async function loadSiteInfo(){
   siRenderHeadings(_site.headingStyles||{});   // site-wide heading controls
   const ccEl=document.getElementById('si-customcss'); if(ccEl) ccEl.value=_site.customCss||'';
   designAutofill();   // fill brand colors + any empty contact/social from the site's HTML
+  siCanonicalRefresh(false);   // where the parked-domain redirect stands (cached verdict; never waits on the network here)
+}
+// ── One address for the site ─────────────────────────────────────────────────
+// The server redirects every parked or alias domain to the Website URL, but
+// only after that address has answered as this very installation
+// (canonical_host, 1.14.144); the line under the field says where that stands.
+let _siCanonical=null;
+function siCanonicalRender(r){
+  const el=document.getElementById('si-canonical'); if(!el) return;
+  _siCanonical=r||null;
+  if(!r){ el.textContent=''; return; }
+  const url=r.url||'', d=r.detail?' ('+r.detail+')':'';
+  let msg='', color='var(--muted)';
+  if(r.reason==='no_website') msg='Other domains that open this site are not redirected: set the Website URL above to the address the site should always show, then save.';
+  else if(r.on){ msg='Other domains that open this site are redirected to '+url+' — that is what the address bar shows.'; color='var(--green)'; }
+  else if(r.reason==='elsewhere'){ msg=url+' does not answer as this site'+d+', so other domains are not redirected there. Once it points at this site, save again.'; color='var(--red)'; }
+  else{ msg=url+' could not be reached from the server'+d+', so other domains are not redirected yet. It is checked again at each sign-in.'; color='var(--red)'; }
+  el.style.color=color; el.textContent=msg;
+}
+async function siCanonicalRefresh(force){
+  if(!canCallApi() || accessLevel(getSessionUser())<2) return null;
+  try{ const r=await apiCall('canonical_host',{force:!!force}); siCanonicalRender(r); return r; }
+  catch(e){ if(/unknown action/i.test(e.message||'')) apiStaleHint('canonical_host'); return null; }
 }
 // ── Site identity, read from the site itself ─────────────────────────────────
 // The name and the address are all over the site already: og:site_name, the
@@ -12177,6 +12201,7 @@ async function rcApplyAll(silent){
 // ── PLUGINS ───────────────────────────────────
 async function saveSiteInfo(){
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
+  const prevWebsite=String(_site.website||'');
   // Only read the Site Foundry text inputs once loadSiteInfo() has filled them
   // from the real site. Until then they are empty placeholders, and copying them
   // in wiped the site's name, contact and social details — which is exactly what
@@ -12226,6 +12251,9 @@ async function saveSiteInfo(){
   else if(savedLocal)     toast('Saved to server ✓ (GitHub not configured)','ok');
   else if(savedGH)        toast('Saved to GitHub ✓','ok');
   else                    toast('Not saved — configure Server API or GitHub in Settings','err');
+  // A changed Website URL is checked right away (the server asks that address
+  // whether it is this site before redirecting other domains to it).
+  if(savedLocal) siCanonicalRefresh(String(_site.website||'')!==prevWebsite);
 }
 
 
