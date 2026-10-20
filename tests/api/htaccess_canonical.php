@@ -17,7 +17,7 @@ $tmp = sys_get_temp_dir() . '/fourge-canon-' . getmypid(); @mkdir($tmp, 0777, tr
 define('PUBLIC_HTML', $tmp);
 function fourgeSitePut($abs, $bytes, $msg = '') { return @file_put_contents($abs, (string)$bytes); }
 $src = '';
-foreach (['fourgeCanonicalHostMarkers','fourgeCanonicalHostTarget','fourgeCanonicalHostBlock','fourgeCanonicalHostCurrent','fourgeCanonicalHostApplyText',
+foreach (['fourgeIsNonProdHost','fourgeCanonicalHostMarkers','fourgeCanonicalHostTarget','fourgeCanonicalHostBlock','fourgeCanonicalHostCurrent','fourgeCanonicalHostApplyText',
           'fourgeCacheHtMarkers','fourgeCacheHtaccessBlock','fourgeCacheHtaccessFindUnmarked','fourgeCacheHtaccessApply','fourgeWriteCacheHtaccess','fourgeWriteProtectHtaccess','fourgeWriteCleanUrlHtaccess'] as $fn) $src .= lift($api, $fn);
 eval($src);
 $pass = 0; $fail = 0;
@@ -35,6 +35,10 @@ chk(fourgeCanonicalHostTarget('https://example.com:443')['url'] === 'https://exa
 chk(fourgeCanonicalHostTarget('') === null && fourgeCanonicalHostTarget('   ') === null, 'an empty Website URL is no target');
 chk(fourgeCanonicalHostTarget('not a url!') === null && fourgeCanonicalHostTarget('https://exa mple.com') === null && fourgeCanonicalHostTarget('https://a..b') === null, 'junk is no target');
 
+// 1b. what is never a public address nor a redirect target (1.14.145)
+foreach (['dev.client.fourge.com', 'client.fourge.com', 'dev.example.com', 'staging-site.example.com', 'stage2.example.com', 'testing.example.com', 'localhost', 'localhost:8080', '127.0.0.1', '10.0.0.5:8932', '[::1]', 'intranet', 'site.local', 'site.test', 'preview.pages.dev', 'app.netlify.app', 'x.vercel.app', 'abc.ngrok-free.app', 'x.trycloudflare.com', ''] as $h) chk(fourgeIsNonProdHost($h) === true, 'non-production: ' . ($h === '' ? '(empty)' : $h));
+foreach (['www.example.com', 'example.com', 'securityservicesms.com', 'shop.example.co.uk', 'developer-tools.com', 'testimonials.example.com', 'www.devonshire.com', 'new.example.com'] as $h) chk(fourgeIsNonProdHost($h) === false, 'production: ' . $h);
+
 // 2. the block
 $T = fourgeCanonicalHostTarget('https://www.example.com');
 $B = fourgeCanonicalHostBlock($T);
@@ -42,7 +46,7 @@ chk(strpos($B, $BEGIN) === 0 && substr($B, -strlen($END)) === $END, 'the block s
 chk(strpos($B, '<IfModule mod_rewrite.c>') !== false && strpos($B, '</IfModule>') !== false, 'the rules sit inside <IfModule mod_rewrite.c>');
 chk(strpos($B, 'RewriteCond %{HTTP_HOST} !^www\.example\.com(:[0-9]+)?$ [NC]') !== false, 'the site’s own host (any port) is never redirected');
 chk(strpos($B, 'RewriteRule ^ https://www.example.com%{REQUEST_URI} [R=301,L]') !== false, 'every other host → the Website URL, path kept (query follows on its own), 301');
-foreach (['!^(dev|staging|stg|test|qa|uat|preview|beta|demo|sandbox)[.\-] [NC]', '!\.fourge\.com(:[0-9]+)?$ [NC]', '!^localhost [NC]', '!\.local(:[0-9]+)?$ [NC]', '!^[0-9.]+(:[0-9]+)?$', '!^\['] as $c) {
+foreach (['!^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)[0-9]*[.\-] [NC]', '!\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)(:[0-9]+)?$ [NC]', '!^localhost [NC]', '!^[0-9.]+(:[0-9]+)?$', '!^\['] as $c) {
     chk(strpos($B, 'RewriteCond %{HTTP_HOST} ' . $c) !== false, 'non-production hosts are never redirected: ' . $c);
 }
 chk(strpos($B, 'RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]') !== false, 'certificate challenges under /.well-known/ are never redirected');

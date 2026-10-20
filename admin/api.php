@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.144');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.145');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -569,6 +569,7 @@ function cmsWriteFile($body) {
     // can't even update itself back), and the admin page must at least be whole.
     // data/site.json from the admin: keep the server's own Blog Sync bookkeeping (see fourgeBlogSyncMergeSiteBookkeeping).
     if (ltrim(str_replace('\\', '/', (string)$relPath), '/') === 'data/site.json') { try { $content = fourgeBlogSyncMergeSiteBookkeeping($content, $dest); } catch (Throwable $e) {} }
+    if (ltrim(str_replace('\\', '/', (string)$relPath), '/') === 'data/site.json') { try { $content = fourgeSiteJsonKeepWebsite($content); } catch (Throwable $e) {} }   // and never let a stale copy put a dev link back as the Website URL
     $guard = cmsWriteFilePreflight($dest, $content);
     if ($guard !== '') { http_response_code(409); echo json_encode(['error' => $guard]); return; }
     // Atomic write: the whole file lands under a temp name first and is renamed
@@ -4863,6 +4864,55 @@ function fourgeInstallId() {
     $k = ''; try { $k = fourgePassphrase(); } catch (Throwable $e) { $k = ''; }
     return hash('sha256', 'fourge-install:' . $k . ':' . (string)realpath(PUBLIC_HTML));
 }
+// A host that must never be the site's public address nor a redirect target:
+// a development/staging shape, the agency's preview domain, a hosting preview
+// domain, localhost, a bare IP, or no dot at all. Shared by the canonical-host
+// writer (never redirect TO such a host — a dev link that later forwards to the
+// live domain would loop), by the sign-in auto-fill below, and by the
+// site.json write guard.
+function fourgeIsNonProdHost($host) {
+    $h = strtolower(trim((string)$host)); $h = preg_replace('~:\d+$~', '', $h);
+    if ($h === '' || $h === 'localhost' || strpos($h, '.') === false) return true;
+    if ($h[0] === '[' || filter_var($h, FILTER_VALIDATE_IP)) return true;
+    if (preg_match('~^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)\d*[.\-]~', $h)) return true;
+    if (preg_match('~\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)$~', $h)) return true;
+    return false;
+}
+// Sign-in at the site's real address: when the stored Website URL is empty or a
+// development/staging/preview host (pages built on a dev link carry that link
+// in their canonical tags, and the admin's detection used to adopt it), and the
+// request arrived on a production-looking host, that host becomes the Website
+// URL. A production value is never replaced — signing in through a parked
+// domain must not move the address — so the first real domain wins, and Site
+// Foundry can correct it. Returns ['from' => …, 'to' => …] or null.
+function fourgeAutoWebsite() {
+    $host = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
+    if ($host === '' || !preg_match('~^[a-z0-9.\-]+(:\d+)?$~', $host) || fourgeIsNonProdHost($host)) return null;
+    $f = PUBLIC_HTML . '/data/site.json';
+    $site = json_decode((string)@file_get_contents($f), true); if (!is_array($site)) $site = [];
+    $cur = trim((string)($site['website'] ?? ''));
+    if ($cur !== '') { $t = fourgeCanonicalHostTarget($cur); if ($t && !fourgeIsNonProdHost($t['host'])) return null; }
+    $new = (fourgeIsHttps() ? 'https' : 'http') . '://' . $host;
+    if ($cur === $new) return null;
+    $site['website'] = $new;
+    if (fourgeSitePut($f, json_encode($site, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: site address') === false) return null;
+    return ['from' => $cur, 'to' => $new];
+}
+// A stale admin copy must not move the Website URL backwards: when the browser
+// sends a development/staging address while the server already holds a
+// production one (set at sign-in on the real domain, or by hand), the server's
+// address stays. An empty value (a deliberate clear) and any production
+// address are accepted as sent.
+function fourgeSiteJsonKeepWebsite($content) {
+    $in = json_decode((string)$content, true); if (!is_array($in)) return $content;
+    $want = trim((string)($in['website'] ?? '')); if ($want === '') return $content;
+    $wt = fourgeCanonicalHostTarget($want); if ($wt && !fourgeIsNonProdHost($wt['host'])) return $content;
+    $cur = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true); if (!is_array($cur)) return $content;
+    $have = trim((string)($cur['website'] ?? '')); if ($have === '') return $content;
+    $ht = fourgeCanonicalHostTarget($have); if (!$ht || fourgeIsNonProdHost($ht['host'])) return $content;
+    $in['website'] = $have;
+    return json_encode($in, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
 function fourgeCanonicalHostMarkers() { return ['# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand', '# END Fourge Canonical Host']; }
 // The Website URL as a redirect target — scheme + host[:port] — or null when
 // the value is empty or not a plain web address.
@@ -4894,10 +4944,9 @@ function fourgeCanonicalHostBlock($t) {
     $L[] = '<IfModule mod_rewrite.c>';
     $L[] = '  RewriteEngine On';
     $L[] = '  RewriteCond %{HTTP_HOST} !^' . $hostRe . '(:[0-9]+)?$ [NC]';
-    $L[] = '  RewriteCond %{HTTP_HOST} !^(dev|staging|stg|test|qa|uat|preview|beta|demo|sandbox)[.\-] [NC]';
-    $L[] = '  RewriteCond %{HTTP_HOST} !\.fourge\.com(:[0-9]+)?$ [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)[0-9]*[.\-] [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)(:[0-9]+)?$ [NC]';
     $L[] = '  RewriteCond %{HTTP_HOST} !^localhost [NC]';
-    $L[] = '  RewriteCond %{HTTP_HOST} !\.local(:[0-9]+)?$ [NC]';
     $L[] = '  RewriteCond %{HTTP_HOST} !^[0-9.]+(:[0-9]+)?$';
     $L[] = '  RewriteCond %{HTTP_HOST} !^\[';
     $L[] = '  RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]';
@@ -4950,6 +4999,8 @@ function fourgeCanonicalHostVerify($t) {
         foreach ($ips as $ip) if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return ['verdict' => 'unreachable', 'detail' => 'a private address'];
     }
     $ch = curl_init($t['url'] . '/admin/api.php');
+    $resolve = trim((string)getenv('FOURGE_PROBE_RESOLVE'));   // tests: "host:port:ip,…" so a production-looking name reaches the test server
+    if ($resolve !== '') curl_setopt($ch, CURLOPT_RESOLVE, array_map('trim', explode(',', $resolve)));
     curl_setopt_array($ch, [
         CURLOPT_POST => true, CURLOPT_POSTFIELDS => json_encode(['action' => 'host_probe']),
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 5,
@@ -4999,6 +5050,10 @@ function fourgeWriteCanonicalHostHtaccess($force = false) {
         $res['on'] = ($block !== null);
     };
     if (!$t) { $res['reason'] = 'no_website'; $write(null); fourgeCanonicalHostRemember(null); return $res; }
+    // A dev/staging/preview address is never a redirect target: the live domain
+    // would be sent to it, and once that link forwards back to the live domain
+    // (the usual post-launch setup) the two redirects loop.
+    if (fourgeIsNonProdHost($t['host'])) { $res['reason'] = 'nonprod_url'; $write(null); fourgeCanonicalHostRemember(null); return $res; }
     // Re-check at most every 6 h while it matches, every 20 min otherwise.
     $prev = fourgeCanonicalHostRemember();
     $ttl = ($prev && ($prev['verdict'] ?? '') === 'match') ? 6 * 3600 : 20 * 60;
@@ -5758,8 +5813,10 @@ function fourgeApiInstallCleanUrls($me) {
     // open the public posts feed to cross-site reads, install the SEO-platform
     // endpoints, and publish any scheduled deploy-package content that has come
     // due. None of these can fail the clean-URL install.
-    $cache = false; $cors = false; $seoApi = false; $idx = false; $due = []; $canon = null;
+    $cache = false; $cors = false; $seoApi = false; $idx = false; $due = []; $canon = null; $websiteAuto = null;
     try { $cache  = fourgeWriteCacheHtaccess();    } catch (Throwable $e) { $cache = false; }
+    // Signed in at the site's real address while the Website URL is empty or a dev link? Then that address is the Website URL from now on.
+    try { $websiteAuto = fourgeAutoWebsite(); } catch (Throwable $e) { $websiteAuto = null; }
     // Parked domains → the Website URL, once that address has answered as this installation (cached verdict; see fourgeWriteCanonicalHostHtaccess).
     try { $canon  = fourgeWriteCanonicalHostHtaccess(false); } catch (Throwable $e) { $canon = null; }
     try { $cors   = fourgeWritePostsCorsHtaccess(); } catch (Throwable $e) { $cors = false; }
@@ -5790,7 +5847,7 @@ function fourgeApiInstallCleanUrls($me) {
     $blogSyncApi = false; $blogSync = null;
     try { $blogSyncApi = fourgeWriteBlogSyncApiHtaccess(); } catch (Throwable $e) { $blogSyncApi = false; }
     try { $blogSync     = fourgeBlogSyncTickIfDue();       } catch (Throwable $e) { $blogSync = null; }
-    echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
+    echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'websiteAuto' => $websiteAuto, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
         'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
         'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard]);

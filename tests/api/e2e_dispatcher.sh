@@ -27,7 +27,7 @@ php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/
 mkdir -p "$S.ghroot"; rm -f "$GHLOG" "$GHSTATE"; echo ok > "$GHMODE"
 php -S 127.0.0.1:$GHPORT -t "$S.ghroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/gh_stub.php" > "$S.ghstub.log" 2>&1 &
 GHSRV=$!
-FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_PROBE_ALLOW_LOCAL=1 PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$PORT/admin/index.html" && break; sleep 0.2; done
@@ -174,11 +174,11 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 # ── One address for the site: parked domains → the Website URL (1.14.144) ─────────────────
 call "host_probe (public)" '{"action":"host_probe"}'
 INSTALL=$(printf '%s' "$LAST" | python3 -c 'import json,sys,re; d=json.load(sys.stdin); i=d.get("install",""); assert d.get("ok") and re.match(r"^[0-9a-f]{64}$", i), d; print(i)') && chk 0 "host_probe answers this installation's id ($(printf '%s' "$INSTALL" | head -c 12)…)" || chk 1 "host_probe — got: $(printf '%s' "$LAST" | head -c 200)"
-canon_site(){ call "write_file data/site.json (Website URL = $1)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":\"{\\\"name\\\":\\\"E2E\\\",\\\"website\\\":\\\"$1\\\"}\"}"; }
-canon_site "http://127.0.0.1:$PORT"
+canon_site(){ printf '{"name":"E2E","website":"%s"}' "$1" > "$S/data/site.json"; chk 0 "site.json on disk: Website URL = ${1:-(empty)} (written directly, as a site's file holds it — the admin write path is guarded, see below)"; }
+canon_site "http://e2e-site.example:$PORT"
 call "canonical_host (force: this server answers as itself)" '{"action":"canonical_host","force":true}'
-printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') and d['on'] is True and d['reason']=='verified' and d['host']=='127.0.0.1:$PORT' and d['changed'] is True, d" && chk 0 "the Website URL answered as this installation → on, verified, written" || chk 1 "canonical_host verified — got: $(printf '%s' "$LAST" | head -c 300)"
-[ "$(head -1 "$HT")" = "# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand" ] && [ "$(grep -c '^# BEGIN Fourge Canonical Host' "$HT")" = 1 ] && grep -q "RewriteRule ^ http://127.0.0.1:$PORT%{REQUEST_URI} \[R=301,L\]" "$HT" && grep -q 'RewriteCond %{HTTP_HOST} !\\.fourge\\.com' "$HT" && chk 0 "the block sits on line 1 of .htaccess, once, redirecting to http://127.0.0.1:$PORT and sparing non-production hosts" || chk 1 ".htaccess canonical block: $(head -3 "$HT" | tr '\n' ' ')"
+printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') and d['on'] is True and d['reason']=='verified' and d['host']=='e2e-site.example:$PORT' and d['changed'] is True, d" && chk 0 "the Website URL answered as this installation → on, verified, written" || chk 1 "canonical_host verified — got: $(printf '%s' "$LAST" | head -c 300)"
+[ "$(head -1 "$HT")" = "# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand" ] && [ "$(grep -c '^# BEGIN Fourge Canonical Host' "$HT")" = 1 ] && grep -q "RewriteRule ^ http://e2e-site.example:$PORT%{REQUEST_URI} \[R=301,L\]" "$HT" && grep -q 'RewriteCond %{HTTP_HOST} !\\.(fourge\\.com|' "$HT" && chk 0 "the block sits on line 1 of .htaccess, once, redirecting to http://e2e-site.example:$PORT and sparing non-production hosts" || chk 1 ".htaccess canonical block: $(head -3 "$HT" | tr '\n' ' ')"
 M2=$(md5sum "$HT" | cut -d' ' -f1)
 call "canonical_host again (cached verdict)" '{"action":"canonical_host"}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is True and d["changed"] is False, d' && [ "$(md5sum "$HT" | cut -d' ' -f1)" = "$M2" ] && chk 0 "a second run changes nothing (byte-identical .htaccess, verdict from the cache)" || chk 1 "canonical_host second run — got: $(printf '%s' "$LAST" | head -c 200)"
@@ -189,15 +189,31 @@ rm -f "$S/e2e-gate3.html" "$S/_fourge_gate.php"
 [ "$(head -1 "$HT")" = "# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand" ] && [ "$(grep -c '^# BEGIN Fourge Canonical Host' "$HT")" = 1 ] && chk 0 "the password gate on/off leaves the canonical block on top, once" || chk 1 "gate clobbered the canonical block"
 call "install_clean_urls (sign-in chain reports it)" '{"action":"install_clean_urls"}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); c=d.get("canonicalHost") or {}; assert c.get("on") is True and c.get("reason")=="verified", d' && chk 0 "install_clean_urls reports canonicalHost on/verified" || chk 1 "install_clean_urls canonicalHost — got: $(printf '%s' "$LAST" | head -c 300)"
-canon_site "http://127.0.0.1:$GHPORT"
+canon_site "http://other-site.example:$GHPORT"
 call "canonical_host (force: another installation answers there)" '{"action":"canonical_host","force":true}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="elsewhere" and "another installation" in d["detail"], d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "a Website URL that answers as a different installation → off, elsewhere, block removed" || chk 1 "canonical_host elsewhere — got: $(printf '%s' "$LAST" | head -c 300)"
-canon_site "http://127.0.0.1:1"
+canon_site "http://nothing-here.example:1"
 call "canonical_host (force: nothing listens there)" '{"action":"canonical_host","force":true}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="unreachable", d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "an address that cannot be reached → off, unreachable, nothing written" || chk 1 "canonical_host unreachable — got: $(printf '%s' "$LAST" | head -c 300)"
-canon_site "http://127.0.0.1:$PORT"
+canon_site "http://e2e-site.example:$PORT"
 call "canonical_host (force: back to this server)" '{"action":"canonical_host","force":true}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is True and d["reason"]=="verified", d' && grep -q 'Fourge Canonical Host' "$HT" && chk 0 "…and back on once the address answers as this site again" || chk 1 "canonical_host back on — got: $(printf '%s' "$LAST" | head -c 300)"
+# 1.14.145: a dev/staging address is never a redirect target, and the Website URL follows the real domain
+canon_site "http://dev.e2e-site.example:$PORT"
+call "canonical_host (force: a dev link as the Website URL)" '{"action":"canonical_host","force":true}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="nonprod_url", d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "a development address as the Website URL → refused (nonprod_url), block removed, nothing probed" || chk 1 "canonical_host nonprod — got: $(printf '%s' "$LAST" | head -c 300)"
+canon_site "https://dev.e2e.fourge.com"
+call "install_clean_urls signed in at the site's real address (Host: e2e-site.example)" '{"action":"install_clean_urls"}' -H "Host: e2e-site.example:$PORT"
+printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); w=d.get('websiteAuto') or {}; c=d.get('canonicalHost') or {}; assert w.get('from')=='https://dev.e2e.fourge.com' and w.get('to')=='http://e2e-site.example:$PORT', d; assert c.get('on') is True and c.get('reason')=='verified' and c.get('host')=='e2e-site.example:$PORT', d" && chk 0 "a sign-in at the real domain replaces a dev-link Website URL with that domain, and the redirect is verified and written in the same call" || chk 1 "websiteAuto — got: $(printf '%s' "$LAST" | head -c 400)"
+call "read_file data/site.json (after the auto-fill)" '{"action":"read_file","path":"data/site.json"}'
+printf '%s' "$LAST" | python3 -c "import json,sys; d=json.loads(json.load(sys.stdin)['content']); assert d.get('website')=='http://e2e-site.example:$PORT' and d.get('name')=='E2E', d" && chk 0 "site.json carries the new Website URL and keeps everything else" || chk 1 "site.json after auto-fill — got: $(printf '%s' "$LAST" | head -c 300)"
+call "install_clean_urls signed in through a parked domain (Host: parked-e2e.example)" '{"action":"install_clean_urls"}' -H "Host: parked-e2e.example:$PORT"
+printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('websiteAuto') is None and (d.get('canonicalHost') or {}).get('host')=='e2e-site.example:$PORT', d" && chk 0 "a sign-in through another production host leaves a production Website URL alone" || chk 1 "parked sign-in — got: $(printf '%s' "$LAST" | head -c 300)"
+call "install_clean_urls signed in at a dev host (Host: dev.e2e-site.example)" '{"action":"install_clean_urls"}' -H "Host: dev.e2e-site.example:$PORT"
+printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('websiteAuto') is None, d" && chk 0 "a sign-in at a dev host never becomes the Website URL" || chk 1 "dev sign-in — got: $(printf '%s' "$LAST" | head -c 300)"
+call "write_file data/site.json from a stale admin copy (Website URL = the dev link)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":\"{\\\"name\\\":\\\"E2E\\\",\\\"website\\\":\\\"https://dev.e2e.fourge.com\\\"}\"}"
+call "read_file data/site.json (a stale admin copy tried to put the dev link back)" '{"action":"read_file","path":"data/site.json"}'
+printf '%s' "$LAST" | python3 -c "import json,sys; d=json.loads(json.load(sys.stdin)['content']); assert d.get('website')=='http://e2e-site.example:$PORT', d" && chk 0 "a save carrying a dev link cannot move a production Website URL backwards" || chk 1 "write guard — got: $(printf '%s' "$LAST" | head -c 300)"
 canon_site ""
 call "canonical_host (force: Website URL cleared)" '{"action":"canonical_host","force":true}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="no_website", d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "clearing the Website URL takes the block out" || chk 1 "canonical_host no_website — got: $(printf '%s' "$LAST" | head -c 300)"
