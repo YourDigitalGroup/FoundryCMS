@@ -24,6 +24,11 @@ const run=async(files,site,fn)=>p.evaluate(async({files,site,fn})=>{ __setup(fil
 // ── A. detection ──
 let d=await run(lakeFiles,{},'return await detectSiteIdentity();');
 chk(d.name==='The Lake Digital' && d.nameSource==='the logo' && d.website==='https://thelakedigital.com' && d.websiteSource==='the canonical address', 'A1 Lake-like site: name from the header logo alt, address from the canonical — got: '+JSON.stringify(d));
+// 1.14.145 — a site built on a dev link carries that link in its canonical/og:url: never the Website URL
+d=await run({'index.html':LAKE_HOME.replace(/https:\/\/thelakedigital\.com/g,'https://dev.thelake.fourge.com')},{},'return await detectSiteIdentity();');
+chk(!d.website, 'A1b canonical and og:url on a dev link (dev.thelake.fourge.com) are ignored, and with no production source the address stays blank — got: '+JSON.stringify(d.website));
+d=await run({'index.html':LAKE_HOME.replace('<link rel="canonical" href="https://thelakedigital.com/"','<link rel="canonical" href="https://dev.thelake.fourge.com/"')},{},'return await detectSiteIdentity();');
+chk(d.website==='https://thelakedigital.com' && d.websiteSource==='og:url', 'A1c a dev canonical is skipped and the production og:url is used instead — got: '+JSON.stringify([d.website,d.websiteSource]));
 const montHome=LAKE_HOME.replace('The Lake Digital','Digital Marketing Monterey').replace(/thelakedigital\.com/g,'digitalmarketingmonterey.com').replace('Digital Marketing Agency | North Central Arkansas','Digital Marketing Monterey | Grow Revenue, Not Just Traffic');
 d=await run({'index.html':montHome,'a.html':__p('ADA Website Compliance Monterey | WCAG 2.1 AA Fixes'),'b.html':__p('Amazon Prime Video Advertising | Monterey Digital'),'c.html':__p('AI Chat Assistant for Websites | Monterey'),'e.html':__p('Google AI Search Box Update | Digital Marketing Monterey')},{},'return await detectSiteIdentity();');
 function __p(t){ return '<html><head><title>'+t+'</title></head><body>x</body></html>'; }

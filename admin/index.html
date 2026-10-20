@@ -2844,7 +2844,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.144';
+const CMS_VERSION='1.14.145';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -10938,7 +10938,7 @@ function seoInjectIntoHtml(html,pg,base){
 // an error, which we report rather than letting it fail the whole apply.
 async function ensureCleanUrlRewrite(){
   if(!canCallApi()) return {ok:false,reason:'auth'};
-  try{ await apiCall('install_clean_urls',{}); return {ok:true}; }
+  try{ const d=await apiCall('install_clean_urls',{}); siteIdentityApplyAuto(d); return {ok:true}; }
   catch(e){ console.warn('clean-URL rewrite install skipped:',e.message); return {ok:false,reason:e.message||'error'}; }
 }
 async function seoApplyAll(){
@@ -11081,6 +11081,19 @@ async function loadSiteInfo(){
   designAutofill();   // fill brand colors + any empty contact/social from the site's HTML
   siCanonicalRefresh(false);   // where the parked-domain redirect stands (cached verdict; never waits on the network here)
 }
+// The sign-in self-heal may have moved the Website URL to the address the admin
+// was opened at (a dev link or nothing before): keep the in-memory copy and the
+// field in step, so a later Site Foundry save cannot write the old one back.
+function siteIdentityApplyAuto(d){
+  if(!d||typeof d!=='object') return;
+  const w=d.websiteAuto;
+  if(w&&w.to){
+    _site.website=w.to;
+    const el=document.getElementById('si-website'); if(el) el.value=w.to;
+    toast('Website URL set to '+w.to+' — the address this site was opened at'+(w.from?(' (was '+w.from+')'):''),'ok');
+  }
+  if(d.canonicalHost) siCanonicalRender(d.canonicalHost);
+}
 // ── One address for the site ─────────────────────────────────────────────────
 // The server redirects every parked or alias domain to the Website URL, but
 // only after that address has answered as this very installation
@@ -11094,6 +11107,7 @@ function siCanonicalRender(r){
   let msg='', color='var(--muted)';
   if(r.reason==='no_website') msg='Other domains that open this site are not redirected: set the Website URL above to the address the site should always show, then save.';
   else if(r.on){ msg='Other domains that open this site are redirected to '+url+' — that is what the address bar shows.'; color='var(--green)'; }
+  else if(r.reason==='nonprod_url'){ msg=url+' is a development or staging address, so other domains are not redirected to it. It changes to the site’s real domain by itself the first time someone signs in there — or set it here and save.'; color='var(--red)'; }
   else if(r.reason==='elsewhere'){ msg=url+' does not answer as this site'+d+', so other domains are not redirected there. Once it points at this site, save again.'; color='var(--red)'; }
   else{ msg=url+' could not be reached from the server'+d+', so other domains are not redirected yet. It is checked again at each sign-in.'; color='var(--red)'; }
   el.style.color=color; el.textContent=msg;
@@ -11111,6 +11125,17 @@ async function siCanonicalRefresh(force){
 // to overwrite. Sources are reported so the operator can see where a value came from.
 const SITE_NAME_GENERIC=/^(logo|site logo|brand|brand logo|home|homepage|company logo|image|img|icon)$/i;
 function siteIdentityHost(u){ try{ return new URL(String(u), location.origin).host.toLowerCase(); }catch(e){ return ''; } }
+// The same shapes api.php's fourgeIsNonProdHost() refuses: a dev link in a page's
+// canonical tag must never become the Website URL (the live domain would be
+// redirected to it).
+function siteIdentityIsNonProdHost(h){
+  h=String(h||'').toLowerCase().replace(/:\d+$/,'');
+  if(!h || h==='localhost' || !h.includes('.')) return true;
+  if(h[0]==='[' || /^(\d{1,3}\.){3}\d{1,3}$/.test(h)) return true;
+  if(/^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)\d*[.-]/.test(h)) return true;
+  if(/\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)$/.test(h)) return true;
+  return false;
+}
 function siteIdentityProductionOrigin(){
   // The admin usually runs on the site's own domain — but never trust a dev, staging,
   // local or numeric host as the public address (canonicals and sitemaps would be wrong).
@@ -11158,7 +11183,8 @@ async function detectSiteIdentity(){
   const pick=(val,src)=>{ if(!res.name && val && val.length<=80){ res.name=val; res.nameSource=src; } };
   pick(h.ogSiteName,'og:site_name'); pick(h.ldName,'structured data'); pick(h.logoAlt,'the logo'); pick(suffix,'page titles'); pick(h.appName,'application-name');
   if(!res.name && h.title){ const parts=h.title.split(/\s+[|\u2014\u2013\-\u00b7:]{1,2}\s+/); if(parts.length>=2){ res.name=parts[parts.length-1].trim(); res.nameSource='the home page title'; } }
-  const origin=u=>{ try{ const x=new URL(String(u), location.origin); return /^https?:$/.test(x.protocol)&&x.host&&!/^(localhost|127\.0\.0\.1)/.test(x.host)?(x.protocol+'//'+x.host):''; }catch(e){ return ''; } };
+  // Only a production-looking address counts: pages built on a dev link still carry it in their canonicals.
+  const origin=u=>{ try{ const x=new URL(String(u), location.origin); return /^https?:$/.test(x.protocol)&&x.host&&!siteIdentityIsNonProdHost(x.host)?(x.protocol+'//'+x.host):''; }catch(e){ return ''; } };
   const pw=(val,src)=>{ const o=origin(val); if(!res.website && o){ res.website=o; res.websiteSource=src; } };
   pw(h.canonical,'the canonical address'); pw(h.ogUrl,'og:url'); pw(h.ldUrl,'structured data');
   if(!res.website){ const o=siteIdentityProductionOrigin(); if(o){ res.website=o; res.websiteSource='this address'; } }
