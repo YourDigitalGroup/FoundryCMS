@@ -2844,7 +2844,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.145';
+const CMS_VERSION='1.14.146';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -15065,11 +15065,10 @@ async function veLoadPage(id){
   delete _vePalCache[id];   // recompute the site palette from the freshly loaded page
 
   // ── Strategy 1: load via direct URL (best — CSS/images work natively) ──
-  let siteBase=(_site.website||'').replace(/\/$/,'');
-  if(siteBase&&!siteBase.startsWith('http')) siteBase='https://'+siteBase;
-  // Fall back to the site root derived from THIS admin URL (the admin lives at
-  // <site>/admin/), so the editor works out of the box with no Website URL set.
-  if(!siteBase) siteBase=autoSiteBase();
+  // From the address this admin is served at (same files, same origin — the
+  // editor bridge needs same-origin access), never from the Website URL: that
+  // may be the live domain while this admin runs on the dev link.
+  let siteBase=normSiteBase();
 
   if(siteBase){
     iframe.onload=null;
@@ -19116,13 +19115,20 @@ async function veSavePage(){
   }
 }
 
-// Normalize the configured website URL into an absolute base (protocol required,
-// no trailing slash). Without this, window.open() and <base href> treat a bare
-// domain as a RELATIVE path — producing /admin/yourdomain.com/index.html
+// Where to LOAD, FETCH and OPEN this site's own files from: the address the
+// admin itself is served from (the admin lives at <site>/admin/, so that origin
+// serves exactly the files being edited, same-origin, and is reachable by
+// definition). It is deliberately NOT the Website URL: that is the public
+// address search engines read (fourgeCanonicalBase), and since 1.14.145 it
+// moves to the live domain on its own — while the team may still be working on
+// the dev link. Loading the editor's page, its <base href>, the Site CSS and
+// Element CSS sheets, or the SEO fallback fetches from the live domain while
+// on the dev link gave a cross-origin (or not yet live) page: broken links,
+// missing images and sheets, a dead editor. The configured address is only the
+// fallback for a context without a window URL.
 function normSiteBase(){
-  let base=(_site.website||'').trim().replace(/\/+$/,'');
-  if(base && !/^https?:\/\//i.test(base)) base='https://'+base;
-  if(!base) base=autoSiteBase(); // derive from the admin URL when unset
+  let base=autoSiteBase();
+  if(!base){ base=(_site.website||'').trim().replace(/\/+$/,''); if(base && !/^https?:\/\//i.test(base)) base='https://'+base; }
   return base;
 }
 
@@ -19462,7 +19468,8 @@ async function restorePageToCMS(path){
 // info@<domain>). The .html is written to the server and shows up in the pages
 // list like any other page.
 function siteDomain(){
-  let base=normSiteBase()||autoSiteBase()||(_site.website||'');
+  // Content written INTO a page names the public address (the Website URL), not the address the admin happens to be opened at.
+  let base=fourgeCanonicalBase()||normSiteBase()||(_site.website||'');
   try{ return new URL(base.startsWith('http')?base:('https://'+base)).hostname.replace(/^www\./,''); }
   catch{ return String(base).replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0]; }
 }
@@ -19474,7 +19481,7 @@ function siteContactEmail(){
 }
 function privacyPolicyHTML(){
   const company=decodeHtml(_site.name||'Our Company');
-  const base=normSiteBase()||autoSiteBase()||('https://'+siteDomain());
+  const base=fourgeCanonicalBase()||normSiteBase()||('https://'+siteDomain());
   const url=base.replace(/\/+$/,'');
   const email=siteContactEmail();
   const now=new Date();
