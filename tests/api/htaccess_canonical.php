@@ -17,7 +17,7 @@ $tmp = sys_get_temp_dir() . '/fourge-canon-' . getmypid(); @mkdir($tmp, 0777, tr
 define('PUBLIC_HTML', $tmp);
 function fourgeSitePut($abs, $bytes, $msg = '') { return @file_put_contents($abs, (string)$bytes); }
 $src = '';
-foreach (['fourgeIsNonProdHost','fourgeCanonicalHostMarkers','fourgeCanonicalHostTarget','fourgeCanonicalHostBlock','fourgeCanonicalHostCurrent','fourgeCanonicalHostApplyText',
+foreach (['fourgeIsNonProdHost','fourgeIsDevLinkHost','fourgeCanonicalHostMarkers','fourgeCanonicalHostTarget','fourgeCanonicalHostBlock','fourgeCanonicalHostCurrent','fourgeCanonicalHostApplyText',
           'fourgeCacheHtMarkers','fourgeCacheHtaccessBlock','fourgeCacheHtaccessFindUnmarked','fourgeCacheHtaccessApply','fourgeWriteCacheHtaccess','fourgeWriteProtectHtaccess','fourgeWriteCleanUrlHtaccess'] as $fn) $src .= lift($api, $fn);
 eval($src);
 $pass = 0; $fail = 0;
@@ -37,7 +37,11 @@ chk(fourgeCanonicalHostTarget('not a url!') === null && fourgeCanonicalHostTarge
 
 // 1b. what is never a public address nor a redirect target (1.14.145)
 foreach (['dev.client.fourge.com', 'client.fourge.com', 'dev.example.com', 'staging-site.example.com', 'stage2.example.com', 'testing.example.com', 'localhost', 'localhost:8080', '127.0.0.1', '10.0.0.5:8932', '[::1]', 'intranet', 'site.local', 'site.test', 'preview.pages.dev', 'app.netlify.app', 'x.vercel.app', 'abc.ngrok-free.app', 'x.trycloudflare.com', ''] as $h) chk(fourgeIsNonProdHost($h) === true, 'non-production: ' . ($h === '' ? '(empty)' : $h));
-foreach (['www.example.com', 'example.com', 'securityservicesms.com', 'shop.example.co.uk', 'developer-tools.com', 'testimonials.example.com', 'www.devonshire.com', 'new.example.com'] as $h) chk(fourgeIsNonProdHost($h) === false, 'production: ' . $h);
+foreach (['www.example.com', 'example.com', 'securityservicesms.com', 'shop.example.co.uk', 'developer-tools.com', 'testimonials.example.com', 'www.devonshire.com', 'new.example.com', 'devlinks.com', 'knutsonfamilydental.com'] as $h) chk(fourgeIsNonProdHost($h) === false, 'production: ' . $h);
+foreach (['knutsondentistry.devlink9.info', 'devlink9.info', 'site.devlink.info', 'client.devlink12.com'] as $h) chk(fourgeIsNonProdHost($h) === true, 'the agency’s devlink addresses are development links: ' . $h);
+// 1c. a development LINK (a dev host with a real name) vs merely local
+foreach (['knutsondentistry.devlink9.info', 'dev.example.com', 'client.fourge.com', 'staging-site.example.com'] as $h) chk(fourgeIsDevLinkHost($h) === true, 'a development link: ' . $h);
+foreach (['localhost', '127.0.0.1', '10.0.0.5', '[::1]', 'site.local', 'site.test', 'intranet', 'www.example.com', 'knutsonfamilydental.com'] as $h) chk(fourgeIsDevLinkHost($h) === false, 'not a development link: ' . $h);
 
 // 2. the block
 $T = fourgeCanonicalHostTarget('https://www.example.com');
@@ -46,11 +50,18 @@ chk(strpos($B, $BEGIN) === 0 && substr($B, -strlen($END)) === $END, 'the block s
 chk(strpos($B, '<IfModule mod_rewrite.c>') !== false && strpos($B, '</IfModule>') !== false, 'the rules sit inside <IfModule mod_rewrite.c>');
 chk(strpos($B, 'RewriteCond %{HTTP_HOST} !^www\.example\.com(:[0-9]+)?$ [NC]') !== false, 'the site’s own host (any port) is never redirected');
 chk(strpos($B, 'RewriteRule ^ https://www.example.com%{REQUEST_URI} [R=301,L]') !== false, 'every other host → the Website URL, path kept (query follows on its own), 301');
-foreach (['!^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)[0-9]*[.\-] [NC]', '!\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)(:[0-9]+)?$ [NC]', '!^localhost [NC]', '!^[0-9.]+(:[0-9]+)?$', '!^\['] as $c) {
+foreach (['!(^|\.)devlink[0-9]*\.[a-z]+(:[0-9]+)?$ [NC]', '!^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)[0-9]*[.\-] [NC]', '!\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)(:[0-9]+)?$ [NC]', '!^localhost [NC]', '!^[0-9.]+(:[0-9]+)?$', '!^\['] as $c) {
     chk(strpos($B, 'RewriteCond %{HTTP_HOST} ' . $c) !== false, 'non-production hosts are never redirected: ' . $c);
 }
 chk(strpos($B, 'RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]') !== false, 'certificate challenges under /.well-known/ are never redirected');
 chk(fourgeCanonicalHostCurrent($B) === 'https://www.example.com', 'fourgeCanonicalHostCurrent reads the address back out of the block');
+chk(substr_count($B, 'RewriteRule ^ ') === 1 && strpos($B, 'development link') === false, 'without remembered development links there is one rule');
+// 2b. the site’s own development links forward too, by name, ahead of the generic rule (1.14.147)
+$BD = fourgeCanonicalHostBlock($T, ['knutsondentistry.devlink9.info', 'Dev.Example.com:8080', 'www.example.com', '', 'bad host!']);
+chk(strpos($BD, 'RewriteCond %{HTTP_HOST} ^(knutsondentistry\.devlink9\.info|dev\.example\.com)(:[0-9]+)?$ [NC]') !== false, 'the remembered dev links are named (lower-cased, port dropped; the target itself, blanks and junk left out)');
+chk(substr_count($BD, 'RewriteRule ^ https://www.example.com%{REQUEST_URI} [R=301,L]') === 2 && strpos($BD, 'development link') < strpos($BD, '!^www\.example\.com'), 'their rule comes first, then the generic one — both to the Website URL');
+chk(preg_match('~\^\(knutsondentistry[^\n]*\n  RewriteCond %\{REQUEST_URI\} !\^/\\\.well-known/ \[NC\]\n  RewriteRule~', $BD) === 1, 'the dev-link rule spares /.well-known/ too');
+chk(fourgeCanonicalHostCurrent($BD) === 'https://www.example.com' && fourgeCanonicalHostApplyText(fourgeCanonicalHostApplyText('', $B), $BD) !== null, 'a block with dev links replaces one without (the file changes when a link is remembered)');
 chk(fourgeCanonicalHostCurrent("RewriteEngine On\n") === '', '…and finds none in a file without the block');
 
 // 3. placement: the very top, before force-HTTPS and the clean-URL rewrites
