@@ -45,6 +45,33 @@ chk(s.first.length === 1 && s.first[0].force === true, 'a changed Website URL �
 chk(s.second.length === 1 && s.second[0].force === false, 'saving again without a change → canonical_host without force (cached verdict) — ' + JSON.stringify(s.second));
 chk(/redirected to https:\/\/www\.example\.com/.test(s.line), 'and the line shows the server’s answer after the save — ' + s.line);
 
+// 1b. a remembered development link (1.14.147): named on the line, with the switch shown and checked; off → "left as it is", unchecked
+let dl = await p.evaluate(() => { siCanonicalRender({ on: true, url: 'https://knutsonfamilydental.com', reason: 'verified', devHosts: ['knutsondentistry.devlink9.info'], devLinkRedirect: true }); return { text: document.getElementById('si-canonical').textContent, row: document.getElementById('si-devlink-row').style.display, hosts: document.getElementById('si-devlink-hosts').textContent, checked: document.getElementById('si-devlink-redirect').checked, site: _site.devHosts }; });
+chk(/development link knutsondentistry\.devlink9\.info goes there too/.test(dl.text) && dl.row === 'flex' && dl.hosts === '(knutsondentistry.devlink9.info)' && dl.checked === true, 'the line names the dev link that forwards too, and the switch is shown and on — ' + dl.text);
+chk(Array.isArray(dl.site) && dl.site[0] === 'knutsondentistry.devlink9.info', 'the in-memory site copy learns the remembered link, so a later save keeps it');
+dl = await p.evaluate(() => { siCanonicalRender({ on: true, url: 'https://knutsonfamilydental.com', reason: 'verified', devHosts: ['knutsondentistry.devlink9.info'], devLinkRedirect: false }); return { text: document.getElementById('si-canonical').textContent, checked: document.getElementById('si-devlink-redirect').checked }; });
+chk(/development link knutsondentistry\.devlink9\.info is left as it is/.test(dl.text) && dl.checked === false, 'with the switch off the line says the link is left alone — ' + dl.text);
+dl = await p.evaluate(() => { siCanonicalRender({ on: false, url: '', reason: 'no_website' }); return document.getElementById('si-devlink-row').style.display; });
+chk(dl === 'none', 'the switch is hidden when no development link is known');
+// 1c. saving writes the switch only when it is off, and asks the server to re-check
+const sw = await p.evaluate(async () => {
+  // the server's answer after each save carries the remembered link (as the real one does), so the switch stays on screen
+  window.__canonAnswer = { ok: true, on: true, url: 'https://www.example.com', reason: 'verified', devHosts: ['client.devlink9.info'], devLinkRedirect: true };
+  siCanonicalRender(window.__canonAnswer);
+  _siteInfoLoaded = true; _site.website = 'https://www.example.com'; document.getElementById('si-website').value = 'https://www.example.com';
+  document.getElementById('si-devlink-redirect').checked = false; window.__canon.length = 0; window.__writes.length = 0;
+  await saveSiteInfo(); await new Promise(r => setTimeout(r, 50));
+  const off = JSON.parse(window.__writes.find(w => w.path === 'data/site.json').content);
+  const callsOff = window.__canon.slice();
+  document.getElementById('si-devlink-redirect').checked = true; window.__writes.length = 0;
+  await saveSiteInfo(); await new Promise(r => setTimeout(r, 50));
+  const on = JSON.parse(window.__writes.find(w => w.path === 'data/site.json').content);
+  return { off: off.devLinkRedirect, offHosts: off.devHosts, callsOff, on: 'devLinkRedirect' in on };
+});
+chk(sw.off === false && Array.isArray(sw.offHosts) && sw.offHosts[0] === 'client.devlink9.info', 'unticking the switch saves devLinkRedirect:false and keeps the remembered link — ' + JSON.stringify([sw.off, sw.offHosts]));
+chk(sw.callsOff.length === 1 && sw.callsOff[0].force === true, 'and asks the server to rewrite the block at once');
+chk(sw.on === false, 'ticking it again removes the key (on is the default)');
+
 // 2b. the sign-in self-heal moved the Website URL to the real domain: the admin's copy and the field follow, so a later save cannot write the old one back
 const auto = await p.evaluate(() => {
   _site.website = 'https://dev.client.fourge.com'; _siteInfoLoaded = true; document.getElementById('si-website').value = 'https://dev.client.fourge.com';

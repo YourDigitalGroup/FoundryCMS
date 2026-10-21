@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.146');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.147');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -4862,7 +4862,7 @@ function fourgeWriteIndexingHtaccess() {
 //     site.json keeps serving as staging.
 function fourgeInstallId() {
     $k = ''; try { $k = fourgePassphrase(); } catch (Throwable $e) { $k = ''; }
-    return hash('sha256', 'fourge-install:' . $k . ':' . (string)realpath(PUBLIC_HTML));
+    return hash('sha256', 'fourge-install:' . $k . ':' . (string)realpath(PUBLIC_HTML) . ':' . (string)php_uname('n'));
 }
 // A host that must never be the site's public address nor a redirect target:
 // a development/staging shape, the agency's preview domain, a hosting preview
@@ -4876,7 +4876,33 @@ function fourgeIsNonProdHost($host) {
     if ($h[0] === '[' || filter_var($h, FILTER_VALIDATE_IP)) return true;
     if (preg_match('~^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)\d*[.\-]~', $h)) return true;
     if (preg_match('~\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)$~', $h)) return true;
+    if (preg_match('~(^|\.)devlink\d*\.[a-z]{2,}$~', $h)) return true;   // the agency's devlink9.info-style addresses
     return false;
+}
+// A development LINK: a non-production host with a real name (not localhost, an
+// IP, or a local-only suffix) — the address a site is built on before launch,
+// which should forward to the live domain once the site is live there.
+function fourgeIsDevLinkHost($host) {
+    $h = strtolower(trim((string)$host)); $h = preg_replace('~:\d+$~', '', $h);
+    if ($h === '' || $h === 'localhost' || strpos($h, '.') === false || $h[0] === '[' || filter_var($h, FILTER_VALIDATE_IP)) return false;
+    if (preg_match('~\.(local|test|localhost|internal|lan)$~', $h)) return false;
+    return fourgeIsNonProdHost($h);
+}
+// Sign-in at a development link: remember it in site.json (devHosts, last five)
+// so that, once the site is live at its Website URL, that link forwards there
+// too — nobody keeps using or indexing the dev address. A staging COPY is never
+// verified as the live site, so it never gets the block at all, and a copied
+// .htaccess names the original site's links, never the copy's own host.
+function fourgeRememberDevHost() {
+    $host = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? ''))); $host = preg_replace('~:\d+$~', '', $host);
+    if ($host === '' || !preg_match('~^[a-z0-9.\-]+$~', $host) || !fourgeIsDevLinkHost($host)) return null;
+    $f = PUBLIC_HTML . '/data/site.json';
+    $site = json_decode((string)@file_get_contents($f), true); if (!is_array($site)) $site = [];
+    $list = array_values(array_filter(array_map('strval', (array)($site['devHosts'] ?? [])), 'strlen'));
+    if (in_array($host, $list, true)) return $host;
+    $list[] = $host; $site['devHosts'] = array_slice($list, -5);
+    fourgeSitePut($f, json_encode($site, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: site address');
+    return $host;
 }
 // Sign-in at the site's real address: when the stored Website URL is empty or a
 // development/staging/preview host (pages built on a dev link carry that link
@@ -4930,9 +4956,11 @@ function fourgeCanonicalHostTarget($website) {
     $hostPort = $host . (($port && !$std) ? ':' . $port : '');
     return ['scheme' => $scheme, 'host' => $host, 'hostPort' => $hostPort, 'url' => $scheme . '://' . $hostPort];
 }
-function fourgeCanonicalHostBlock($t) {
+function fourgeCanonicalHostBlock($t, $devHosts = []) {
     list($B, $E) = fourgeCanonicalHostMarkers();
     $hostRe = str_replace('.', '\\.', $t['host']);
+    $dev = [];
+    foreach ((array)$devHosts as $h) { $h = strtolower(preg_replace('~:\d+$~', '', trim((string)$h))); if ($h !== '' && $h !== $t['host'] && preg_match('~^[a-z0-9.\-]+$~', $h) && !in_array($h, $dev, true)) $dev[] = $h; }
     $L = [];
     $L[] = $B;
     $L[] = '# Every other address this site answers on (a parked or alias domain, www';
@@ -4943,9 +4971,16 @@ function fourgeCanonicalHostBlock($t) {
     $L[] = '# bare IPs) are never redirected, so a staging copy stays staging.';
     $L[] = '<IfModule mod_rewrite.c>';
     $L[] = '  RewriteEngine On';
+    if ($dev) {
+        $L[] = '  # The development link(s) this site was built on go there too, now that it is live';
+        $L[] = '  RewriteCond %{HTTP_HOST} ^(' . implode('|', array_map(function ($h) { return str_replace('.', '\\.', $h); }, $dev)) . ')(:[0-9]+)?$ [NC]';
+        $L[] = '  RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]';
+        $L[] = '  RewriteRule ^ ' . $t['url'] . '%{REQUEST_URI} [R=301,L]';
+    }
     $L[] = '  RewriteCond %{HTTP_HOST} !^' . $hostRe . '(:[0-9]+)?$ [NC]';
     $L[] = '  RewriteCond %{HTTP_HOST} !^(dev|staging|stage|stg|test|testing|qa|uat|preview|beta|demo|sandbox)[0-9]*[.\-] [NC]';
     $L[] = '  RewriteCond %{HTTP_HOST} !\.(fourge\.com|local|test|localhost|internal|lan|pages\.dev|netlify\.app|vercel\.app|herokuapp\.com|github\.io|ngrok\.io|ngrok-free\.app|trycloudflare\.com)(:[0-9]+)?$ [NC]';
+    $L[] = '  RewriteCond %{HTTP_HOST} !(^|\.)devlink[0-9]*\.[a-z]+(:[0-9]+)?$ [NC]';
     $L[] = '  RewriteCond %{HTTP_HOST} !^localhost [NC]';
     $L[] = '  RewriteCond %{HTTP_HOST} !^[0-9.]+(:[0-9]+)?$';
     $L[] = '  RewriteCond %{HTTP_HOST} !^\[';
@@ -5043,7 +5078,9 @@ function fourgeWriteCanonicalHostHtaccess($force = false) {
     $current = fourgeCanonicalHostCurrent($existing);
     $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
     $t = fourgeCanonicalHostTarget(is_array($site) ? ($site['website'] ?? '') : '');
-    $res = ['on' => $current !== '', 'host' => $t ? $t['hostPort'] : '', 'url' => $t ? $t['url'] : '', 'reason' => '', 'detail' => '', 'changed' => false, 'checkedAt' => ''];
+    $devHosts = array_values(array_filter(array_map(function ($h) { return strtolower(preg_replace('~:\d+$~', '', trim((string)$h))); }, is_array($site) ? (array)($site['devHosts'] ?? []) : []), function ($h) { return $h !== '' && preg_match('~^[a-z0-9.\-]+$~', $h); }));
+    $devRedirect = !(is_array($site) && array_key_exists('devLinkRedirect', $site) && $site['devLinkRedirect'] === false);
+    $res = ['on' => $current !== '', 'host' => $t ? $t['hostPort'] : '', 'url' => $t ? $t['url'] : '', 'reason' => '', 'detail' => '', 'changed' => false, 'checkedAt' => '', 'devHosts' => $devHosts, 'devLinkRedirect' => $devRedirect];
     $write = function ($block) use ($htPath, $existing, &$res) {
         $out = fourgeCanonicalHostApplyText($existing, $block);
         if ($out !== null) $res['changed'] = fourgeSitePut($htPath, $out, 'Fourge: server rules') !== false;
@@ -5066,7 +5103,7 @@ function fourgeWriteCanonicalHostHtaccess($force = false) {
         $res['checkedAt'] = date('c');
     }
     $res['detail'] = $v['detail'];
-    if ($v['verdict'] === 'match')         { $res['reason'] = 'verified';  $write(fourgeCanonicalHostBlock($t)); }
+    if ($v['verdict'] === 'match')         { $res['reason'] = 'verified';  $write(fourgeCanonicalHostBlock($t, $devRedirect ? $devHosts : [])); }
     elseif ($v['verdict'] === 'mismatch')  { $res['reason'] = 'elsewhere'; $write(null); }
     elseif ($current !== '' && $current !== $t['url']) { $res['reason'] = 'unreachable'; $write(null); }   // the block pointed at an address the operator has since replaced
     else                                   { $res['reason'] = ($current !== '') ? 'kept' : 'unreachable'; }   // nothing conclusive: the file stays as it is
@@ -5817,6 +5854,8 @@ function fourgeApiInstallCleanUrls($me) {
     try { $cache  = fourgeWriteCacheHtaccess();    } catch (Throwable $e) { $cache = false; }
     // Signed in at the site's real address while the Website URL is empty or a dev link? Then that address is the Website URL from now on.
     try { $websiteAuto = fourgeAutoWebsite(); } catch (Throwable $e) { $websiteAuto = null; }
+    // Signed in at a development link? Remember it, so it forwards to the live domain once the site is live there.
+    try { fourgeRememberDevHost(); } catch (Throwable $e) {}
     // Parked domains → the Website URL, once that address has answered as this installation (cached verdict; see fourgeWriteCanonicalHostHtaccess).
     try { $canon  = fourgeWriteCanonicalHostHtaccess(false); } catch (Throwable $e) { $canon = null; }
     try { $cors   = fourgeWritePostsCorsHtaccess(); } catch (Throwable $e) { $cors = false; }
