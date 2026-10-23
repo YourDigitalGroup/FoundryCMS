@@ -48,6 +48,7 @@
     "firstName": "Kellar",
     "lastName": "",
     "role": "superadmin",
+    "architect": true,
     "createdAt": "2026-06-24",
     "mustChangePassword": true,
     "hash": "13c262ebc30627f664a4ef5666df858b06396794d9c4583af2543c8358da584d"

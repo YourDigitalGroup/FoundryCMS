@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.147');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.148');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -146,6 +146,12 @@ define('CMS_PATTERN', 'src="../block-renderer.jsx"');
 // load balancers that terminate TLS at the edge and forward plain HTTP to PHP
 // (common on shared hosts), where $_SERVER['HTTPS'] is unset but an
 // X-Forwarded-Proto / X-Forwarded-SSL header marks the visitor's leg as HTTPS.
+// A curl handle is an object freed with its last reference since PHP 8.0, and
+// PHP 8.5 deprecates curl_close(), so it is only called where it still does
+// something. On a host that displays errors, the deprecation notice landed in
+// front of every API answer that had made an outbound request, and the admin
+// could not read the JSON. tests/run.sh keeps direct calls out of this file.
+function fourgeCurlClose($ch) { if (PHP_VERSION_ID < 80000) curl_close($ch); }
 function fourgeIsHttps() {
     if (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off') return true;
     if ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443) return true;
@@ -210,6 +216,9 @@ $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
 
 $sessionToken = $_SERVER['HTTP_X_SESSION_TOKEN'] ?? ($body['session_token'] ?? '');
+// The Architect accounts are restored before anyone is resolved, so a sign-in or
+// a signed-in request already sees them as they should be (fourgeEnsureArchitects).
+if ($sessionToken || $action === 'login') { try { fourgeEnsureArchitects(fourgeDb()); } catch (Throwable $e) {} }
 $authUser     = null;
 try { if ($sessionToken) $authUser = fourgeSessionUser(fourgeDb(), $sessionToken); } catch (Throwable $e) { $authUser = null; }
 
@@ -862,7 +871,7 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
         CURLOPT_TIMEOUT        => 10,
     ]);
     $res = curl_exec($ch); $curlErr = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if (!$res) return $finish('allowed_unverified', 'No response from Google siteverify' . ($curlErr ? ' (' . $curlErr . ')' : '') . ' — the server may be blocking outbound HTTPS.' . $letThrough);
     $data = json_decode($res, true);
     if (!empty($data['hostname'])) $rec['hostname'] = $data['hostname'];
@@ -924,7 +933,7 @@ function cmsVerifyHcaptcha($secret, $token) {
         CURLOPT_TIMEOUT        => 10,
     ]);
     $res = curl_exec($ch); $curlErr = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if (!$res) return $finish('allowed_unverified', 'No response from hCaptcha siteverify' . ($curlErr ? ' (' . $curlErr . ')' : '') . ' — the server may be blocking outbound HTTPS.' . $letThrough);
     $data = json_decode($res, true);
     if (empty($data['success'])) {
@@ -1067,7 +1076,7 @@ function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl, $form
         CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_HTTPHEADER => $headers,
         CURLOPT_POSTFIELDS => json_encode($map['contact']), CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 12,
     ]);
-    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); fourgeCurlClose($ch);
     if ($code < 200 || $code >= 300 || !$res) return false;
     $d = json_decode($res, true);
     $contactId = $d['contact']['id'] ?? ($d['id'] ?? '');
@@ -1077,7 +1086,7 @@ function cmsGhlPushLead($token, $locationId, $fields, $formName, $siteUrl, $form
             CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => json_encode(['body' => $map['note']]), CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 10,
         ]);
-        curl_exec($ch2); curl_close($ch2);
+        curl_exec($ch2); fourgeCurlClose($ch2);
     }
     return true;
 }
@@ -1125,7 +1134,7 @@ function cmsSendWebhook($url, $secret, $payload) {
     ]);
     curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     return $code >= 200 && $code < 300;
 }
 
@@ -1355,7 +1364,7 @@ function fourgeApiGhlFormDef($me, $body) {
         CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15,
         CURLOPT_HTTPHEADER => ['Accept: text/html'],
     ]);
-    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); fourgeCurlClose($ch);
     if ($err || $code !== 200 || !$res) { http_response_code(502); echo json_encode(['error' => 'Could not load the form’s share page' . ($err ? ' ('.$err.')' : ($code ? ' (HTTP '.$code.')' : '')) . ' — check the link.']); return; }
     $def = cmsGhlParseFormWidget($res);
     if (!$def || empty($def['fields'])) { http_response_code(422); echo json_encode(['error' => 'That page didn’t contain a readable form definition — make sure it’s the form’s share link.']); return; }
@@ -1400,7 +1409,7 @@ function cmsGhApi($method, $url, $token, $payload = null, $timeout = 25) {
     if ($payload !== null) $opts[CURLOPT_POSTFIELDS] = json_encode($payload);
     curl_setopt_array($ch, $opts);
     $res = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     $json = $res ? json_decode($res, true) : null;
     cmsGhLast(['code' => $code, 'message' => is_array($json) ? (string)($json['message'] ?? '') : '', 'headers' => $hdrs, 'curl' => (string)$err]);
     return [$code, $json, $err];
@@ -1894,7 +1903,7 @@ function cmsGhlTest($token, $locationId) {
         CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Accept: application/json'],
         CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 12,
     ]);
-    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); fourgeCurlClose($ch);
     if ($err)        return [false, 'Could not reach the lead connection: ' . $err];
     if ($code === 200) return [true, 'Connected — leads will flow in.'];
     if ($code === 401) return [false, 'Token rejected (401) — double-check the Private Integration Token.'];
@@ -1920,7 +1929,7 @@ function cmsGhlDashboard($token, $locationId) {
     $get = function ($url) use ($hdr) {
         $ch = curl_init($url);
         curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $hdr, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15]);
-        $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+        $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); fourgeCurlClose($ch);
         if ($code < 200 || $code >= 300 || !$res) return null;
         return json_decode($res, true);
     };
@@ -1976,7 +1985,7 @@ function cmsGhlMessages($token, $conversationId) {
     $hdr = ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Accept: application/json'];
     $ch = curl_init(GHL_API_BASE . '/conversations/' . rawurlencode($conversationId) . '/messages?limit=100');
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $hdr, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15]);
-    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); fourgeCurlClose($ch);
     if ($err) return [null, 'Could not reach the lead connection: ' . $err];
     $j = json_decode($res, true);
     if ($code < 200 || $code >= 300) {
@@ -2021,7 +2030,7 @@ function cmsGhlSendMessage($token, $contactId, $rawType, $text) {
     $hdr = ['Authorization: Bearer ' . $token, 'Version: ' . GHL_API_VERSION, 'Content-Type: application/json', 'Accept: application/json'];
     $ch = curl_init(GHL_API_BASE . '/conversations/messages');
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_POSTFIELDS => $payload, CURLOPT_HTTPHEADER => $hdr, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => 15]);
-    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); fourgeCurlClose($ch);
     if ($err) return [false, 'Could not reach the lead connection: ' . $err, $type];
     if ($code >= 200 && $code < 300) return [true, '', $type];
     $j = json_decode($res, true);
@@ -2403,7 +2412,7 @@ function cmsSendForm($body) {
     $result = curl_exec($ch);
     $code   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curlErr= curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
 
     if ($curlErr) { http_response_code(500); echo json_encode(['error' => 'Mail failed: '.$curlErr]); return; }
     if ($code === 200) { echo json_encode(['ok' => true]); }
@@ -2467,7 +2476,7 @@ function cmsSendTestEmail($to, &$info) {
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_TIMEOUT        => 15,
         ]);
-        $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $ce = curl_error($ch); curl_close($ch);
+        $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $ce = curl_error($ch); fourgeCurlClose($ch);
         if ($ce) return [false, 'Mailgun connection error: ' . $ce];
         if ($code === 200) return [true, 'Test email sent over the Mailgun API to ' . $to . '. Check that inbox (and the spam folder).'];
         $d = json_decode($res, true);
@@ -2564,7 +2573,7 @@ function gaAccessToken() {
     $res  = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($err)  throw new Exception('Token request failed: ' . $err);
     $d = json_decode($res, true);
     if ($code !== 200 || empty($d['access_token'])) {
@@ -2599,7 +2608,7 @@ function gaReport($body) {
     $res  = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($err) { http_response_code(500); echo json_encode(['error' => 'GA API request failed: ' . $err]); return; }
     if ($code !== 200) {
         $d = json_decode($res, true);
@@ -2762,7 +2771,7 @@ function claudeProxy($body) {
     $res  = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
 
     if ($err) { http_response_code(502); echo json_encode(['error' => 'AI request failed: ' . $err]); return; }
     // Pass Anthropic's JSON straight through (success or structured error),
@@ -2774,6 +2783,40 @@ function claudeProxy($body) {
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTH + ACCOUNTS + SECRETS  (SQLite-backed — see db.php)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── ARCHITECT ACCOUNTS ───────────────────────────────────────────────────────
+// The agency's Architect accounts: level 4 on every Fourge site — every panel,
+// every secret, invisible to lower levels, and never deletable. A new site gets
+// them from its seed (data/users.json marks them architect:true); this list
+// keeps them that way on every site, including ones seeded before an address
+// was added to it: on each sign-in and signed-in request, an account whose
+// username or email is on the list is put back to Architect + Super Admin with
+// the full module set if anything changed it. Because of that, the addresses
+// are reserved: only an Architect can create an account with one or move an
+// account onto one, and team onboarding never provisions one — otherwise the
+// restore would hand Architect access to whoever made the account.
+// Kept in step with ARCHITECT_EMAILS in admin/index.html. A function, not a
+// const: a top-level const only exists once execution reaches its line, and
+// the dispatcher near the top of this file runs long before this point.
+function fourgeArchitectEmails() { return ['scott@44interactive.com', 'kellar@44interactive.com']; }
+function fourgeIsArchitectAddress($s) {
+    $s = strtolower(trim((string)$s));
+    return $s !== '' && in_array($s, fourgeArchitectEmails(), true);
+}
+// Restore every listed account that is not exactly Architect + Super Admin with
+// the full module set. A read first and a write only when something is off, so
+// the usual request costs one small SELECT and never takes a write lock.
+function fourgeEnsureArchitects($pdo) {
+    $list = fourgeArchitectEmails();
+    $in = implode(',', array_fill(0, count($list), '?'));
+    $st = $pdo->prepare("SELECT id FROM users WHERE (is_architect<>1 OR role<>'superadmin' OR permissions IS NOT NULL) AND (lower(username) IN ($in) OR lower(email) IN ($in))");
+    $st->execute(array_merge($list, $list));
+    $ids = $st->fetchAll(PDO::FETCH_COLUMN);
+    if (!$ids) return 0;
+    $up = $pdo->prepare("UPDATE users SET is_architect=1, role='superadmin', permissions=NULL, updated_at=? WHERE id=?");
+    foreach ($ids as $id) $up->execute([date('c'), (int)$id]);
+    return count($ids);
+}
 
 function fourgeApiLogin($body) {
     $pdo = fourgeDb();
@@ -2811,6 +2854,7 @@ function fourgeTryOnboard($pdo, $identifier, $password) {
     $at     = strrpos($email, '@');
     $domain = $at === false ? '' : substr($email, $at + 1);
     if ($domain === '' || $domain !== ONBOARD_EMAIL_DOMAIN) return null; // exact domain match
+    if (fourgeIsArchitectAddress($email)) return null;                   // an Architect address is never self-provisioned
     if (fourgeLoginTaken($pdo, $email, $email, 0)) return null;          // never override an existing account
     $now  = date('c');
     $hash = password_hash($password, fourgePwAlgo());
@@ -2869,6 +2913,9 @@ function fourgeApiSaveUser($me, $body) {
     $mustChange  = array_key_exists('mustChangePassword', $body) ? (!empty($body['mustChangePassword']) ? 1 : 0) : null;
     $display     = trim("$first $last");
     $now = date('c');
+    // An Architect address is reserved (see fourgeArchitectEmails).
+    $reserved = fourgeIsArchitectAddress($username) || fourgeIsArchitectAddress($email);
+    $reservedMsg = 'That address belongs to a Fourge Architect account. Only an Architect can add it or move an account onto it.';
 
     if ($id) {
         // ── EDIT ──
@@ -2876,8 +2923,9 @@ function fourgeApiSaveUser($me, $body) {
         $existing = $st->fetch();
         if (!$existing) { http_response_code(404); echo json_encode(['error' => 'User not found']); return; }
         if (!empty($existing['is_architect']) && empty($me['is_architect'])) {
-            http_response_code(403); echo json_encode(['error' => 'Only the Architect can modify the Architect account']); return;
+            http_response_code(403); echo json_encode(['error' => 'Only an Architect can modify an Architect account']); return;
         }
+        if ($reserved && empty($me['is_architect'])) { http_response_code(403); echo json_encode(['error' => $reservedMsg]); return; }
         if (fourgeLevel($existing) > $myLevel) {
             http_response_code(403); echo json_encode(['error' => 'You cannot manage that account']); return;
         }
@@ -2899,6 +2947,7 @@ function fourgeApiSaveUser($me, $body) {
         }
     } else {
         // ── CREATE ──
+        if ($reserved && empty($me['is_architect'])) { http_response_code(403); echo json_encode(['error' => $reservedMsg]); return; }
         if (strlen($pw) < 8) { http_response_code(400); echo json_encode(['error' => 'New accounts need a password of at least 8 characters']); return; }
         if (fourgeLoginTaken($pdo, $username, $email, 0)) {
             http_response_code(409); echo json_encode(['error' => 'That username or email is already in use']); return;
@@ -2910,6 +2959,8 @@ function fourgeApiSaveUser($me, $body) {
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
             ->execute([$username, $display, $email, $first, $last, $role, 0, $hash, $mustChange, $permissions, $now, $now]);
     }
+    // An Architect address saved by an Architect becomes, or stays, an Architect account.
+    try { fourgeEnsureArchitects($pdo); } catch (Throwable $e) {}
     echo json_encode(['ok' => true]);
 }
 
@@ -2920,7 +2971,7 @@ function fourgeApiDeleteUser($me, $body) {
     if ($username === strtolower($me['username'])) { http_response_code(400); echo json_encode(['error' => "You can't delete your own account"]); return; }
     $u = fourgeGetUser($pdo, $username);
     if (!$u) { http_response_code(404); echo json_encode(['error' => 'User not found']); return; }
-    if (!empty($u['is_architect'])) { http_response_code(403); echo json_encode(['error' => 'The Architect account cannot be deleted']); return; }
+    if (!empty($u['is_architect'])) { http_response_code(403); echo json_encode(['error' => 'An Architect account cannot be deleted']); return; }
     if (fourgeLevel($u) > fourgeLevel($me)) { http_response_code(403); echo json_encode(['error' => 'You cannot delete that account']); return; }
     $pdo->prepare("DELETE FROM users WHERE username=?")->execute([$username]);
     $pdo->prepare("DELETE FROM sessions WHERE username=?")->execute([$username]);
@@ -3408,7 +3459,7 @@ function fourgeBlogSyncFetchRemote($sourceUrl) {
         $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $loc  = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
         $err  = (string)curl_error($ch);
-        curl_close($ch);
+        fourgeCurlClose($ch);
         if ($code >= 300 && $code < 400) {
             if ($loc === '') return ['ok' => false, 'error' => 'the source redirected (HTTP ' . $code . ') without saying where', 'base' => $base];
             $lp = @parse_url($loc);
@@ -3551,7 +3602,7 @@ function fourgeBlogSyncDownloadMedia($absUrl) {
     $body = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $type = strtolower((string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE));
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($code !== 200 || !is_string($body) || $body === '' || strlen($body) > 52428800) return null;
     $lead = ltrim(substr($body, 0, 64));
     $isSvg = substr($rel, -4) === '.svg';
@@ -3874,7 +3925,7 @@ function fourgeBlogSyncPostJson($url, $payload, $timeout = 5) {
     $raw  = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = (string)curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     $j = is_string($raw) ? json_decode($raw, true) : null;
     return ['ok' => $code === 200 && is_array($j) && !empty($j['ok']), 'code' => $code, 'json' => is_array($j) ? $j : null, 'error' => $err];
 }
@@ -3926,7 +3977,7 @@ function fourgeApiBlogSyncSubscribe($body) {
     ]);
     $raw  = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     $j  = (is_string($raw) && strlen($raw) <= 1048576) ? json_decode($raw, true) : null;
     $bs = is_array($j) && is_array($j['blogSync'] ?? null) ? $j['blogSync'] : null;
     $cfgHost = $bs ? (string)parse_url((string)($bs['sourceUrl'] ?? ''), PHP_URL_HOST) : '';
@@ -4303,7 +4354,7 @@ function fourgeReviewsHttpGet($url, $headers = []) {
     $body = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     return ['body' => (string)$body, 'code' => $code, 'err' => $err];
 }
 // Normalise both API shapes into one review record.
@@ -4485,7 +4536,7 @@ function fourgeApiReviewsFindPlace($me, $body) {
     $body2 = (string)curl_exec($ch);
     $code  = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err   = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     $d = json_decode($body2, true);
     if ($code === 200 && isset($d['places'])) {
         $out = [];
@@ -4587,7 +4638,7 @@ function fourgeApiTlpFeed($me, $body) {
     $raw  = (string)curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
 
     if ($code === 0) {
         http_response_code(502);
@@ -4697,7 +4748,7 @@ function fourgeFleetReport() {
     ]);
     $res = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     return $code >= 200 && $code < 300 && $res !== false;
 }
 // ── MAP: ADDRESS → COORDINATES ──────────────────────────────────────────────
@@ -4719,7 +4770,7 @@ function fourgeMapGeocodeGoogle($key, $addr) {
     ]);
     $raw  = (string)curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($code !== 200) return null;
     $d  = json_decode($raw, true);
     $pl = $d['places'][0] ?? null;
@@ -4743,7 +4794,7 @@ function fourgeMapGeocodeOsm($addr) {
     ]);
     $raw  = (string)curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($code !== 200) return null;
     $d = json_decode($raw, true);
     $r = (is_array($d) && isset($d[0])) ? $d[0] : null;
@@ -5045,7 +5096,7 @@ function fourgeCanonicalHostVerify($t) {
     ]);
     $raw = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $eff = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL); $err = (string)curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($raw === false || $code === 0) return ['verdict' => 'unreachable', 'detail' => $err !== '' ? $err : 'no answer'];
     $effHost = strtolower((string)@parse_url($eff, PHP_URL_HOST));
     if ($effHost !== '' && $effHost !== $host) return ['verdict' => 'mismatch', 'detail' => 'it redirects to ' . $effHost . ' — set the Website URL to the address the site settles on'];
@@ -5199,7 +5250,7 @@ function fourgeSecretExposure($baseUrl = '') {
         $body = (string)curl_exec($ch);
         $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err  = curl_error($ch);
-        curl_close($ch);
+        fourgeCurlClose($ch);
         $row = ['label' => $label, 'path' => '/' . $rel, 'status' => $code];
         if ($code === 0) { $row['verdict'] = 'unknown'; $row['detail'] = 'Could not reach the site from the server itself' . ($err ? ' (' . $err . ')' : '') . '.'; $unknown++; }
         elseif ($code === 200 || $code === 206) {
@@ -5235,7 +5286,7 @@ function fourgeOutboundIp() {
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_SSL_VERIFYPEER => true]);
     $ip = trim((string)curl_exec($ch));
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($code === 200 && filter_var($ip, FILTER_VALIDATE_IP)) return ['outbound' => $ip, 'local' => $local];
     return ['outbound' => '', 'local' => $local];
 }
@@ -5393,7 +5444,7 @@ function fourgeAiText($system, $user, $max = 400) {
     $res = (string)curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($err) return ['error' => 'Could not reach Anthropic: ' . $err];
     $d = json_decode($res, true);
     if ($code !== 200) {
@@ -5432,7 +5483,7 @@ function fourgeAiTextCustomEndpoint($cfg, $system, $user, $max) {
     $res = (string)curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
     if ($err) return ['error' => 'Could not reach the custom AI endpoint: ' . $err];
     $d = json_decode($res, true);
     if ($code !== 200) {
@@ -7000,7 +7051,7 @@ function fourgeApiRepoFetch($me, $body) {
         $res  = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err  = curl_error($ch);
-        curl_close($ch);
+        fourgeCurlClose($ch);
         if (!$err && $code >= 200 && $code < 300 && $res !== '') {
             echo json_encode(['ok' => true, 'content' => $res, 'source' => 'api', 'branch' => $branch]);
             return;
@@ -7033,7 +7084,7 @@ function fourgeApiRepoFetch($me, $body) {
     $res  = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
-    curl_close($ch);
+    fourgeCurlClose($ch);
 
     if ($err) { http_response_code(502); echo json_encode(['error' => 'Repo fetch failed: ' . $err]); return; }
     if ($code < 200 || $code >= 300) {
