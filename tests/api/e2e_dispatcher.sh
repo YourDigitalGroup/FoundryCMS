@@ -20,9 +20,12 @@ return [
   'db_path'       => __DIR__ . '/fourge-e2e.db',
   'api_token'     => 'e2e-api-token',
   'require_https' => false,
+  'onboard_password' => 'E2eOnboard!234',
 ];
 PHP
 php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"admin@44interactive.com","E2ePass!234"); $pdo->exec("UPDATE users SET must_change_password=0, is_architect=1 WHERE username=\"admin@44interactive.com\""); fourgeSetPassword($pdo,"editor44i","E2ePass!234"); $pdo->exec("UPDATE users SET role=\"superadmin\", must_change_password=0, is_architect=0 WHERE username=\"editor44i\""); $u=fourgeGetUser($pdo,"admin@44interactive.com"); echo "user ready: role=",($u["role"]??"?"),"\n";' "$S" || { echo "FAIL could not prepare the test DB"; exit 1; }
+php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"kellar@44interactive.com","E2ePass!234"); $pdo->prepare("UPDATE users SET is_architect=0, role=?, permissions=?, must_change_password=0 WHERE username=?")->execute(["admin","{\"pages\":true}","kellar@44interactive.com"]); $u=fourgeGetUser($pdo,"kellar@44interactive.com"); echo "kellar ready as on an older site: role=",$u["role"]," architect=",$u["is_architect"],"\n";' "$S" || { echo "FAIL could not prepare Kellar"; exit 1; }
+dbq(){ php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); eval($argv[2]);' "$S" "$1"; }
 # the stand-in for api.github.com (tests/lib/gh_stub.php) — the engine is pointed at it with FOURGE_GH_API_BASE
 mkdir -p "$S.ghroot"; rm -f "$GHLOG" "$GHSTATE"; echo ok > "$GHMODE"
 php -S 127.0.0.1:$GHPORT -t "$S.ghroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/gh_stub.php" > "$S.ghstub.log" 2>&1 &
@@ -233,6 +236,51 @@ call "blog_sync_admin notify (no partners)" '{"action":"blog_sync_admin","op":"n
 call "blog_sync_tick" '{"action":"blog_sync_tick"}'
 call "recaptcha_status" '{"action":"recaptcha_status"}'
 call "seo_pkg_admin status" '{"action":"seo_pkg_admin","op":"status"}'
+# ── Architect accounts: Scott and Kellar are Architects on every site (1.14.148) ────────────────
+ARCH_TOK3="$TOK"
+call "login as kellar@44interactive.com (a plain admin here, as on a site seeded before he was an Architect)" '{"action":"login","username":"kellar@44interactive.com","password":"E2ePass!234"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); u=d["user"]; assert u["architect"] is True and u["role"]=="superadmin" and u["permissions"]=={}, u' && chk 0 "Kellar signs in as an Architect and Super Admin with every module: restored before his first sign-in on the new engine" || chk 1 "Kellar promotion — got: $(printf '%s' "$LAST" | head -c 300)"
+KTOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
+KID=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user"]["id"])' 2>/dev/null)
+TOK="$KTOK"
+call "get_secrets as Kellar" '{"action":"get_secrets"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("status") or {}; assert d.get("level")==4 and "github_pat" in s and "repo_override" in s and "claude_key" in s, d' && chk 0 "…with Architect access to every secret: the GitHub token, repository override and AI key settings are his" || chk 1 "get_secrets as Kellar — got: $(printf '%s' "$LAST" | head -c 300)"
+call "list_users as Kellar" '{"action":"list_users"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); n=[u["username"] for u in d["users"]]; assert "scott@44interactive.com" in n and "admin@44interactive.com" in n, n' && chk 0 "…and sees the other Architect accounts, Scott included" || chk 1 "list_users as Kellar — got: $(printf '%s' "$LAST" | head -c 300)"
+call "login as the Super Admin" '{"action":"login","username":"editor44i","password":"E2ePass!234"}'
+TOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
+call "list_users as a Super Admin" '{"action":"list_users"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); n=[u["username"] for u in d["users"]]; assert "kellar@44interactive.com" not in n and "scott@44interactive.com" not in n, n' && chk 0 "Architect accounts stay invisible to a Super Admin, Kellar's now as Scott's" || chk 1 "list_users as a Super Admin — got: $(printf '%s' "$LAST" | head -c 300)"
+call "save_user demoting Kellar as a Super Admin" "{\"action\":\"save_user\",\"id\":$KID,\"username\":\"kellar@44interactive.com\",\"email\":\"kellar@44interactive.com\",\"role\":\"editor\"}"
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("error")=="Only an Architect can modify an Architect account", d' && chk 0 "a Super Admin cannot change Kellar's account" || chk 1 "edit Kellar as a Super Admin — got: $(printf '%s' "$LAST" | head -c 300)"
+call "delete_user Kellar as a Super Admin" '{"action":"delete_user","username":"kellar@44interactive.com"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("error")=="An Architect account cannot be deleted", d' && chk 0 "…or delete it" || chk 1 "delete Kellar as a Super Admin — got: $(printf '%s' "$LAST" | head -c 300)"
+call "save_user creating an account with an Architect address as a Super Admin" '{"action":"save_user","username":"scott2","email":"scott@44interactive.com","role":"editor","password":"Whatever!234"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "belongs to a Fourge Architect account" in d.get("error",""), d' && chk 0 "a Super Admin cannot create an account with an Architect address (it would be promoted)" || chk 1 "reserved create — got: $(printf '%s' "$LAST" | head -c 300)"
+call "save_user creating a plain editor as a Super Admin" '{"action":"save_user","username":"e2e-plain@example.com","email":"e2e-plain@example.com","role":"editor","password":"Whatever!234"}'
+call "list_users (find the plain editor)" '{"action":"list_users"}'
+PID=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print([u["id"] for u in json.load(sys.stdin)["users"] if u["username"]=="e2e-plain@example.com"][0])' 2>/dev/null)
+call "save_user moving that editor onto Kellar's address as a Super Admin" "{\"action\":\"save_user\",\"id\":$PID,\"username\":\"e2e-plain@example.com\",\"email\":\"kellar@44interactive.com\",\"role\":\"editor\"}"
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "belongs to a Fourge Architect account" in d.get("error",""), d' && chk 0 "…nor move an existing account onto one" || chk 1 "reserved edit — got: $(printf '%s' "$LAST" | head -c 300)"
+TOK="$ARCH_TOK3"
+call "save_user demoting Kellar to editor as an Architect" "{\"action\":\"save_user\",\"id\":$KID,\"username\":\"kellar@44interactive.com\",\"email\":\"kellar@44interactive.com\",\"role\":\"editor\",\"permissions\":{\"pages\":true}}"
+call "list_users as an Architect" '{"action":"list_users"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); k=[u for u in d["users"] if u["username"]=="kellar@44interactive.com"][0]; assert k["architect"] is True and k["role"]=="superadmin" and k["permissions"]=={}, k' && chk 0 "a demotion does not stick, even by an Architect: Kellar is back to Architect and Super Admin at once" || chk 1 "demotion self-heal — got: $(printf '%s' "$LAST" | head -c 300)"
+call "delete_user Kellar as an Architect" '{"action":"delete_user","username":"kellar@44interactive.com"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("error")=="An Architect account cannot be deleted", d' && chk 0 "no one can delete an Architect account" || chk 1 "delete Kellar as an Architect — got: $(printf '%s' "$LAST" | head -c 300)"
+dbq '$pdo->prepare("DELETE FROM sessions WHERE username=?")->execute(["kellar@44interactive.com"]); $pdo->prepare("DELETE FROM users WHERE username=?")->execute(["kellar@44interactive.com"]);'
+TOK=""
+call "sign in as Kellar with the team onboarding password on a site without his account" '{"action":"login","username":"kellar@44interactive.com","password":"E2eOnboard!234"}'
+[ "$(dbq '$s=$pdo->prepare("SELECT COUNT(*) FROM users WHERE lower(username)=? OR lower(email)=?"); $s->execute(["kellar@44interactive.com","kellar@44interactive.com"]); echo $s->fetchColumn();')" = 0 ] && printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("error")=="Invalid login or password", d' && chk 0 "the team onboarding password never creates an Architect account" || chk 1 "onboarding an Architect address — got: $(printf '%s' "$LAST" | head -c 300)"
+call "sign in as new.hire@44interactive.com with the team onboarding password" '{"action":"login","username":"new.hire@44interactive.com","password":"E2eOnboard!234"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); u=d["user"]; assert u["role"]=="editor" and u["architect"] is False, u' && chk 0 "…while it still onboards an ordinary team address as an editor" || chk 1 "onboarding — got: $(printf '%s' "$LAST" | head -c 300)"
+TOK="$ARCH_TOK3"
+call "save_user creating Kellar's account as an Architect, on a site that lacks it" '{"action":"save_user","username":"kellar@44interactive.com","email":"kellar@44interactive.com","firstName":"Kellar","role":"editor","password":"E2ePass!234"}'
+TOK=""
+call "login as the newly added Kellar" '{"action":"login","username":"kellar@44interactive.com","password":"E2ePass!234"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); u=d["user"]; assert u["architect"] is True and u["role"]=="superadmin", u' && chk 0 "an Architect can add the account where a site lacks it, and it is an Architect account from the start" || chk 1 "Architect-created Kellar — got: $(printf '%s' "$LAST" | head -c 300)"
+TOK="$ARCH_TOK3"
+
 TOK=""
 call "blog_sync_poke (public)" '{"action":"blog_sync_poke"}'
 call "blog_sync_poke with push from a non-source (public)" '{"action":"blog_sync_poke","push":1,"source":"https://evil.example"}'

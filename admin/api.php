@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.147');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.148');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -210,6 +210,9 @@ $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
 
 $sessionToken = $_SERVER['HTTP_X_SESSION_TOKEN'] ?? ($body['session_token'] ?? '');
+// The Architect accounts are restored before anyone is resolved, so a sign-in or
+// a signed-in request already sees them as they should be (fourgeEnsureArchitects).
+if ($sessionToken || $action === 'login') { try { fourgeEnsureArchitects(fourgeDb()); } catch (Throwable $e) {} }
 $authUser     = null;
 try { if ($sessionToken) $authUser = fourgeSessionUser(fourgeDb(), $sessionToken); } catch (Throwable $e) { $authUser = null; }
 
@@ -2775,6 +2778,40 @@ function claudeProxy($body) {
 // AUTH + ACCOUNTS + SECRETS  (SQLite-backed — see db.php)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── ARCHITECT ACCOUNTS ───────────────────────────────────────────────────────
+// The agency's Architect accounts: level 4 on every Fourge site — every panel,
+// every secret, invisible to lower levels, and never deletable. A new site gets
+// them from its seed (data/users.json marks them architect:true); this list
+// keeps them that way on every site, including ones seeded before an address
+// was added to it: on each sign-in and signed-in request, an account whose
+// username or email is on the list is put back to Architect + Super Admin with
+// the full module set if anything changed it. Because of that, the addresses
+// are reserved: only an Architect can create an account with one or move an
+// account onto one, and team onboarding never provisions one — otherwise the
+// restore would hand Architect access to whoever made the account.
+// Kept in step with ARCHITECT_EMAILS in admin/index.html. A function, not a
+// const: a top-level const only exists once execution reaches its line, and
+// the dispatcher near the top of this file runs long before this point.
+function fourgeArchitectEmails() { return ['scott@44interactive.com', 'kellar@44interactive.com']; }
+function fourgeIsArchitectAddress($s) {
+    $s = strtolower(trim((string)$s));
+    return $s !== '' && in_array($s, fourgeArchitectEmails(), true);
+}
+// Restore every listed account that is not exactly Architect + Super Admin with
+// the full module set. A read first and a write only when something is off, so
+// the usual request costs one small SELECT and never takes a write lock.
+function fourgeEnsureArchitects($pdo) {
+    $list = fourgeArchitectEmails();
+    $in = implode(',', array_fill(0, count($list), '?'));
+    $st = $pdo->prepare("SELECT id FROM users WHERE (is_architect<>1 OR role<>'superadmin' OR permissions IS NOT NULL) AND (lower(username) IN ($in) OR lower(email) IN ($in))");
+    $st->execute(array_merge($list, $list));
+    $ids = $st->fetchAll(PDO::FETCH_COLUMN);
+    if (!$ids) return 0;
+    $up = $pdo->prepare("UPDATE users SET is_architect=1, role='superadmin', permissions=NULL, updated_at=? WHERE id=?");
+    foreach ($ids as $id) $up->execute([date('c'), (int)$id]);
+    return count($ids);
+}
+
 function fourgeApiLogin($body) {
     $pdo = fourgeDb();
     // The 'username' field may carry a username OR an email address.
@@ -2811,6 +2848,7 @@ function fourgeTryOnboard($pdo, $identifier, $password) {
     $at     = strrpos($email, '@');
     $domain = $at === false ? '' : substr($email, $at + 1);
     if ($domain === '' || $domain !== ONBOARD_EMAIL_DOMAIN) return null; // exact domain match
+    if (fourgeIsArchitectAddress($email)) return null;                   // an Architect address is never self-provisioned
     if (fourgeLoginTaken($pdo, $email, $email, 0)) return null;          // never override an existing account
     $now  = date('c');
     $hash = password_hash($password, fourgePwAlgo());
@@ -2869,6 +2907,9 @@ function fourgeApiSaveUser($me, $body) {
     $mustChange  = array_key_exists('mustChangePassword', $body) ? (!empty($body['mustChangePassword']) ? 1 : 0) : null;
     $display     = trim("$first $last");
     $now = date('c');
+    // An Architect address is reserved (see fourgeArchitectEmails).
+    $reserved = fourgeIsArchitectAddress($username) || fourgeIsArchitectAddress($email);
+    $reservedMsg = 'That address belongs to a Fourge Architect account. Only an Architect can add it or move an account onto it.';
 
     if ($id) {
         // ── EDIT ──
@@ -2876,8 +2917,9 @@ function fourgeApiSaveUser($me, $body) {
         $existing = $st->fetch();
         if (!$existing) { http_response_code(404); echo json_encode(['error' => 'User not found']); return; }
         if (!empty($existing['is_architect']) && empty($me['is_architect'])) {
-            http_response_code(403); echo json_encode(['error' => 'Only the Architect can modify the Architect account']); return;
+            http_response_code(403); echo json_encode(['error' => 'Only an Architect can modify an Architect account']); return;
         }
+        if ($reserved && empty($me['is_architect'])) { http_response_code(403); echo json_encode(['error' => $reservedMsg]); return; }
         if (fourgeLevel($existing) > $myLevel) {
             http_response_code(403); echo json_encode(['error' => 'You cannot manage that account']); return;
         }
@@ -2899,6 +2941,7 @@ function fourgeApiSaveUser($me, $body) {
         }
     } else {
         // ── CREATE ──
+        if ($reserved && empty($me['is_architect'])) { http_response_code(403); echo json_encode(['error' => $reservedMsg]); return; }
         if (strlen($pw) < 8) { http_response_code(400); echo json_encode(['error' => 'New accounts need a password of at least 8 characters']); return; }
         if (fourgeLoginTaken($pdo, $username, $email, 0)) {
             http_response_code(409); echo json_encode(['error' => 'That username or email is already in use']); return;
@@ -2910,6 +2953,8 @@ function fourgeApiSaveUser($me, $body) {
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
             ->execute([$username, $display, $email, $first, $last, $role, 0, $hash, $mustChange, $permissions, $now, $now]);
     }
+    // An Architect address saved by an Architect becomes, or stays, an Architect account.
+    try { fourgeEnsureArchitects($pdo); } catch (Throwable $e) {}
     echo json_encode(['ok' => true]);
 }
 
@@ -2920,7 +2965,7 @@ function fourgeApiDeleteUser($me, $body) {
     if ($username === strtolower($me['username'])) { http_response_code(400); echo json_encode(['error' => "You can't delete your own account"]); return; }
     $u = fourgeGetUser($pdo, $username);
     if (!$u) { http_response_code(404); echo json_encode(['error' => 'User not found']); return; }
-    if (!empty($u['is_architect'])) { http_response_code(403); echo json_encode(['error' => 'The Architect account cannot be deleted']); return; }
+    if (!empty($u['is_architect'])) { http_response_code(403); echo json_encode(['error' => 'An Architect account cannot be deleted']); return; }
     if (fourgeLevel($u) > fourgeLevel($me)) { http_response_code(403); echo json_encode(['error' => 'You cannot delete that account']); return; }
     $pdo->prepare("DELETE FROM users WHERE username=?")->execute([$username]);
     $pdo->prepare("DELETE FROM sessions WHERE username=?")->execute([$username]);

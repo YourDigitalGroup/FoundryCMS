@@ -30,6 +30,7 @@ browser suites never depend on the CDN.
 
 | Suite | Covers |
 |---|---|
+| `architects.mjs` | The Architect accounts in the admin: Scott and Kellar recognized by flag or address in any case, level 4 even on an older session, every Architect-only, Super Admin-only and admin-only setting shown with the full module set, and a Super Admin stopped from editing or deleting an Architect account without anything reaching the server |
 | `api_version_banner.mjs` | 1.14.136: the sign-in check that notices an older `api.php` (ping → `api_version`), the banner text, the one-click byte-verified install, refusal reasons shown verbatim |
 | `code_editor.mjs` | 1.14.137: line-number click / shift-click selection, active line, ⌘/Ctrl+F in-editor search finding off-screen matches, Esc, document-level routing of the shortcut |
 | `element_css.mjs` | 1.14.137: Element CSS — every rule that applies to a selected element (inline, `<style>` blocks, `.css` files, @media/state/pseudo variants, editor overrides, engine read-only, inherited), surgical textual edits, file save with backup and drift refusal, bridge overrides, Add-a-rule, Revert. Loads `fixtures/elcss/` through the normal Pages flow |

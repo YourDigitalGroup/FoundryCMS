@@ -2845,7 +2845,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.147';
+const CMS_VERSION='1.14.148';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3589,15 +3589,17 @@ function updateUserDisplay(){
   if(nm)nm.textContent=(((u.firstName||'')+' '+(u.lastName||'')).trim())||u.displayName||u.username||'Account';
   const em=document.getElementById('tb-user-menu-email');if(em)em.textContent=u.email||u.username||'';
 }
-// ── ARCHITECT ────────────────────────────────────────────────────────────
-// The single account allowed to view/edit GitHub + secret keys. Identified by
-// an explicit architect:true flag in users.json, with the architect email as a
-// fallback so the account is recognized even if the flag is ever dropped.
-const ARCHITECT_EMAIL = 'scott@44interactive.com';
+// ── ARCHITECTS ───────────────────────────────────────────────────────────
+// The agency's Architect accounts: the only ones that view or edit GitHub and
+// the secret keys, at level 4 on every site. The server marks them
+// (architect:true in the session) and keeps them that way everywhere; the
+// addresses are a fallback so they are recognized even if the flag is ever
+// missing. Kept in step with fourgeArchitectEmails() in api.php.
+const ARCHITECT_EMAILS = ['scott@44interactive.com','kellar@44interactive.com'];
 function isArchitect(u){
   if(!u) return false;
   if(u.architect===true) return true;
-  return String(u.username||u.email||'').toLowerCase() === ARCHITECT_EMAIL;
+  return [u.username,u.email].some(x=>ARCHITECT_EMAILS.includes(String(x||'').trim().toLowerCase()));
 }
 // Effective access level for visibility checks. The Architect sits ABOVE Super
 // Admin (4) so that no Super Admin can ever see the Architect account, and no
@@ -3634,10 +3636,14 @@ const EDITOR_MODULES = [
 ];
 
 function getEffectivePerms(user){
-  const role = (user&&user.role)||'editor';
+  // An Architect always works with the full Super Admin module set, and no
+  // per-user override (say, from an older session saved under another role)
+  // can take a module away.
+  const arch = isArchitect(user);
+  const role = arch ? 'superadmin' : ((user&&user.role)||'editor');
   const defaults = ROLE_DEFAULTS[role]||ROLE_DEFAULTS.editor;
   // User-specific overrides layered on top of role defaults
-  const perms = Object.assign({}, defaults, user&&user.permissions||{});
+  const perms = Object.assign({}, defaults, arch ? {} : (user&&user.permissions||{}));
   perms.seo = true;   // SEO is always on — old saved per-user overrides can't hide it
   return perms;
 }
@@ -3645,13 +3651,13 @@ function getEffectivePerms(user){
 function applyRole(){
   const user = getSessionUser();
   const role = user.role||'editor';
-  const rank = ROLE_RANK[role]||1;
+  const rank = accessLevel(user);   // an Architect outranks every role, whatever role its session carries
   const perms = getEffectivePerms(user);
 
   // admin-only elements (old class-based)
   document.querySelectorAll('.admin-only').forEach(el=>el.style.display=rank>=2?'':'none');
   document.querySelectorAll('.superadmin-only').forEach(el=>el.style.display=rank>=3?'':'none');
-  // architect-only elements (GitHub + secret keys) — only the single Architect account.
+  // architect-only elements (GitHub + secret keys) — only the Architect accounts.
   // Explicit 'block', not '' — .architect-only{display:none} is a CSS CLASS rule
   // (see the stylesheet), and clearing an inline style only removes an inline
   // override; it falls back to the cascade, where that class rule still applies.
@@ -13637,7 +13643,7 @@ async function saveEditUser(){
   const role=document.getElementById('eu-role').value;
   const me=getSessionUser();
   const target=_users[i]||{};
-  if(isArchitect(target) && !isArchitect(me)){toast('Only the Architect can modify the Architect account','err');return;}
+  if(isArchitect(target) && !isArchitect(me)){toast('Only an Architect can modify an Architect account','err');return;}
   if(String(target.username||'').toLowerCase()===String(me.username||'').toLowerCase()){toast('Use Change Password to update your own account','err');return;}
   if((ROLE_RANK[role]||1) > accessLevel(me)){toast('You cannot assign a role above your own','err');return;}
   if(pw && pw.length<8){toast('Password must be at least 8 characters','err');return;}
@@ -13668,7 +13674,7 @@ async function deleteUser(){
   const i=parseInt(document.getElementById('eu-id').dataset.idx);
   const me=getSessionUser();
   const target=_users[i]||{};
-  if(isArchitect(target) && !isArchitect(me)){toast('Only the Architect can delete the Architect account','err');return;}
+  if(isArchitect(target) && !isArchitect(me)){toast('Only an Architect can delete an Architect account','err');return;}
   if(String(target.username||'').toLowerCase()===String(me.username||'').toLowerCase()){toast("You can't delete your own account",'err');return;}
   if(!(await uiConfirm('Delete user '+target.username+'?', 'Delete user', 'Delete user')))return;
   try{
