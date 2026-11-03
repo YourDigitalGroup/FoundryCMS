@@ -56,7 +56,9 @@ call "ping" '{"action":"ping"}'
 V=$(python3 -c "import json;print(json.load(open('$SRC/admin/version.json'))['version'])")
 printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('api_version')=='$V' and d.get('version')=='$V', d" && chk 0 "ping reports api_version $V (1.14.136: the sign-in stale-api check reads this)" || chk 1 "ping api_version — got: $LAST"
 call "session" '{"action":"session"}'
+[ -f "$S/fleet-dashboard/index.html" ] && chk 0 "the site copy carries fleet-dashboard/, as a site built from this repository does" || chk 1 "the e2e copy has no fleet-dashboard/ to remove"
 call "install_clean_urls (login self-heal chain: htaccess, blog sync tick…)" '{"action":"install_clean_urls"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("fleetDashboardCopy")=="removed", d' && [ ! -e "$S/fleet-dashboard" ] && chk 0 "the sign-in self-heal removes that Fleet Dashboard copy from the site (fleetDashboardCopy: removed)" || chk 1 "fleet copy removal — got: $(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("fleetDashboardCopy"))' 2>/dev/null) / left: $(ls -A "$S/fleet-dashboard" 2>&1 | tr '\n' ' ')"
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("cacheHeaders") is True, d' && chk 0 "install_clean_urls reports cacheHeaders:true (the managed browser-caching block)" || chk 1 "cacheHeaders — got: $(printf '%s' "$LAST" | head -c 200)"
 HT="$S/.htaccess"
 grep -q '^# BEGIN Fourge cache headers' "$HT" && grep -q '^# END Fourge cache headers' "$HT" && [ "$(grep -c '^# BEGIN Fourge cache headers' "$HT")" = 1 ] && chk 0 ".htaccess carries exactly one managed cache block after sign-in" || chk 1 "cache block markers in .htaccess: $(grep -c 'Fourge cache headers' "$HT")"
@@ -79,6 +81,15 @@ printf '<html><head><title>E2E list</title></head><body><div data-fourge-posts><
 call "list_pages" '{"action":"list_pages"}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("postsHtml") is False; m={p["path"]:p for p in d["pages"]}; assert m["e2e-postlist.html"]["has_post_list"] is True and m["e2e-plain.html"]["has_post_list"] is False' && chk 0 "list_pages reports postsHtml and has_post_list" || chk 1 "list_pages keys — got: $(printf '%s' "$LAST" | head -c 300)"
 rm -f "$S/e2e-postlist.html" "$S/e2e-plain.html"
+cp -r "$SRC/fleet-dashboard" "$S/fleet-dashboard"; printf '<?php return [];\n' > "$S/fleet-dashboard/config.secret.php"
+call "install_clean_urls (a SET-UP Fleet Dashboard lives in this web root)" '{"action":"install_clean_urls"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("fleetDashboardCopy")=="kept", d' && [ -f "$S/fleet-dashboard/index.html" ] && [ -f "$S/fleet-dashboard/config.secret.php" ] && chk 0 "a Fleet Dashboard that has been set up (config.secret.php) is never removed (kept)" || chk 1 "set-up dashboard — got: $(printf '%s' "$LAST" | head -c 200)"
+call "list_pages (with that dashboard in the web root)" '{"action":"list_pages"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=[x["path"] for x in d["pages"]]; assert not [x for x in p if x.lower().startswith("fleet-dashboard/")], p' && chk 0 "…and is never listed as a page of the site" || chk 1 "list_pages listed the dashboard: $(printf '%s' "$LAST" | head -c 300)"
+rm -f "$S/fleet-dashboard/config.secret.php"; printf 'notes' > "$S/fleet-dashboard/notes.txt"
+call "install_clean_urls (the folder also holds a file of the site's own)" '{"action":"install_clean_urls"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("fleetDashboardCopy")=="kept", d' && [ -f "$S/fleet-dashboard/notes.txt" ] && [ -f "$S/fleet-dashboard/index.html" ] && chk 0 "a fleet-dashboard folder holding anything beyond the dashboard's own files is left exactly as it is" || chk 1 "foreign file — got: $(printf '%s' "$LAST" | head -c 200)"
+rm -rf "$S/fleet-dashboard"
 call "list_media" '{"action":"list_media"}'
 call "list_users" '{"action":"list_users"}'
 call "read_file data/site.json" '{"action":"read_file","path":"data/site.json"}'
@@ -144,6 +155,12 @@ PY
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["pushed"]==0 and d.get("commit") is None and d["failed"]==0 and d["upToDate"]==d["total"]-d["skipped"], d' && ghlog 'assert not [l for l in log if l["m"] in ("POST","PUT","PATCH")], log' && chk 0 "a second sync finds everything current: 0 pushed, no commit, nothing written to GitHub" || chk 1 "second sync — got: $(printf '%s' "$LAST" | head -c 300)"
 call "gh_test" '{"action":"gh_test"}'
 printf '%s' "$LAST" | python3 -c 'import json,sys,re; d=json.load(sys.stdin); assert d.get("ok") and d["login"]=="stub-user" and d["repo"]=="stub/site" and d["private"] is True and d["canPush"] is True and re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$", d.get("expires","")), d' && chk 0 "gh_test: login, repo, private, canPush and the token expiry from GitHub's header ($(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["expires"])'))" || chk 1 "gh_test — got: $(printf '%s' "$LAST" | head -c 300)"
+# a Fleet Dashboard copy that reached the site's repository is removed there too, so a deploy can't bring it back (1.14.150)
+cp -r "$SRC/fleet-dashboard" "$S/fleet-dashboard"; gh_sync
+python3 -c "import json; s=json.load(open('$GHSTATE')); t=s['trees'][s['commits'][s['refs']['main']]['tree']]; assert all(('fleet-dashboard/'+f) in t for f in ('index.html','api.php','config.secret.example.php','.htaccess','data/.htaccess')), sorted(t)" && chk 0 "(setup) the copy is in the site's repository, as a mirrored site would have it" || chk 1 "setup: fleet-dashboard not mirrored"
+: > "$GHLOG"
+call "install_clean_urls (an unconfigured Fleet Dashboard copy, also in the repository)" '{"action":"install_clean_urls"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("fleetDashboardCopy")=="removed", d' && [ ! -e "$S/fleet-dashboard" ] && ghlog 'd=[l for l in log if l["m"]=="DELETE"]; assert sorted(l["p"].split("/contents/",1)[1] for l in d)==sorted("fleet-dashboard/"+f for f in ("index.html","api.php","config.secret.example.php",".htaccess","data/.htaccess")) and all(l["msg"].endswith("[skip ci]") for l in d), d' && python3 -c "import json; s=json.load(open('$GHSTATE')); t=s['trees'][s['commits'][s['refs']['main']]['tree']]; assert not [p for p in t if p.startswith('fleet-dashboard/')], sorted(t)" && chk 0 "the copy is removed from the server and from the site's repository (5 deletes, each [skip ci])" || chk 1 "repo prune — got: $(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("fleetDashboardCopy"))' 2>/dev/null) / log: $(head -c 400 "$GHLOG")"
 # a Super Admin (no architect flag) runs the sync and the test; the token itself stays Architect-only (1.14.142)
 ARCH_TOK="$TOK"
 call "login as a Super Admin" '{"action":"login","username":"editor44i","password":"E2ePass!234"}'

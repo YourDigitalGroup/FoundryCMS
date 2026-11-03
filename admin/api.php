@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.149');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.150');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -131,9 +131,11 @@ define('SKIP_PATHS', [
 // Directories to never recurse into. 'data' holds the CMS's own files —
 // pages.json, site.json, and revision snapshots written on every save
 // (data/rev_rev_<ts>.html) — which must never be scanned as editable pages.
+// 'fleet-dashboard' is the agency's Fleet Dashboard tool, not a page of the
+// site, wherever a copy of it ends up (see fourgeRemoveStrayFleetDashboard).
 define('SKIP_DIRS', [
     'admin', '.git', '.github', 'node_modules', 'vendor',
-    'cgi-bin', 'wp-admin', 'wp-includes', 'data',
+    'cgi-bin', 'wp-admin', 'wp-includes', 'data', 'fleet-dashboard',
 ]);
 
 // Pattern that uniquely identifies a Fourge CMS shell.
@@ -6358,6 +6360,47 @@ function fourgeAiDailyTick() {
     catch (Throwable $e) { return false; }
 }
 
+// ── THE FLEET DASHBOARD'S FOLDER ON CLIENT SITES ─────────────────────────────
+// The Fleet Dashboard (fleet-dashboard/) is a separate tool, set up once on its
+// own, but it lives in the same repository as the engine — so a site built from
+// that repository deployed a copy into its web root, where the page scan listed
+// its index.html as one of the site's pages and anyone could open it. A copy that
+// was never set up is removed at sign-in: from the server, and from the site's
+// own repository, so a later deploy can't put it back. Nothing else is touched —
+// a set-up dashboard (config.secret.php or data/sites.json present), a folder
+// holding anything beyond the dashboard's own files, or one whose files aren't
+// the dashboard's stays exactly as it is ('kept'). The page scan skips the folder
+// either way (SKIP_DIRS). Answers absent / kept / removed / partly.
+// A function, not a const: the dispatcher runs before execution reaches a const defined down here.
+function fourgeFleetCopyFiles() { return ['index.html', 'api.php', 'config.secret.example.php', '.htaccess', 'data/.htaccess']; }
+function fourgeRemoveStrayFleetDashboard() {
+    $dir = PUBLIC_HTML . '/fleet-dashboard';
+    if (!is_dir($dir)) return 'absent';
+    if (is_file($dir . '/config.secret.php') || is_file($dir . '/data/sites.json')) return 'kept';
+    foreach (['', 'data'] as $sub) {
+        $p = $sub === '' ? $dir : $dir . '/' . $sub;
+        if ($sub !== '' && !is_dir($p)) continue;
+        $items = @scandir($p);
+        if (!is_array($items)) return 'kept';
+        foreach ($items as $f) {
+            if ($f === '.' || $f === '..' || ($sub === '' && $f === 'data' && is_dir($p . '/data'))) continue;
+            if (!in_array(($sub === '' ? '' : $sub . '/') . $f, fourgeFleetCopyFiles(), true)) return 'kept';   // something of the site's own lives here
+        }
+    }
+    $idx = (string)@file_get_contents($dir . '/index.html');
+    $api = (string)@file_get_contents($dir . '/api.php');
+    if (stripos($idx, '<title>Fleet Dashboard</title>') === false && strpos($api, 'Fleet Dashboard') === false) return 'kept';
+    foreach (fourgeFleetCopyFiles() as $f) { if (is_file($dir . '/' . $f)) @unlink($dir . '/' . $f); }
+    if (is_dir($dir . '/data')) @rmdir($dir . '/data');
+    @rmdir($dir);
+    if (is_dir($dir)) return 'partly';
+    foreach (fourgeFleetCopyFiles() as $f) {   // and out of the site's repository (each commit [skip ci]); stop at the first GitHub problem
+        try { $r = cmsGhDeletePath('fleet-dashboard/' . $f, 'Fourge: remove the Fleet Dashboard copy (fleet-dashboard/' . $f . ')'); }
+        catch (Throwable $e) { break; }
+        if (empty($r['ok'])) break;
+    }
+    return 'removed';
+}
 function fourgeApiInstallCleanUrls($me) {
     if (!$me) { http_response_code(401); echo json_encode(['error' => 'Not signed in']); return; }
     if (!fourgeWriteCleanUrlHtaccess()) {
@@ -6389,6 +6432,9 @@ function fourgeApiInstallCleanUrls($me) {
     $entriesGuard = false; $uploadsGuard = false;
     try { $entriesGuard = fourgeWriteEntriesHtaccess(); } catch (Throwable $e) { $entriesGuard = false; }
     try { $uploadsGuard = fourgeWriteUploadsHtaccess(); } catch (Throwable $e) { $uploadsGuard = false; }
+    // A copy of the Fleet Dashboard that came with the repository is not part of the site.
+    $fleetCopy = 'absent';
+    try { $fleetCopy = fourgeRemoveStrayFleetDashboard(); } catch (Throwable $e) { $fleetCopy = 'error'; }
     // The four safe security headers, and an llms.txt if the site has none.
     $hdr = false; $llms = false;
     try { $hdr    = fourgeWriteDefaultHeaders();   } catch (Throwable $e) { $hdr = false; }
@@ -6408,7 +6454,7 @@ function fourgeApiInstallCleanUrls($me) {
     echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'websiteAuto' => $websiteAuto, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
         'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
-        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard]);
+        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'fleetDashboardCopy' => $fleetCopy]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');

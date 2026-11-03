@@ -22,5 +22,6 @@ jobs:
             **/.github/**
             **/node_modules/**
             tests/**
+            fleet-dashboard/**
             README.md
             .gitignore
