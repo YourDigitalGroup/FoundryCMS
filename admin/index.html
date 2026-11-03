@@ -2918,7 +2918,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.149';
+const CMS_VERSION='1.14.150';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -15393,6 +15393,8 @@ function veIsSafePath(path){
 // revision/backup file names wherever they live.
 function isImportablePath(path){
   if(!veIsSafePath(path)) return false;
+  // The agency's Fleet Dashboard tool, copied in from the repository — not a page of the site.
+  if(/^(\.?\/)*fleet-dashboard\//i.test(String(path||'').replace(/\\/g,'/'))) return false;
   const base=String(path||'').split('/').pop().toLowerCase();
   if(/^rev[_-]/.test(base) || /_rev[_-]/.test(base)) return false;   // revision snapshots
   if(/\.(bak|tmp|orig|save|old)\b/.test(base)) return false;         // backups
