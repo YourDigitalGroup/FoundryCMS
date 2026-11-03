@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.148');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.149');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -209,8 +209,12 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //  • 'check_form_password' / 'form_view' are public for the same reason as
 //    'send_form': a site visitor has no token or session. Neither exposes
 //    anything beyond a single form's own pass/fail check or view counter.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe', 'host_probe'];
-$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin'];
+//  • 'chat_start' / 'chat_send' / 'chat_poll' are the website chat widget's
+//    calls (fourge-chat.js), public for the same reason. They answer only while
+//    the chat is switched on, reach a conversation only with the random chat id
+//    chat_start handed out, and are rate-limited per chat, address and site.
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe', 'host_probe', 'chat_start', 'chat_send', 'chat_poll'];
+$SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin','chat_bot_status','chat_bot_save','chat_ai_test','chat_ai_test_poll'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -270,6 +274,14 @@ try {
         case 'ghl_messages':    ob_end_clean(); fourgeApiGhlMessages($authUser, $body); break;
         case 'ghl_send':        ob_end_clean(); fourgeApiGhlSend($authUser, $body); break;
         case 'ghl_form_def':    ob_end_clean(); fourgeApiGhlFormDef($authUser, $body); break;
+        // Website chat: the widget's public calls, then the Super Admin bot setup + AI test.
+        case 'chat_start':      ob_end_clean(); fourgeApiChatStart($body); break;
+        case 'chat_send':       ob_end_clean(); fourgeApiChatSend($body); break;
+        case 'chat_poll':       ob_end_clean(); fourgeApiChatPoll($body); break;
+        case 'chat_bot_status': ob_end_clean(); fourgeApiChatBotStatus($authUser, $body); break;
+        case 'chat_bot_save':   ob_end_clean(); fourgeApiChatBotSave($authUser, $body); break;
+        case 'chat_ai_test':    ob_end_clean(); fourgeApiChatAiTest($authUser, $body); break;
+        case 'chat_ai_test_poll': ob_end_clean(); fourgeApiChatAiTestPoll($authUser, $body); break;
         case 'gh_mirror':       ob_end_clean(); fourgeApiGhMirror($authUser, $body); break;
         case 'gh_set_private':  ob_end_clean(); fourgeApiGhSetPrivate($authUser, $body); break;
         case 'gh_sync_all':     ob_end_clean(); fourgeApiGhSyncAll($authUser, $body); break;
@@ -2059,6 +2071,462 @@ function fourgeApiGhlSend($me, $body) {
     if ($contactId === '' || $text === '') { echo json_encode(['ok' => false, 'error' => 'Nothing to send.']); return; }
     list($ok, $err, $type) = cmsGhlSendMessage($cfg['token'], $contactId, (string)($body['type'] ?? ''), $text);
     echo json_encode(['ok' => $ok, 'error' => $err, 'channel' => $type]);
+}
+
+// ── FOURGE CHAT ──────────────────────────────────────────────────────────────
+// The site's own chat widget (/fourge-chat.js), answered by the CRM's
+// Conversation AI bot. Visitors only ever talk to this file; this file talks
+// to GoHighLevel with the Private Integration Token from Plugins → Lead
+// Generation, so the token never reaches a browser and GoHighLevel sees an
+// ordinary contact with an ordinary Live Chat conversation that its bot
+// answers and the team can take over. The widget's look, texts and on/off
+// switch live in data/chat.json (public — the widget reads it); a visitor's
+// chat is a random id handed out by chat_start and kept here only as a hash,
+// next to the contact and conversation it belongs to. Spam and AI cost are
+// held off by limits per chat, per address and per site, a hidden honeypot
+// field, and reCAPTCHA when the page already carries it.
+
+// Where GoHighLevel lives. FOURGE_GHL_API_BASE points the tests at a stub.
+function cmsGhlBase() { $b = getenv('FOURGE_GHL_API_BASE'); return ($b && preg_match('~^https?://~', $b)) ? rtrim($b, '/') : GHL_API_BASE; }
+
+// One request to GoHighLevel. Returns [HTTP status (0 = unreachable), decoded JSON or null, transport error].
+function cmsGhlReq($token, $method, $path, $payload = null, $version = '2021-04-15', $timeout = 15) {
+    $hdr = ['Authorization: Bearer ' . $token, 'Version: ' . $version, 'Accept: application/json'];
+    $opts = [CURLOPT_RETURNTRANSFER => true, CURLOPT_CUSTOMREQUEST => $method, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_TIMEOUT => $timeout, CURLOPT_CONNECTTIMEOUT => 8];
+    if ($payload !== null) { $hdr[] = 'Content-Type: application/json'; $opts[CURLOPT_POSTFIELDS] = json_encode($payload); }
+    $opts[CURLOPT_HTTPHEADER] = $hdr;
+    $ch = curl_init(cmsGhlBase() . $path);
+    curl_setopt_array($ch, $opts);
+    $res = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = (string)curl_error($ch); fourgeCurlClose($ch);
+    if ($res === false || $err !== '') return [0, null, $err !== '' ? $err : 'no response'];
+    $j = json_decode((string)$res, true);
+    return [$code, is_array($j) ? $j : null, ''];
+}
+// GoHighLevel's own words for a failed call — shown to admins, never to visitors.
+function cmsGhlErrText($code, $j, $err = '') {
+    if ((int)$code === 0) return 'could not reach the CRM' . ($err !== '' ? ' (' . $err . ')' : '');
+    $m = is_array($j) ? ($j['message'] ?? ($j['msg'] ?? ($j['error'] ?? ''))) : '';
+    if (is_array($m)) $m = implode('; ', array_map('strval', $m));
+    return 'HTTP ' . (int)$code . ($m !== '' ? ': ' . $m : '');
+}
+// Conversation AI is documented under Version 2021-04-15 and under v3: ask with
+// the first and fall back to v3 when GoHighLevel objects to the version.
+function cmsGhlAiReq($token, $method, $path, $payload = null) {
+    $r = cmsGhlReq($token, $method, $path, $payload, '2021-04-15');
+    if ($r[0] === 404 || (in_array($r[0], [400, 401, 422], true) && stripos((string)json_encode($r[1]), 'version') !== false)) {
+        $r = cmsGhlReq($token, $method, $path, $payload, 'v3');
+    }
+    return $r;
+}
+// A token without the right scopes fails with 401/403 — say which scope.
+function cmsChatScopeHint($errText) {
+    return preg_match('~^HTTP 40[13]~', (string)$errText) ? ' — the token probably needs more scopes (Contacts, Conversations, Conversation Messages and Conversation AI, view + edit).' : '';
+}
+
+function cmsChatSettings() {
+    $j = json_decode((string)@file_get_contents(__DIR__ . '/../data/chat.json'), true);
+    return is_array($j) ? $j : [];
+}
+// The server owns a few keys of data/chat.json (agentId, providerId): merge them in.
+function cmsChatSaveSettings($patch) {
+    $cur = cmsChatSettings();
+    foreach ($patch as $k => $v) $cur[$k] = $v;
+    return fourgeSitePut(__DIR__ . '/../data/chat.json', json_encode($cur, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: chat settings') !== false;
+}
+// The CRM token + Location ID from Plugins → Lead Generation. Chat needs the
+// connection, not the "send form leads" switch, so that switch isn't checked.
+function cmsChatGhl() {
+    $site = json_decode((string)@file_get_contents(__DIR__ . '/../data/site.json'), true);
+    $loc = is_array($site) ? trim((string)($site['ghl']['locationId'] ?? '')) : '';
+    $token = '';
+    try { $token = (string)fourgeGetSecret(fourgeDb(), 'ghl_token'); } catch (Throwable $e) { $token = ''; }
+    if ($loc === '' || $token === '') return null;
+    return ['token' => $token, 'locationId' => $loc];
+}
+
+// Chat sessions, rate-limit counters and a short cache of each thread, next to
+// the users and secrets (the database file is never served over HTTP).
+function fourgeChatDb() {
+    static $ready = false;
+    $pdo = fourgeDb();
+    if (!$ready) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS chat_sessions (sid_hash TEXT PRIMARY KEY, contact_id TEXT NOT NULL, conversation_id TEXT NOT NULL, created_at INTEGER NOT NULL, last_active INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, hidden TEXT)");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS chat_limits (k TEXT PRIMARY KEY, exp INTEGER NOT NULL, n INTEGER NOT NULL)");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS chat_cache (conversation_id TEXT PRIMARY KEY, at REAL NOT NULL, body TEXT NOT NULL)");
+        $ready = true;
+        if (mt_rand(1, 50) === 1) {   // now and then, clear out what has expired
+            $now = time();
+            $pdo->prepare("DELETE FROM chat_limits WHERE exp < ?")->execute([$now]);
+            $pdo->prepare("DELETE FROM chat_sessions WHERE last_active < ?")->execute([$now - 30 * 86400]);
+            $pdo->prepare("DELETE FROM chat_cache WHERE at < ?")->execute([$now - 600]);
+        }
+    }
+    return $pdo;
+}
+// Counts one hit against $key and says whether it is still within $max for the
+// current $secs window. No UPSERT, so it runs on the old SQLite some hosts ship.
+function fourgeChatAllow($pdo, $key, $max, $secs) {
+    $now = time(); $k = $key . '/' . (int)$secs;
+    $pdo->prepare("INSERT OR IGNORE INTO chat_limits (k, exp, n) VALUES (?, ?, 0)")->execute([$k, $now + $secs]);
+    $pdo->prepare("UPDATE chat_limits SET n = CASE WHEN exp > ? THEN n + 1 ELSE 1 END, exp = CASE WHEN exp > ? THEN exp ELSE ? END WHERE k = ?")->execute([$now, $now, $now + $secs, $k]);
+    $st = $pdo->prepare("SELECT n FROM chat_limits WHERE k = ?"); $st->execute([$k]);
+    return (int)$st->fetchColumn() <= $max;
+}
+function fourgeChatClientKey() { return substr(hash('sha256', 'chat-ip|' . (string)($_SERVER['REMOTE_ADDR'] ?? '')), 0, 32); }
+function fourgeChatSession($pdo, $sid) {
+    $sid = (string)$sid;
+    if (!preg_match('/^[a-f0-9]{32}$/', $sid)) return null;
+    $st = $pdo->prepare("SELECT * FROM chat_sessions WHERE sid_hash = ?");
+    $st->execute([hash('sha256', $sid)]);
+    $row = $st->fetch();
+    if (!$row || (int)$row['last_active'] < time() - 7 * 86400) return null;   // a week of silence ends a chat
+    return $row;
+}
+// Visitor text: valid UTF-8, no control characters (newlines and tabs stay), trimmed, capped.
+function fourgeChatText($s, $max) {
+    $s = is_scalar($s) ? (string)$s : '';
+    if (function_exists('mb_check_encoding') && !mb_check_encoding($s, 'UTF-8')) return '';
+    $s = trim((string)preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $s));
+    return function_exists('mb_substr') ? mb_substr($s, 0, $max, 'UTF-8') : substr($s, 0, $max);
+}
+function fourgeChatOut($code, $arr) { if ((int)$code !== 200) http_response_code((int)$code); echo json_encode($arr); }
+// Public chat calls need the chat switched on and the CRM connected.
+function fourgeChatReady() {
+    $cfg = cmsChatSettings();
+    if (empty($cfg['enabled'])) { fourgeChatOut(404, ['ok' => false, 'error' => 'Chat is not available on this site.']); return null; }
+    $ghl = cmsChatGhl();
+    if (!$ghl) { fourgeChatOut(503, ['ok' => false, 'error' => 'Chat is not available right now. Please try again later.']); return null; }
+    return [$cfg, $ghl];
+}
+
+// Find or create the visitor's contact (by email), tagged "website chat".
+function cmsChatContact($ghl, $name, $email, $phone) {
+    $parts = preg_split('/\s+/', trim((string)$name), 2);
+    $c = ['locationId' => $ghl['locationId'], 'firstName' => (string)($parts[0] ?? ''), 'lastName' => (string)($parts[1] ?? ''), 'email' => $email, 'source' => 'Website chat'];
+    if ($phone !== '') $c['phone'] = $phone;
+    list($code, $j, $err) = cmsGhlReq($ghl['token'], 'POST', '/contacts/upsert', $c, GHL_API_VERSION);
+    $id = is_array($j) ? (string)($j['contact']['id'] ?? ($j['id'] ?? '')) : '';
+    if ($code < 200 || $code >= 300 || $id === '') return [null, cmsGhlErrText($code, $j, $err)];
+    // Added separately: tags sent with an upsert can replace the contact's existing ones.
+    cmsGhlReq($ghl['token'], 'POST', '/contacts/' . rawurlencode($id) . '/tags', ['tags' => ['website chat']], GHL_API_VERSION, 6);
+    return [$id, ''];
+}
+// The contact's conversation — found, or created. A search hit is used only
+// when it really is this contact's: a message must never land in someone else's.
+function cmsChatConversation($ghl, $contactId) {
+    list($code, $j) = cmsGhlReq($ghl['token'], 'GET', '/conversations/search?locationId=' . rawurlencode($ghl['locationId']) . '&contactId=' . rawurlencode($contactId) . '&limit=5');
+    if ($code >= 200 && $code < 300 && is_array($j)) {
+        foreach ((array)($j['conversations'] ?? []) as $c) {
+            if (is_array($c) && !empty($c['id']) && (string)($c['contactId'] ?? '') === (string)$contactId) return [(string)$c['id'], ''];
+        }
+    }
+    list($code, $j, $err) = cmsGhlReq($ghl['token'], 'POST', '/conversations/', ['locationId' => $ghl['locationId'], 'contactId' => $contactId]);
+    $id = is_array($j) ? (string)($j['conversation']['id'] ?? ($j['id'] ?? ($j['conversationId'] ?? ''))) : '';
+    if ($id !== '' && (($code >= 200 && $code < 300) || isset($j['conversationId']))) return [$id, ''];
+    return [null, cmsGhlErrText($code, $j, $err)];
+}
+// Hand one visitor message to GoHighLevel as an inbound chat message — the
+// same thing its own chat widget produces, so its bot and team can answer it.
+function cmsChatPostInbound($ghl, $cfg, $conversationId, $contactId, $text) {
+    $custom = (($cfg['route'] ?? '') === 'custom');
+    $p = ['type' => $custom ? 'Custom' : 'Live_Chat', 'conversationId' => $conversationId, 'contactId' => $contactId, 'message' => $text, 'direction' => 'inbound'];
+    $prov = trim((string)($cfg['providerId'] ?? ''));
+    if ($prov !== '') $p['conversationProviderId'] = $prov;
+    list($code, $j, $err) = cmsGhlReq($ghl['token'], 'POST', '/conversations/messages/inbound', $p);
+    if ($code >= 200 && $code < 300) return [true, is_array($j) ? (string)($j['messageId'] ?? '') : '', ''];
+    return [false, '', cmsGhlErrText($code, $j, $err)];
+}
+// PURE: the messages a visitor may see, shaped for the widget — chat messages
+// only (never the contact's texts or emails on other channels), and only what
+// arrived after this chat began, so typing in someone else's email address
+// shows nothing of that person's history. "After" is decided by the message
+// ids the conversation already held when the chat started ($hidden), not by
+// comparing this server's clock with the CRM's; the time check is only a
+// backstop (tight when no snapshot could be taken).
+function cmsChatVisible($list, $since, $custom = false, $hidden = null) {
+    $out = [];
+    $skip = is_array($hidden) ? array_flip(array_map('strval', $hidden)) : null;
+    $grace = is_array($hidden) ? 600 : 10;
+    foreach ((array)$list as $m) {
+        if (!is_array($m)) continue;
+        if ($skip !== null && isset($skip[(string)($m['id'] ?? '')])) continue;
+        $type = strtoupper((string)($m['type'] ?? ''));
+        $isChat = $custom ? (strpos($type, 'CUSTOM') !== false) : (strpos($type, 'CHAT') !== false);
+        if (!$isChat || strpos($type, 'INFO') !== false || strpos($type, 'ACTIVITY') !== false) continue;
+        $ts = strtotime((string)($m['date'] ?? ''));
+        if ($ts === false || $ts < (int)$since - $grace) continue;
+        $text = trim((string)($m['body'] ?? ''));
+        $files = array_values(array_filter((array)($m['attachments'] ?? []), function ($u) { return is_string($u) && preg_match('~^https://~i', $u); }));
+        if ($text === '' && !$files) continue;
+        $out[] = ['id' => (string)($m['id'] ?? ''), 'from' => !empty($m['inbound']) ? 'visitor' : 'agent', 'text' => $text, 'files' => $files, 'at' => gmdate('c', $ts)];
+    }
+    return $out;
+}
+// The visitor's thread, read through a 3-second cache so a page of open chats
+// polling at once can't run the CRM's rate limit dry.
+function cmsChatThread($pdo, $ghl, $cfg, $sess) {
+    $cid = (string)$sess['conversation_id'];
+    $list = null;
+    $st = $pdo->prepare("SELECT at, body FROM chat_cache WHERE conversation_id = ?"); $st->execute([$cid]);
+    $row = $st->fetch();
+    if ($row && (float)$row['at'] > microtime(true) - 3.0) $list = json_decode((string)$row['body'], true);
+    if (!is_array($list)) {
+        list($code, $j, $err) = cmsGhlReq($ghl['token'], 'GET', '/conversations/' . rawurlencode($cid) . '/messages?limit=50');
+        if ($code < 200 || $code >= 300 || !is_array($j)) return [null, cmsGhlErrText($code, $j, $err)];
+        $list = cmsGhlParseMessages($j);
+        $pdo->prepare("INSERT OR REPLACE INTO chat_cache (conversation_id, at, body) VALUES (?, ?, ?)")->execute([$cid, microtime(true), json_encode($list)]);
+    }
+    $hidden = isset($sess['hidden']) && $sess['hidden'] !== null ? json_decode((string)$sess['hidden'], true) : null;
+    return [cmsChatVisible($list, (int)$sess['created_at'], ($cfg['route'] ?? '') === 'custom', is_array($hidden) ? $hidden : null), ''];
+}
+
+// Public: start a chat — name and email in, a chat id out.
+function fourgeApiChatStart($body) {
+    $r = fourgeChatReady(); if (!$r) return; list($cfg, $ghl) = $r;
+    $pdo = fourgeChatDb();
+    $ip = fourgeChatClientKey();
+    if (!fourgeChatAllow($pdo, 'start:ip:' . $ip, 6, 600) || !fourgeChatAllow($pdo, 'start:ip:' . $ip, 20, 86400) || !fourgeChatAllow($pdo, 'start:site', 120, 3600)) {
+        fourgeChatOut(429, ['ok' => false, 'error' => 'Too many new chats from here. Please try again in a little while.']); return;
+    }
+    if (trim((string)($body['website'] ?? '')) !== '') { fourgeChatOut(400, ['ok' => false, 'error' => 'The chat could not start.']); return; }   // honeypot: a field people never see
+    $name  = fourgeChatText($body['name'] ?? '', 80);
+    $email = strtolower(fourgeChatText($body['email'] ?? '', 160));
+    $phone = fourgeChatText($body['phone'] ?? '', 32);
+    if ($name === '') { fourgeChatOut(400, ['ok' => false, 'error' => 'Please enter your name.', 'field' => 'name']); return; }
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { fourgeChatOut(400, ['ok' => false, 'error' => 'Please enter a valid email address.', 'field' => 'email']); return; }
+    if ($phone !== '' && !preg_match('/^[+()0-9 .\-]{7,32}$/', $phone)) { fourgeChatOut(400, ['ok' => false, 'error' => 'Please check the phone number.', 'field' => 'phone']); return; }
+    // reCAPTCHA when the page had it — and, like the forms, only a verdict of "bot" blocks.
+    $rc = (string)($body['recaptcha'] ?? '');
+    if ($rc !== '') {
+        $secret = cmsRecaptchaSecret();
+        if ($secret !== '') {
+            $v = cmsVerifyRecaptcha($secret, $rc, cmsRecaptchaThreshold());
+            if (($v['outcome'] ?? '') === 'blocked') { fourgeChatOut(403, ['ok' => false, 'error' => 'The chat could not start. Please call or email us instead.']); return; }
+        }
+    }
+    list($contactId, $err) = cmsChatContact($ghl, $name, $email, $phone);
+    if (!$contactId) { error_log('Fourge chat: contact not saved — ' . $err); fourgeChatOut(502, ['ok' => false, 'error' => 'Chat is unavailable right now. Please try again shortly.']); return; }
+    list($conversationId, $err) = cmsChatConversation($ghl, $contactId);
+    if (!$conversationId) { error_log('Fourge chat: conversation not opened — ' . $err); fourgeChatOut(502, ['ok' => false, 'error' => 'Chat is unavailable right now. Please try again shortly.']); return; }
+    // What the conversation already holds stays out of this chat (see cmsChatVisible).
+    $hidden = null;
+    list($code, $j) = cmsGhlReq($ghl['token'], 'GET', '/conversations/' . rawurlencode($conversationId) . '/messages?limit=100', null, '2021-04-15', 10);
+    if ($code >= 200 && $code < 300 && is_array($j)) { $hidden = []; foreach (cmsGhlParseMessages($j) as $m) if (($m['id'] ?? '') !== '') $hidden[] = (string)$m['id']; }
+    $sid = bin2hex(random_bytes(16)); $now = time();
+    $pdo->prepare("INSERT INTO chat_sessions (sid_hash, contact_id, conversation_id, created_at, last_active, sent, hidden) VALUES (?, ?, ?, ?, ?, 0, ?)")
+        ->execute([hash('sha256', $sid), $contactId, $conversationId, $now, $now, $hidden === null ? null : json_encode($hidden)]);
+    fourgeChatOut(200, ['ok' => true, 'sid' => $sid]);
+}
+
+// Public: one visitor message.
+function fourgeApiChatSend($body) {
+    $r = fourgeChatReady(); if (!$r) return; list($cfg, $ghl) = $r;
+    $pdo = fourgeChatDb();
+    $sess = fourgeChatSession($pdo, $body['sid'] ?? '');
+    if (!$sess) { fourgeChatOut(401, ['ok' => false, 'error' => 'This chat has ended. Start a new one to keep talking.', 'expired' => true]); return; }
+    $text = fourgeChatText($body['message'] ?? '', 1000);
+    if ($text === '') { fourgeChatOut(400, ['ok' => false, 'error' => 'Type a message first.']); return; }
+    $sk = substr((string)$sess['sid_hash'], 0, 32); $ip = fourgeChatClientKey();
+    if (!fourgeChatAllow($pdo, 'send:s:' . $sk, 8, 60) || !fourgeChatAllow($pdo, 'send:s:' . $sk, 80, 3600)
+        || !fourgeChatAllow($pdo, 'send:ip:' . $ip, 40, 600) || !fourgeChatAllow($pdo, 'send:site', 600, 3600)) {
+        fourgeChatOut(429, ['ok' => false, 'error' => 'You\'re sending messages very quickly. Please wait a moment and try again.']); return;
+    }
+    list($ok, $mid, $err) = cmsChatPostInbound($ghl, $cfg, (string)$sess['conversation_id'], (string)$sess['contact_id'], $text);
+    if (!$ok) { error_log('Fourge chat: message not delivered — ' . $err); fourgeChatOut(502, ['ok' => false, 'error' => 'Your message didn\'t go through. Please try again.']); return; }
+    $pdo->prepare("UPDATE chat_sessions SET sent = sent + 1, last_active = ? WHERE sid_hash = ?")->execute([time(), $sess['sid_hash']]);
+    $pdo->prepare("DELETE FROM chat_cache WHERE conversation_id = ?")->execute([(string)$sess['conversation_id']]);
+    fourgeChatOut(200, ['ok' => true, 'id' => $mid, 'at' => gmdate('c')]);
+}
+
+// Public: the visitor's side of the conversation so far (bot and team replies included).
+function fourgeApiChatPoll($body) {
+    $r = fourgeChatReady(); if (!$r) return; list($cfg, $ghl) = $r;
+    $pdo = fourgeChatDb();
+    $sess = fourgeChatSession($pdo, $body['sid'] ?? '');
+    if (!$sess) { fourgeChatOut(401, ['ok' => false, 'error' => 'This chat has ended.', 'expired' => true]); return; }
+    $sk = substr((string)$sess['sid_hash'], 0, 32);
+    if (!fourgeChatAllow($pdo, 'poll:s:' . $sk, 45, 60)) { fourgeChatOut(200, ['ok' => true, 'messages' => null, 'wait' => 15]); return; }
+    if ((int)$sess['last_active'] < time() - 600) $pdo->prepare("UPDATE chat_sessions SET last_active = ? WHERE sid_hash = ?")->execute([time(), $sess['sid_hash']]);
+    list($msgs, $err) = cmsChatThread($pdo, $ghl, $cfg, $sess);
+    if ($msgs === null) { error_log('Fourge chat: thread not read — ' . $err); fourgeChatOut(200, ['ok' => true, 'messages' => null, 'wait' => 10]); return; }   // the widget keeps what it has and asks again
+    fourgeChatOut(200, ['ok' => true, 'messages' => $msgs]);
+}
+
+// ── Chat admin (Super Admin: these use the CRM token and its AI costs money) ──
+function fourgeChatAdminGate($me) {
+    if (fourgeLevel($me) < 3) { fourgeChatOut(403, ['ok' => false, 'error' => 'Super Admin access required']); return null; }
+    $ghl = cmsChatGhl();
+    if (!$ghl) { fourgeChatOut(200, ['ok' => false, 'needsConnection' => true, 'error' => 'Connect the CRM first: Plugins → Lead Generation → token and Location ID.']); return null; }
+    return $ghl;
+}
+// The sub-account's Conversation AI bots ("agents" in the API).
+function cmsChatAgents($ghl) {
+    list($code, $j, $err) = cmsGhlAiReq($ghl['token'], 'GET', '/conversation-ai/agents/search?limit=50');
+    if ($code < 200 || $code >= 300 || !is_array($j)) return [null, cmsGhlErrText($code, $j, $err)];
+    $out = [];
+    foreach ((array)($j['agents'] ?? []) as $a) { if (is_array($a) && !empty($a['id'])) $out[] = $a; }
+    return [$out, ''];
+}
+function cmsChatAgentBrief($a, $withPrompt = true) {
+    $b = ['id' => (string)($a['id'] ?? ''), 'name' => (string)($a['name'] ?? ''), 'mode' => (string)($a['mode'] ?? ''),
+          'channels' => array_values(array_map('strval', (array)($a['channels'] ?? []))), 'isPrimary' => !empty($a['isPrimary'])];
+    if ($withPrompt) {
+        $b += ['businessName' => (string)($a['businessName'] ?? ''), 'personality' => (string)($a['personality'] ?? ''), 'goal' => (string)($a['goal'] ?? ''),
+               'instructions' => (string)($a['instructions'] ?? ''), 'usesFullPrompt' => trim((string)($a['fullPrompt'] ?? '')) !== ''];
+    }
+    return $b;
+}
+// The bot that answers this site's chat: the one Fourge recorded, else the
+// sub-account's main bot on Live Chat (only the main bot answers on its own;
+// the others answer only inside workflows).
+function cmsChatPickAgent($agents, $agentId) {
+    $agentId = (string)$agentId;
+    if ($agentId !== '') foreach ($agents as $a) if ((string)$a['id'] === $agentId && !empty($a['isPrimary']) && in_array('Live_Chat', (array)($a['channels'] ?? []), true)) return $a;
+    foreach ($agents as $a) if (!empty($a['isPrimary']) && in_array('Live_Chat', (array)($a['channels'] ?? []), true)) return $a;
+    return null;
+}
+function cmsChatMainAgent($agents) { foreach ($agents as $a) if (!empty($a['isPrimary'])) return $a; return null; }
+
+function fourgeApiChatBotStatus($me, $body) {
+    $ghl = fourgeChatAdminGate($me); if (!$ghl) return;
+    list($agents, $err) = cmsChatAgents($ghl);
+    if ($agents === null) { fourgeChatOut(200, ['ok' => false, 'error' => 'Could not read the CRM\'s bots: ' . $err . cmsChatScopeHint($err)]); return; }
+    $bot = cmsChatPickAgent($agents, (string)(cmsChatSettings()['agentId'] ?? ''));
+    $main = $bot ? null : cmsChatMainAgent($agents);
+    fourgeChatOut(200, ['ok' => true, 'bot' => $bot ? cmsChatAgentBrief($bot) : null, 'main' => $main ? cmsChatAgentBrief($main, false) : null, 'count' => count($agents)]);
+}
+
+// Create the site's bot, put an existing main bot on Live Chat, or save edits
+// to the bot. An existing main bot is reused, never demoted, and keeps
+// everything Fourge doesn't edit: each change starts from what the CRM has.
+//   op 'create' — a new main bot on Live Chat, answering on its own.
+//   op 'use'    — add Live Chat to the sub-account's existing main bot.
+//   op 'update' — save the edited name/business/personality/goal/instructions;
+//                 autoPilot:true also switches it to answering on its own.
+function fourgeApiChatBotSave($me, $body) {
+    $ghl = fourgeChatAdminGate($me); if (!$ghl) return;
+    $op = (string)($body['op'] ?? '');
+    $fields = [];
+    foreach (['name' => 80, 'businessName' => 120, 'personality' => 2000, 'goal' => 2000, 'instructions' => 8000] as $k => $max) {
+        if (array_key_exists($k, $body)) $fields[$k] = fourgeChatText($body[$k], $max);
+    }
+    list($agents, $err) = cmsChatAgents($ghl);
+    if ($agents === null) { fourgeChatOut(200, ['ok' => false, 'error' => 'Could not read the CRM\'s bots: ' . $err . cmsChatScopeHint($err)]); return; }
+    if ($op === 'create') {
+        if (cmsChatMainAgent($agents)) { fourgeChatOut(200, ['ok' => false, 'error' => 'This CRM already has a main bot. Use it for website chat instead, so neither bot gets in the other\'s way.']); return; }
+        foreach (['name', 'personality', 'goal', 'instructions'] as $k) {
+            if (($fields[$k] ?? '') === '') { fourgeChatOut(200, ['ok' => false, 'error' => 'Fill in the bot\'s name, personality, goal and instructions first.']); return; }
+        }
+        $p = $fields + ['mode' => 'auto-pilot', 'channels' => ['Live_Chat'], 'isPrimary' => true, 'waitTime' => 3, 'waitTimeUnit' => 'seconds', 'autoPilotMaxMessages' => 50, 'sleepOnManualMessage' => true];
+        list($code, $j, $e2) = cmsGhlAiReq($ghl['token'], 'POST', '/conversation-ai/agents', $p);
+        $made = is_array($j) ? ($j['agent'] ?? $j) : [];
+        $id = (string)($made['id'] ?? '');
+        if ($code < 200 || $code >= 300 || $id === '') { $t = cmsGhlErrText($code, $j, $e2); fourgeChatOut(200, ['ok' => false, 'error' => 'The CRM did not create the bot: ' . $t . cmsChatScopeHint($t)]); return; }
+        cmsChatSaveSettings(['agentId' => $id]);
+        fourgeChatOut(200, ['ok' => true, 'done' => 'created', 'bot' => cmsChatAgentBrief($made + $p)]);
+        return;
+    }
+    if ($op !== 'use' && $op !== 'update') { fourgeChatOut(400, ['ok' => false, 'error' => 'Unknown bot action.']); return; }
+    $target = ($op === 'use') ? cmsChatMainAgent($agents) : cmsChatPickAgent($agents, (string)($body['agentId'] ?? (cmsChatSettings()['agentId'] ?? '')));
+    if (!$target) { fourgeChatOut(200, ['ok' => false, 'error' => $op === 'use' ? 'This CRM has no main bot yet. Create one instead.' : 'No bot answers website chat yet.']); return; }
+    list($code, $full) = cmsGhlAiReq($ghl['token'], 'GET', '/conversation-ai/agents/' . rawurlencode((string)$target['id']));
+    $cur = $target;
+    if ($code >= 200 && $code < 300 && is_array($full)) { $cur = array_merge($target, (array)($full['agent'] ?? $full)); }
+    $p = [];
+    foreach (['name', 'businessName', 'mode', 'channels', 'isPrimary', 'waitTime', 'waitTimeUnit', 'sleepEnabled', 'sleepOnManualMessage', 'sleepOnWorkflowMessage', 'sleepTime', 'sleepTimeUnit',
+              'personality', 'goal', 'instructions', 'fullPrompt', 'autoPilotMaxMessages', 'knowledgeBaseIds', 'respondToImages', 'respondToAudio'] as $k) {
+        if (array_key_exists($k, $cur) && $cur[$k] !== null) $p[$k] = $cur[$k];
+    }
+    $channels = array_values(array_map('strval', (array)($p['channels'] ?? [])));
+    if (!in_array('Live_Chat', $channels, true)) $channels[] = 'Live_Chat';
+    $p['channels'] = $channels;
+    $p['isPrimary'] = true;
+    if (empty($p['mode'])) $p['mode'] = 'auto-pilot';
+    if (empty($p['autoPilotMaxMessages'])) $p['autoPilotMaxMessages'] = 50;
+    if ($op === 'update') {
+        $edits = array_filter($fields, function ($v) { return $v !== ''; });
+        if ($edits && trim((string)($cur['fullPrompt'] ?? '')) !== '') { fourgeChatOut(200, ['ok' => false, 'error' => 'This bot runs on a full custom prompt set in the CRM, which overrides these fields. Edit it in the CRM instead.']); return; }
+        foreach ($edits as $k => $v) $p[$k] = $v;
+        if (!empty($body['autoPilot'])) $p['mode'] = 'auto-pilot';
+    }
+    list($code, $j, $e3) = cmsGhlAiReq($ghl['token'], 'PUT', '/conversation-ai/agents/' . rawurlencode((string)$target['id']), $p);
+    if ($code < 200 || $code >= 300) { $t = cmsGhlErrText($code, $j, $e3); fourgeChatOut(200, ['ok' => false, 'error' => 'The CRM did not save the bot: ' . $t . cmsChatScopeHint($t)]); return; }
+    cmsChatSaveSettings(['agentId' => (string)$target['id']]);
+    $saved = is_array($j) ? array_merge($p, (array)($j['agent'] ?? $j)) : $p;
+    $saved['id'] = (string)$target['id'];
+    fourgeChatOut(200, ['ok' => true, 'done' => $op === 'use' ? 'adopted' : 'updated', 'bot' => cmsChatAgentBrief($saved)]);
+}
+
+// The Live Chat route rests on one thing GoHighLevel doesn't document: that its
+// bot answers chat messages added through the API. This test sends one as a
+// test contact and (with chat_ai_test_poll) watches for the bot's reply.
+// GoHighLevel may also insist on a "conversation provider" id for chat
+// messages: if it does, look for one on the sub-account's earlier chats.
+function cmsChatFindProvider($ghl) {
+    list($code, $j) = cmsGhlReq($ghl['token'], 'GET', '/conversations/search?locationId=' . rawurlencode($ghl['locationId']) . '&lastMessageType=TYPE_LIVE_CHAT&limit=5', null, '2021-04-15', 10);
+    if ($code < 200 || $code >= 300 || !is_array($j)) return '';
+    foreach (array_slice((array)($j['conversations'] ?? []), 0, 3) as $c) {
+        if (!is_array($c) || empty($c['id'])) continue;
+        list($c2, $mj) = cmsGhlReq($ghl['token'], 'GET', '/conversations/' . rawurlencode((string)$c['id']) . '/messages?limit=20', null, '2021-04-15', 10);
+        if (!is_array($mj)) continue;
+        $raw = $mj['messages']['messages'] ?? ($mj['messages'] ?? []);
+        foreach ((array)$raw as $m) {
+            if (!is_array($m)) continue;
+            $p = (string)($m['conversationProviderId'] ?? ($m['providerId'] ?? ''));
+            if (strpos(strtoupper((string)($m['messageType'] ?? '')), 'LIVE_CHAT') !== false && $p !== '') return $p;
+        }
+    }
+    return '';
+}
+function fourgeApiChatAiTest($me, $body) {
+    $ghl = fourgeChatAdminGate($me); if (!$ghl) return;
+    $cfg = cmsChatSettings();
+    $steps = [];
+    $add = function ($label, $ok, $detail = '') use (&$steps) { $steps[] = ['label' => $label, 'ok' => (bool)$ok, 'detail' => (string)$detail]; };
+    $stop = function () use (&$steps) { fourgeChatOut(200, ['ok' => false, 'steps' => $steps]); };
+    list($agents, $err) = cmsChatAgents($ghl);
+    if ($agents === null) { $add('Read the CRM\'s bots', false, $err . cmsChatScopeHint($err)); $stop(); return; }
+    $bot = cmsChatPickAgent($agents, (string)($cfg['agentId'] ?? ''));
+    if (!$bot) { $add('Find the bot that answers website chat', false, 'No main bot has Live Chat switched on yet. Set up the bot first.'); $stop(); return; }
+    $mode = (string)($bot['mode'] ?? '');
+    $add('Find the bot that answers website chat', true, (string)($bot['name'] ?? 'Bot') . ($mode !== '' ? ' (' . $mode . ')' : ''));
+    if ($mode !== '' && $mode !== 'auto-pilot') $add('The bot answers on its own', false, 'It is in "' . $mode . '" mode, so it only drafts replies for your team. Switch it to auto-pilot, then test again.');
+    list($contactId, $err) = cmsChatContact($ghl, 'Fourge Chat Test', 'fourge-chat-test@example.com', '');
+    if (!$contactId) { $add('Create a test contact', false, $err . cmsChatScopeHint($err)); $stop(); return; }
+    $add('Create a test contact', true, 'Fourge Chat Test · fourge-chat-test@example.com');
+    list($conversationId, $err) = cmsChatConversation($ghl, $contactId);
+    if (!$conversationId) { $add('Open a conversation', false, $err . cmsChatScopeHint($err)); $stop(); return; }
+    $add('Open a conversation', true);
+    $since = time();
+    $text = 'Hi! This is an automatic test from the website chat. What can you help me with?';
+    list($ok, $mid, $err) = cmsChatPostInbound($ghl, $cfg, $conversationId, $contactId, $text);
+    if (!$ok && trim((string)($cfg['providerId'] ?? '')) === '') {
+        $prov = cmsChatFindProvider($ghl);
+        if ($prov !== '') {
+            list($ok2, $mid2, $err2) = cmsChatPostInbound($ghl, ['providerId' => $prov] + $cfg, $conversationId, $contactId, $text);
+            if ($ok2) { cmsChatSaveSettings(['providerId' => $prov]); $ok = true; $mid = $mid2; $add('Find the CRM\'s Live Chat channel id', true, 'Found on an earlier chat and saved: ' . $prov); }
+            else $err .= ' — and with the channel id found on an earlier chat (' . $prov . '): ' . $err2;
+        }
+    }
+    if (!$ok) { $add('Send a visitor message into the CRM as Live Chat', false, $err . cmsChatScopeHint($err)); fourgeChatOut(200, ['ok' => false, 'routeBlocked' => true, 'steps' => $steps]); return; }
+    $add('Send a visitor message into the CRM as Live Chat', true, '“' . $text . '”');
+    fourgeChatOut(200, ['ok' => true, 'steps' => $steps, 'conversationId' => $conversationId, 'since' => $since, 'messageId' => $mid]);
+}
+function fourgeApiChatAiTestPoll($me, $body) {
+    $ghl = fourgeChatAdminGate($me); if (!$ghl) return;
+    $cid = trim((string)($body['conversationId'] ?? '')); $since = (int)($body['since'] ?? 0);
+    if ($cid === '' || $since <= 0) { fourgeChatOut(400, ['ok' => false, 'error' => 'Missing test details.']); return; }
+    list($code, $j, $err) = cmsGhlReq($ghl['token'], 'GET', '/conversations/' . rawurlencode($cid) . '/messages?limit=20');
+    if ($code < 200 || $code >= 300 || !is_array($j)) { fourgeChatOut(200, ['ok' => false, 'error' => 'Could not read the test conversation: ' . cmsGhlErrText($code, $j, $err)]); return; }
+    $seen = false; $reply = null; $replyTs = 0;
+    foreach (cmsGhlParseMessages($j) as $m) {
+        $ts = strtotime((string)$m['date']);
+        if ($ts === false || $ts < $since - 5) continue;
+        if (!empty($m['inbound'])) { $seen = true; continue; }
+        if (trim((string)$m['body']) !== '') { $reply = $m; $replyTs = $ts; }
+    }
+    fourgeChatOut(200, ['ok' => true, 'seenInbound' => $seen, 'done' => $reply !== null,
+        'reply' => $reply ? (string)$reply['body'] : '', 'replyType' => $reply ? (string)$reply['type'] : '', 'seconds' => $reply ? max(0, $replyTs - $since) : null]);
 }
 
 // Resolve Mailgun config from the encrypted DB secrets first (server-side,
@@ -7005,6 +7473,7 @@ function fourgeUpdateFetchAllow() {
         'posts.jsx',
         'preview.html',
         'adaptify.js',
+        'fourge-chat.js',
         'admin/api.php',
     ];
 }

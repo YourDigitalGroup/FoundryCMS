@@ -8,6 +8,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 S="$SRC/tests/.cache/e2e_site"
 PORT="${E2E_PORT:-8932}"; BASE=http://127.0.0.1:$PORT/admin/api.php
 GHPORT="${E2E_GH_PORT:-8934}"; GHLOG="$SRC/tests/.cache/gh_stub_log.jsonl"; GHSTATE="$SRC/tests/.cache/gh_stub_state.json"; GHMODE="$SRC/tests/.cache/gh_stub_mode"
+GHLPORT="${E2E_GHL_PORT:-8935}"; GHLSTATE="$SRC/tests/.cache/ghl_stub_state.json"
 export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"   # the engine's curl must reach the stub directly
 command -v python3 >/dev/null 2>&1 || { echo "FAIL python3 is required for the dispatcher suite"; exit 1; }
 rm -rf "$S"; mkdir -p "$S"
@@ -30,9 +31,14 @@ dbq(){ php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $arg
 mkdir -p "$S.ghroot"; rm -f "$GHLOG" "$GHSTATE"; echo ok > "$GHMODE"
 php -S 127.0.0.1:$GHPORT -t "$S.ghroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/gh_stub.php" > "$S.ghstub.log" 2>&1 &
 GHSRV=$!
-FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+# the stand-in for GoHighLevel (tests/lib/ghl_stub.php) — the engine is pointed at it with FOURGE_GHL_API_BASE
+mkdir -p "$S.ghlroot"; rm -f "$GHLSTATE"
+php -S 127.0.0.1:$GHLPORT -t "$S.ghlroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/ghl_stub.php" > "$S.ghlstub.log" 2>&1 &
+GHLSRV=$!
+FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHLPORT/__state" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$PORT/admin/index.html" && break; sleep 0.2; done
 pass=0; fail=0
 chk(){ if [ "$1" = 0 ]; then echo "ok   $2"; pass=$((pass+1)); else echo "FAIL $2"; fail=$((fail+1)); fi; }
@@ -281,6 +287,121 @@ call "login as the newly added Kellar" '{"action":"login","username":"kellar@44i
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); u=d["user"]; assert u["architect"] is True and u["role"]=="superadmin", u' && chk 0 "an Architect can add the account where a site lacks it, and it is an Architect account from the start" || chk 1 "Architect-created Kellar — got: $(printf '%s' "$LAST" | head -c 300)"
 TOK="$ARCH_TOK3"
 
+# ── Website chat: Fourge Chat, end to end against a stub GoHighLevel (1.14.149) ─────────────────
+ghl(){ local b="${2:-}"; [ -z "$b" ] && b='{}'; curl -s -X POST -H 'Content-Type: application/json' --data "$b" "http://127.0.0.1:$GHLPORT$1" >/dev/null; }
+ghlq(){ curl -s "http://127.0.0.1:$GHLPORT/__state" | python3 -c 'import json,sys; s=json.load(sys.stdin); exec(sys.argv[1])' "$1"; }    # an assertion over the stub's state (s)
+ans(){ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); exec(sys.argv[1])' "$1"; }                       # an assertion over the last answer (d)
+wjson(){ call "$1" "$(python3 -c 'import json,sys; print(json.dumps({"action":"write_file","path":sys.argv[1],"content":sys.argv[2]}))' "$2" "$3")"; }
+chatjson(){ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); exec(sys.argv[2])' "$S/data/chat.json" "$1"; }            # an assertion over data/chat.json (d)
+TOK="$ARCH_TOK3"; ghl /__reset
+wjson "write data/site.json (CRM Location ID; form leads off)" data/site.json '{"name":"E2E Dental","phone":"555-0100","ghl":{"enabled":false,"locationId":"loc_e2e"}}'
+call "chat_bot_status before a CRM token is saved" '{"action":"chat_bot_status"}'
+ans 'assert d.get("ok") is False and d.get("needsConnection") is True and "Plugins" in d["error"], d' && chk 0 "chat_bot_status without a CRM token: needsConnection, pointing to Plugins → Lead Generation" || chk 1 "no token — got: $(printf '%s' "$LAST" | head -c 200)"
+call "set_secret ghl_token" '{"action":"set_secret","name":"ghl_token","value":"pit-e2e"}'
+TOK=""
+call "chat_start while Fourge Chat is off (public)" '{"action":"chat_start","name":"Pat","email":"pat@example.com"}'
+ans 'assert d.get("ok") is False and "not available" in d.get("error",""), d' && ghlq 'assert not s["log"], s["log"]' && chk 0 "chat_start answers \"not available\" while data/chat.json doesn't switch the chat on, and the CRM is never called" || chk 1 "chat off — got: $(printf '%s' "$LAST" | head -c 200)"
+TOK="$ARCH_TOK3"
+wjson "write data/chat.json (Fourge Chat on)" data/chat.json '{"enabled":true,"title":"Chat with E2E Dental"}'
+call "chat_bot_status (no bots yet)" '{"action":"chat_bot_status"}'
+ans 'assert d.get("ok") and d["bot"] is None and d["main"] is None and d["count"]==0, d' && ghlq 'l=[x for x in s["log"] if x["p"]=="/conversation-ai/agents/search"]; assert len(l)==1 and l[0]["v"]=="2021-04-15", l' && chk 0 "chat_bot_status: no bot yet (asked with Version 2021-04-15)" || chk 1 "status, no bots — got: $(printf '%s' "$LAST" | head -c 200)"
+call "chat_bot_save create without instructions" '{"action":"chat_bot_save","op":"create","name":"E2E Assistant"}'
+ans 'assert d.get("ok") is False and "Fill in" in d.get("error",""), d' && chk 0 "creating the bot needs its name, personality, goal and instructions" || chk 1 "create, missing — got: $(printf '%s' "$LAST" | head -c 200)"
+call "chat_bot_save create" '{"action":"chat_bot_save","op":"create","name":"E2E Assistant","businessName":"E2E Dental","personality":"Warm","goal":"Help visitors","instructions":"Keep it short."}'
+ans 'b=d["bot"]; assert d.get("ok") and d["done"]=="created" and b["isPrimary"] is True and b["channels"]==["Live_Chat"] and b["mode"]=="auto-pilot", d' && ghlq 'a=list(s["agents"].values()); assert len(a)==1 and a[0]["isPrimary"] is True and a[0]["channels"]==["Live_Chat"] and a[0]["mode"]=="auto-pilot" and a[0]["waitTimeUnit"]=="seconds" and a[0]["instructions"]=="Keep it short.", a' && chk 0 "chat_bot_save create: a new main bot on Live Chat that answers on its own, within seconds" || chk 1 "create — got: $(printf '%s' "$LAST" | head -c 300)"
+AGENT=$(curl -s "http://127.0.0.1:$GHLPORT/__state" | python3 -c 'import json,sys; print(list(json.load(sys.stdin)["agents"])[0])')
+chatjson "assert d.get('agentId')=='$AGENT' and d.get('enabled') is True and d.get('title')=='Chat with E2E Dental', d" && chk 0 "data/chat.json records the bot ($AGENT) and keeps the admin's own settings" || chk 1 "chat.json after create: $(cat "$S/data/chat.json" | head -c 200)"
+call "chat_bot_status (the bot answers website chat)" '{"action":"chat_bot_status"}'
+ans "assert d.get('ok') and d['bot']['id']=='$AGENT' and d['bot']['instructions']=='Keep it short.' and d['bot']['usesFullPrompt'] is False, d" && chk 0 "chat_bot_status shows the bot with its prompt for editing" || chk 1 "status with bot — got: $(printf '%s' "$LAST" | head -c 200)"
+call "chat_bot_save create again" '{"action":"chat_bot_save","op":"create","name":"X","personality":"p","goal":"g","instructions":"i"}'
+ans 'assert d.get("ok") is False and "already has a main bot" in d.get("error",""), d' && chk 0 "a second main bot is never created" || chk 1 "second create — got: $(printf '%s' "$LAST" | head -c 200)"
+# the visitor's side
+TOK=""
+call "chat_start with a bad email (public)" '{"action":"chat_start","name":"Pat Visitor","email":"not-an-email"}'
+ans 'assert d.get("ok") is False and d.get("field")=="email", d' && chk 0 "chat_start points at the field to fix (email)" || chk 1 "bad email — got: $(printf '%s' "$LAST" | head -c 200)"
+call "chat_start with the honeypot filled (public)" '{"action":"chat_start","name":"Bot","email":"bot@example.com","website":"http://spam.example"}'
+ans 'assert d.get("ok") is False, d' && ghlq 'cs=s["contacts"]; cs=list(cs.values()) if isinstance(cs,dict) else cs; assert not any(c.get("email")=="bot@example.com" for c in cs), cs' && chk 0 "a filled honeypot starts nothing and creates no contact" || chk 1 "honeypot — got: $(printf '%s' "$LAST" | head -c 200)"
+call "chat_start (public)" '{"action":"chat_start","name":"Pat Visitor","email":"Pat@Example.com","phone":"(555) 010-2000"}'
+SID=$(printf '%s' "$LAST" | python3 -c 'import json,sys,re; d=json.load(sys.stdin); s=d.get("sid",""); assert d.get("ok") and re.match(r"^[0-9a-f]{32}$",s), d; print(s)') && chk 0 "chat_start hands out a random 32-hex chat id" || chk 1 "chat_start — got: $(printf '%s' "$LAST" | head -c 200)"
+ghlq 'c=[x for x in s["contacts"].values() if x.get("email")=="pat@example.com"]; assert len(c)==1 and c[0]["firstName"]=="Pat" and c[0]["lastName"]=="Visitor" and c[0]["source"]=="Website chat" and c[0]["phone"]=="(555) 010-2000" and c[0]["tags"]==["website chat"] and c[0]["locationId"]=="loc_e2e", c; assert len(s["conversations"])==1' && chk 0 "…and the CRM has the visitor as a contact (source Website chat, tagged \"website chat\") with one conversation" || chk 1 "contact/conversation in the stub"
+[ "$(dbq '$r=$pdo->query("SELECT * FROM chat_sessions")->fetchAll(); echo (count($r)===1 && strlen($r[0]["sid_hash"])===64 && $r[0]["hidden"]==="[]") ? "ok" : json_encode($r);')" = ok ] && ! grep -qs "$SID" "$S/admin/fourge-e2e.db" "$S/admin/fourge-e2e.db-wal" && chk 0 "the chat id is kept only as a hash (and the new conversation had nothing to hide)" || chk 1 "chat_sessions row: $(dbq 'echo json_encode($pdo->query("SELECT * FROM chat_sessions")->fetchAll());' | head -c 300)"
+call "chat_send with an unknown chat id (public)" '{"action":"chat_send","sid":"0123456789abcdef0123456789abcdef","message":"hi"}'
+ans 'assert d.get("ok") is False and d.get("expired") is True, d' && chk 0 "an unknown chat id is an ended chat (expired), not someone else's" || chk 1 "unknown sid — got: $(printf '%s' "$LAST" | head -c 200)"
+call "chat_send (public)" "{\"action\":\"chat_send\",\"sid\":\"$SID\",\"message\":\"Do you take new patients?\"}"
+ans 'assert d.get("ok") is True and d.get("id"), d' && ghlq 'l=[x for x in s["log"] if x["p"]=="/conversations/messages/inbound"]; assert len(l)==1 and l[0]["v"]=="2021-04-15" and l[0]["body"]["type"]=="Live_Chat" and l[0]["body"]["direction"]=="inbound" and l[0]["body"]["message"]=="Do you take new patients?" and "conversationProviderId" not in l[0]["body"], l' && chk 0 "chat_send hands the message to the CRM as an inbound Live Chat message" || chk 1 "chat_send — got: $(printf '%s' "$LAST" | head -c 200)"
+CV=$(curl -s "http://127.0.0.1:$GHLPORT/__state" | python3 -c 'import json,sys; print(list(json.load(sys.stdin)["conversations"])[0])')
+ghl /__seed "$(curl -s "http://127.0.0.1:$GHLPORT/__state" | python3 -c "import json,sys,time; s=json.load(sys.stdin); m=s['messages']['$CV']; m.insert(0,{'id':'msg_old','direction':'inbound','messageType':'TYPE_LIVE_CHAT','body':'An old chat','dateAdded':'2020-01-01T00:00:00.000Z'}); m.append({'id':'msg_sms','direction':'outbound','messageType':'TYPE_SMS','body':'Your code is 1234','dateAdded':time.strftime('%Y-%m-%dT%H:%M:%S.000Z',time.gmtime(time.time()+5))}); print(json.dumps({'messages':{'$CV':m}}))")"
+call "chat_poll (public)" "{\"action\":\"chat_poll\",\"sid\":\"$SID\"}"
+ans 'm=d["messages"]; assert [(x["from"],x["text"]) for x in m]==[("visitor","Do you take new patients?"),("agent","Bot: Do you take new patients?")], m; assert all(x["id"] and x["at"] for x in m)' && chk 0 "chat_poll returns the visitor's message and the bot's reply — not a text message on the same contact, not a 2020 chat" || chk 1 "chat_poll — got: $(printf '%s' "$LAST" | head -c 300)"
+call "chat_start again with the same email (public)" '{"action":"chat_start","name":"Someone Else","email":"pat@example.com"}'
+SID2=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sid",""))')
+call "chat_poll for that second chat (public)" "{\"action\":\"chat_poll\",\"sid\":\"$SID2\"}"
+ans 'assert d.get("ok") and d["messages"]==[], d' && chk 0 "someone typing the same email address starts a chat that shows nothing of the first one" || chk 1 "second chat on the same contact — got: $(printf '%s' "$LAST" | head -c 300)"
+for i in 2 3 4 5 6 7 8; do qcall "{\"action\":\"chat_send\",\"sid\":\"$SID\",\"message\":\"message $i\"}"; done
+call "chat_send, the 9th in a minute from one chat (public)" "{\"action\":\"chat_send\",\"sid\":\"$SID\",\"message\":\"too many\"}"
+ans 'assert d.get("ok") is False and "quickly" in d.get("error",""), d' && ghlq 'assert len([x for x in s["log"] if x["p"]=="/conversations/messages/inbound"])==8' && chk 0 "the 9th message in a minute from one chat is refused (429) before it reaches the CRM" || chk 1 "rate limit — got: $(printf '%s' "$LAST" | head -c 200)"
+dbq '$pdo->exec("UPDATE chat_sessions SET last_active=" . (time() - 8 * 86400));'
+call "chat_poll on a chat silent for 8 days (public)" "{\"action\":\"chat_poll\",\"sid\":\"$SID\"}"
+ans 'assert d.get("ok") is False and d.get("expired") is True, d' && chk 0 "a chat that has been silent for a week has ended" || chk 1 "expiry — got: $(printf '%s' "$LAST" | head -c 200)"
+dbq '$pdo->exec("UPDATE chat_sessions SET last_active=" . time());'
+TOK="$ARCH_TOK3"
+wjson "write data/chat.json (Fourge Chat off)" data/chat.json "{\"enabled\":false,\"agentId\":\"$AGENT\"}"
+TOK=""
+call "chat_poll while Fourge Chat is off (public)" "{\"action\":\"chat_poll\",\"sid\":\"$SID\"}"
+ans 'assert d.get("ok") is False and "not available" in d.get("error",""), d' && chk 0 "switching Fourge Chat off closes the public calls at once" || chk 1 "chat off — got: $(printf '%s' "$LAST" | head -c 200)"
+TOK="$ARCH_TOK3"
+wjson "write data/chat.json (Fourge Chat on)" data/chat.json "{\"enabled\":true,\"agentId\":\"$AGENT\"}"
+# the AI test (the check that the CRM's bot answers chat messages handed to it this way)
+call "chat_ai_test" '{"action":"chat_ai_test"}'
+ans 'assert d.get("ok") and d["steps"] and all(x["ok"] for x in d["steps"]) and d.get("conversationId") and d.get("since"), d' && chk 0 "chat_ai_test: bot found, test contact, conversation, message handed over ($(printf '%s' "$LAST" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["steps"]))') steps, all ok)" || chk 1 "chat_ai_test — got: $(printf '%s' "$LAST" | head -c 300)"
+TC=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("conversationId",""))'); TS=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("since",0))')
+call "chat_ai_test_poll" "{\"action\":\"chat_ai_test_poll\",\"conversationId\":\"$TC\",\"since\":$TS}"
+ans 'assert d.get("ok") and d["done"] is True and d["reply"].startswith("Bot: Hi! This is an automatic test") and d["seenInbound"] is True and d["replyType"]=="TYPE_LIVE_CHAT" and d["seconds"] is not None, d' && ghlq 'c=[x for x in s["contacts"].values() if x.get("email")=="fourge-chat-test@example.com"]; assert len(c)==1 and c[0]["firstName"]=="Fourge" and c[0]["lastName"]=="Chat Test", c' && chk 0 "chat_ai_test_poll sees the bot's reply to the test contact Fourge Chat Test" || chk 1 "chat_ai_test_poll — got: $(printf '%s' "$LAST" | head -c 300)"
+ghl /__seed "$(curl -s "http://127.0.0.1:$GHLPORT/__state" | python3 -c "import json,sys; s=json.load(sys.stdin); a=s['agents']['$AGENT']; a['mode']='suggestive'; a['knowledgeBaseIds']=['kb_1']; print(json.dumps({'agents':{'$AGENT':a}}))")"
+call "chat_ai_test with a bot that only drafts replies" '{"action":"chat_ai_test"}'
+ans 'b=[x for x in d["steps"] if x["label"]=="The bot answers on its own"]; assert d.get("ok") and b and b[0]["ok"] is False and "suggestive" in b[0]["detail"], d' && chk 0 "chat_ai_test flags a bot that only drafts replies (suggestive mode)" || chk 1 "suggestive — got: $(printf '%s' "$LAST" | head -c 300)"
+call "chat_bot_save update (let it answer on its own)" "{\"action\":\"chat_bot_save\",\"op\":\"update\",\"agentId\":\"$AGENT\",\"autoPilot\":true}"
+ghlq "a=s['agents']['$AGENT']; p=[x for x in s['log'] if x['m']=='PUT'][-1]; assert p['p']=='/conversation-ai/agents/$AGENT' and a['mode']=='auto-pilot' and a['knowledgeBaseIds']==['kb_1'] and a['instructions']=='Keep it short.' and a['isPrimary'] is True and a['channels']==['Live_Chat'] and a['autoPilotMaxMessages']==50, (a,p)" && ans 'assert d.get("ok") and d["done"]=="updated", d' && chk 0 "\"Let it answer on its own\" switches it to auto-pilot and keeps its knowledge bases and prompt (the PUT replaces the whole bot)" || chk 1 "autoPilot update — got: $(printf '%s' "$LAST" | head -c 300)"
+call "chat_bot_save update (the prompt, edited in Fourge)" "{\"action\":\"chat_bot_save\",\"op\":\"update\",\"agentId\":\"$AGENT\",\"name\":\"E2E Assistant\",\"businessName\":\"E2E Dental\",\"personality\":\"Cheerful\",\"goal\":\"Book visits\",\"instructions\":\"Offer a booking link.\"}"
+ghlq "a=s['agents']['$AGENT']; assert a['personality']=='Cheerful' and a['goal']=='Book visits' and a['instructions']=='Offer a booking link.' and a['knowledgeBaseIds']==['kb_1'] and a['mode']=='auto-pilot', a" && chk 0 "editing the bot in Fourge saves its prompt and keeps everything else" || chk 1 "prompt update — got: $(printf '%s' "$LAST" | head -c 300)"
+# a CRM that already has a main bot (on other channels), and a Conversation AI API that insists on v3
+ghl /__reset; ghl /__mode '{"aiV3Only":true}'
+ghl /__seed '{"agents":{"ag_main":{"id":"ag_main","name":"Main Bot","isPrimary":true,"channels":["SMS","FB"],"mode":"auto-pilot","personality":"p","goal":"g","instructions":"i","knowledgeBaseIds":["kb_9"],"autoPilotMaxMessages":30,"actions":[{"id":"act1","type":"triggerWorkflow"}]}}}'
+call "chat_bot_status (a main bot on SMS and Facebook only)" '{"action":"chat_bot_status"}'
+ans 'assert d.get("ok") and d["bot"] is None and d["main"]["name"]=="Main Bot", d' && ghlq 'v=[x["v"] for x in s["log"] if x["p"]=="/conversation-ai/agents/search"]; assert v==["2021-04-15","v3"], v' && chk 0 "chat_bot_status offers the CRM's existing main bot, after retrying with Version v3 when 2021-04-15 is refused" || chk 1 "main bot / v3 — got: $(printf '%s' "$LAST" | head -c 300)"
+call "chat_bot_save use" '{"action":"chat_bot_save","op":"use"}'
+ans 'assert d.get("ok") and d["done"]=="adopted", d' && ghlq 'a=s["agents"]["ag_main"]; assert a["channels"]==["SMS","FB","Live_Chat"] and a["isPrimary"] is True and a["knowledgeBaseIds"]==["kb_9"] and a["autoPilotMaxMessages"]==30 and a["personality"]=="p" and a["actions"]==[{"id":"act1","type":"triggerWorkflow"}], a' && chatjson "assert d.get('agentId')=='ag_main', d" && chk 0 "\"Use Main Bot for website chat\" adds Live Chat to it, changes nothing else, and data/chat.json points at it" || chk 1 "use — got: $(printf '%s' "$LAST" | head -c 300)"
+ghl /__mode '{"aiV3Only":false}'
+# GoHighLevel may insist on a conversation provider id for chat messages
+ghl /__mode '{"requireProvider":true,"providerId":"prov_live_e2e"}'
+call "chat_ai_test (a provider id is required and none can be found)" '{"action":"chat_ai_test"}'
+ans 'assert d.get("ok") is False and d.get("routeBlocked") is True and "conversationProviderId should not be empty" in d["steps"][-1]["detail"], d' && chk 0 "when the CRM refuses chat messages added this way, the test says so (routeBlocked) in the CRM's own words" || chk 1 "route blocked — got: $(printf '%s' "$LAST" | head -c 300)"
+ghl /__seed '{"contacts":{"ct_prev":{"id":"ct_prev","email":"prev@example.com","tags":[]}},"conversations":{"cv_prev":{"id":"cv_prev","contactId":"ct_prev","locationId":"loc_e2e"}},"messages":{"cv_prev":[{"id":"msg_prev","direction":"inbound","messageType":"TYPE_LIVE_CHAT","body":"hello from the CRM widget","dateAdded":"2026-01-01T00:00:00.000Z","conversationProviderId":"prov_live_e2e"}]}}'
+call "chat_ai_test (an earlier Live Chat carries the provider id)" '{"action":"chat_ai_test"}'
+ans 'p=[x for x in d["steps"] if "channel id" in x["label"]]; assert d.get("ok") and p and p[0]["ok"] and "prov_live_e2e" in p[0]["detail"], d' && chatjson "assert d.get('providerId')=='prov_live_e2e', d" && chk 0 "…and finds the id on an earlier Live Chat, uses it, and saves it in data/chat.json" || chk 1 "provider discovery — got: $(printf '%s' "$LAST" | head -c 300)"
+TOK=""
+call "chat_start (public; the provider id is saved)" '{"action":"chat_start","name":"Lee","email":"lee@example.com"}'
+SID3=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sid",""))')
+call "chat_send (public; the provider id is saved)" "{\"action\":\"chat_send\",\"sid\":\"$SID3\",\"message\":\"Hello\"}"
+ans 'assert d.get("ok"), d' && ghlq 'l=[x for x in s["log"] if x["p"]=="/conversations/messages/inbound"][-1]; assert l["body"].get("conversationProviderId")=="prov_live_e2e", l' && chk 0 "visitor messages carry the saved provider id" || chk 1 "provider id on chat_send — got: $(printf '%s' "$LAST" | head -c 200)"
+ghl /__mode '{"requireProvider":false}'
+TOK="$ARCH_TOK3"
+call "set_secret ghl_token (a token the CRM rejects)" '{"action":"set_secret","name":"ghl_token","value":"pit-wrong"}'
+call "chat_bot_status with a rejected token" '{"action":"chat_bot_status"}'
+ans 'assert d.get("ok") is False and "HTTP 401" in d["error"] and "scopes" in d["error"], d' && chk 0 "a rejected token is explained, with the scopes the token needs" || chk 1 "rejected token — got: $(printf '%s' "$LAST" | head -c 300)"
+call "set_secret ghl_token (restored)" '{"action":"set_secret","name":"ghl_token","value":"pit-e2e"}'
+dbq '$pdo->prepare("INSERT INTO users (username, email, role, is_architect, password_hash, must_change_password, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)")->execute(["chat-editor@example.com","chat-editor@example.com","editor",0,password_hash("E2ePass!234", fourgePwAlgo()),0,date("c"),date("c")]);'
+TOK=""
+call "login as an editor" '{"action":"login","username":"chat-editor@example.com","password":"E2ePass!234"}'
+TOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
+call "chat_bot_status as an editor" '{"action":"chat_bot_status"}'
+ans 'assert d.get("error")=="Super Admin access required", d' && chk 0 "the bot box is Super Admin only (it uses the CRM token)" || chk 1 "editor bot status — got: $(printf '%s' "$LAST" | head -c 200)"
+call "chat_ai_test as an editor" '{"action":"chat_ai_test"}'
+ans 'assert d.get("error")=="Super Admin access required", d' && chk 0 "…and so is the AI test (its replies cost AI credit)" || chk 1 "editor AI test — got: $(printf '%s' "$LAST" | head -c 200)"
+TOK="$ARCH_TOK3"
+call "delete_file data/chat.json" '{"action":"delete_file","path":"data/chat.json"}'
+call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
+
 TOK=""
 call "blog_sync_poke (public)" '{"action":"blog_sync_poke"}'
 call "blog_sync_poke with push from a non-source (public)" '{"action":"blog_sync_poke","push":1,"source":"https://evil.example"}'
@@ -290,9 +411,10 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 call "form_view (public)" '{"action":"form_view","formId":"e2e-form"}'
 call "unknown action → JSON error" '{"action":"definitely_not_an_action"}'
 call "no session on a session action → 401 JSON" '{"action":"list_users"}'
-kill $SRV $GHSRV 2>/dev/null; wait $SRV $GHSRV 2>/dev/null
+kill $SRV $GHSRV $GHLSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV 2>/dev/null
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.server.log"; then chk 1 "php -S log has PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "php -S log shows no PHP warnings/notices/deprecations during the whole run"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghstub.log"; then chk 1 "the GitHub stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GitHub stub ran without PHP warnings"; fi
-rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE"
+if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghlstub.log"; then chk 1 "the GoHighLevel stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghlstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GoHighLevel stub ran without PHP warnings"; fi
+rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE"
 echo; echo "$([ $fail = 0 ] && echo "all end-to-end dispatcher assertions passed ($pass)" || echo "SUITE FAILED ($fail failed, $pass passed)")"
 exit $([ $fail = 0 ] && echo 0 || echo 1)

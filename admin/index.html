@@ -715,6 +715,39 @@ html[data-theme="dark"] .ve-swatch-none{background:rgba(255,255,255,.14)}
 .ga-setup-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
 .ga-setup-card h3{font-size:14px;font-weight:800;margin:0 0 6px}
 .ga-setup-card>p{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.6}
+/* Analytics → Setup → Chatbot: Fourge Chat */
+#cb-card [hidden]{display:none!important}
+.cb-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 14px}
+@media(max-width:760px){.cb-modes{grid-template-columns:1fr}}
+.cb-mode{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--surface-2)}
+.cb-mode:has(input:checked){border-color:var(--ember);background:var(--ember-soft)}
+.cb-mode input{margin-top:3px;accent-color:var(--ember)}
+.cb-mode strong{display:block;font-size:13px}
+.cb-mode small{display:block;font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4}
+.cb-sec{border-top:1px solid var(--border);padding-top:14px;margin-top:14px}
+.cb-sec-h{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.cb-design{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
+@media(max-width:980px){.cb-design{grid-template-columns:1fr}}
+.cb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}
+.cb-preview{position:relative;height:540px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:repeating-linear-gradient(180deg,var(--surface-2) 0 26px,var(--surface) 26px 52px)}
+.cb-preview-cap{font-size:11px;color:var(--muted);text-align:center;margin-top:6px}
+.cb-check{display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer;margin:2px 0 6px}
+.cb-bot-line{font-size:13px;line-height:1.55;margin-bottom:8px}
+.cb-pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface-3);color:var(--text-2);margin-left:8px;vertical-align:1px}
+.cb-pill.ok{background:rgba(22,163,74,.14);color:var(--green)}
+.cb-pill.warn{background:var(--ember-soft);color:var(--ember-deep)}
+.cb-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.cb-bot-edit{margin-top:10px}
+.cb-bot-edit summary{cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-2)}
+.cb-bot-fields{margin-top:10px}
+.cb-bot-fields textarea{width:100%;font-size:12.5px;line-height:1.5}
+.cb-steps{list-style:none;padding:0;margin:12px 0 0;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+.cb-steps li{display:flex;gap:8px;align-items:flex-start;line-height:1.5}
+.cb-steps .i{flex:none;width:18px;text-align:center;font-weight:800}
+.cb-steps .ok .i{color:var(--green)}
+.cb-steps .bad .i{color:var(--red)}
+.cb-steps .wait .i{color:var(--muted)}
+.cb-steps small{display:block;color:var(--muted)}
 
 /* ── PROPS PANEL CLEANUP ───────────────────────────────────────── */
 .ve-field{margin-bottom:12px}
@@ -1979,13 +2012,53 @@ textarea.fb-input{resize:vertical}
               </div>
               <button class="fd-btn-primary" onclick="gaSaveCustomCode()" style="margin-top:6px">Save &amp; Apply to All Pages</button>
             </div>
-            <div class="ga-setup-card" style="margin-top:16px">
+            <div class="ga-setup-card" style="margin-top:16px" id="cb-card">
               <h3>4 · Chatbot</h3>
-              <p>Paste the chatbot embed code (from the CRM's chat-widget setup). It's injected into the <code>&lt;head&gt;</code> of every page. Use <strong>Chatbot in testing</strong> while you're still tuning it: the widget then stays completely hidden from real visitors and only appears for someone who adds <code>?chatbot=true</code> to the address — it stays visible for the rest of that person's browsing session, and <code>?chatbot=false</code> turns it back off.</p>
-              <div class="fg"><label>Chatbot embed code</label><textarea id="cb-embed" rows="4" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="&lt;script src=&quot;https://widgets.leadconnectorhq.com/loader.js&quot; data-widget-id=&quot;…&quot;&gt;&lt;/script&gt;"></textarea></div>
-              <label style="display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;cursor:pointer;margin:4px 0 10px">
+              <p>Choose how chat works on this site. <strong>Fourge Chat</strong> is your own chat window, designed here and answered by your CRM's AI bot: each chat lands in the CRM as a normal Live Chat conversation with the visitor as a contact, and your team can take over there. Or paste the chat-widget code your CRM gives you. Use <strong>in testing</strong> while you tune either one: visitors see nothing, and it only appears for someone who adds <code>?chatbot=true</code> to the address (for the rest of that browsing session; <code>?chatbot=false</code> turns it off).</p>
+              <div class="cb-modes" role="radiogroup" aria-label="Chat on this site">
+                <label class="cb-mode"><input type="radio" name="cb-mode" value="fourge" onchange="cbModeChanged()"><span><strong>Fourge Chat</strong><small>Your design, answered by your CRM's AI</small></span></label>
+                <label class="cb-mode"><input type="radio" name="cb-mode" value="embed" onchange="cbModeChanged()"><span><strong>CRM embed code</strong><small>The chat widget your CRM gives you</small></span></label>
+                <label class="cb-mode"><input type="radio" name="cb-mode" value="none" onchange="cbModeChanged()"><span><strong>No chat</strong><small>Nothing on the pages</small></span></label>
+              </div>
+              <div id="cb-embed-wrap" hidden>
+                <div class="fg"><label>Chatbot embed code</label><textarea id="cb-embed" rows="4" style="font-family:var(--font-mono);font-size:11px;width:100%" placeholder="&lt;script src=&quot;https://widgets.leadconnectorhq.com/loader.js&quot; data-widget-id=&quot;…&quot;&gt;&lt;/script&gt;"></textarea></div>
+              </div>
+              <div id="cb-fourge-wrap" hidden>
+                <div class="cb-sec" style="border-top:0;padding-top:0;margin-top:0">
+                  <div class="cb-sec-h">The bot</div>
+                  <div id="cb-bot"><div class="cb-bot-line" style="color:var(--muted)">Checking your CRM…</div></div>
+                </div>
+                <div class="cb-sec">
+                  <div class="cb-sec-h">Look and text</div>
+                  <div class="cb-design">
+                    <div class="cb-design-form" oninput="cbPreviewSoon()" onchange="cbPreviewSoon()">
+                      <div class="cb-grid">
+                        <div class="fg"><label for="cbx-color">Color</label><input type="color" id="cbx-color" value="#155EEF" data-fc-hex></div>
+                        <div class="fg"><label for="cbx-theme">Theme</label><select id="cbx-theme"><option value="light">Light</option><option value="dark">Dark</option><option value="auto">Match the visitor's device</option></select></div>
+                        <div class="fg"><label for="cbx-shape">Corners</label><select id="cbx-shape"><option value="rounded">Rounded</option><option value="soft">Soft</option><option value="square">Square</option></select></div>
+                        <div class="fg"><label for="cbx-launcher">Chat button</label><select id="cbx-launcher"><option value="icon">Icon</option><option value="pill">Icon and text</option></select></div>
+                        <div class="fg"><label for="cbx-position">Position</label><select id="cbx-position"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></div>
+                        <div class="fg"><label for="cbx-font">Font</label><select id="cbx-font"><option value="site">The site's font</option><option value="system">System font</option></select></div>
+                      </div>
+                      <div class="fg"><label for="cbx-title">Title</label><input id="cbx-title" maxlength="60"></div>
+                      <div class="fg"><label for="cbx-subtitle">Subtitle</label><input id="cbx-subtitle" maxlength="90"></div>
+                      <div class="fg"><label for="cbx-welcome">Welcome message</label><textarea id="cbx-welcome" rows="2" maxlength="300" style="width:100%"></textarea></div>
+                      <div class="cb-grid">
+                        <div class="fg"><label for="cbx-label">Chat button text</label><input id="cbx-label" maxlength="40"></div>
+                        <div class="fg"><label for="cbx-start">Start button text</label><input id="cbx-start" maxlength="30"></div>
+                      </div>
+                      <div class="fg"><label for="cbx-noreply">If no one has replied after a minute</label><input id="cbx-noreply" maxlength="200"></div>
+                      <div class="fg"><label for="cbx-avatar">Avatar image <span style="font-weight:400;color:var(--muted)">(optional — a URL or /assets/… path)</span></label><input id="cbx-avatar" maxlength="500" placeholder="/assets/logo-mark.png"></div>
+                      <div class="fg"><label for="cbx-privacy">Privacy policy link <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input id="cbx-privacy" maxlength="500" placeholder="/privacy-policy"></div>
+                      <label class="cb-check"><input type="checkbox" id="cbx-phone" style="width:16px;height:16px"> Ask for a phone number too (optional for the visitor)</label>
+                    </div>
+                    <div><div class="cb-preview" id="cb-preview"></div><div class="cb-preview-cap">Preview — nothing is sent from here</div></div>
+                  </div>
+                </div>
+              </div>
+              <label style="display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;cursor:pointer;margin:14px 0 10px">
                 <input type="checkbox" id="cb-testing" style="width:16px;height:16px;cursor:pointer">
-                Chatbot in testing <span style="font-weight:400;color:var(--muted)">— hidden from visitors; only shows with <code>?chatbot=true</code></span>
+                In testing <span style="font-weight:400;color:var(--muted)">— hidden from visitors; only shows with <code>?chatbot=true</code></span>
               </label>
               <div id="cb-state" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
               <button class="fd-btn-primary" onclick="gaSaveChatbot()" style="margin-top:2px">Save &amp; Apply to All Pages</button>
@@ -2845,7 +2918,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.148';
+const CMS_VERSION='1.14.149';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -2853,7 +2926,7 @@ const CMS_VERSION='1.14.148';
 // refuses the overwrite on any site missing config.secret.php (see api.php →
 // cmsWriteFile) so an update can never wipe an un-migrated site's inline secrets.
 // This must mirror the server allow-list in api.php → fourgeUpdateFetchAllow().
-const UPDATE_FILES_ALLOWED=['admin/index.html','admin/db.php','block-renderer.jsx','blog-post.jsx','interior-shell.jsx','posts.jsx','preview.html','adaptify.js','admin/api.php'];
+const UPDATE_FILES_ALLOWED=['admin/index.html','admin/db.php','block-renderer.jsx','blog-post.jsx','interior-shell.jsx','posts.jsx','preview.html','adaptify.js','fourge-chat.js','admin/api.php'];
 const UPDATE_FILES_DEFAULT=UPDATE_FILES_ALLOWED.slice(); // used when version.json omits "files"
 const UPDATE_THROTTLE_MS=20*60*60*1000; // ~daily: don't re-check on every login within a day
 const F_PAGES='data/pages.json',F_POSTS='data/posts.json',F_SEO='data/seo.json',F_EVENTS='data/events.json';
@@ -12321,6 +12394,8 @@ function initAnalytics(){
   const cb=gaChatbotCfg();
   set('cb-embed',cb.embed);
   const cbT=document.getElementById('cb-testing'); if(cbT) cbT.checked=!!cb.testing;
+  const cbM=document.querySelector('input[name="cb-mode"][value="'+(gaChatbotMode()||'none')+'"]'); if(cbM) cbM.checked=true;
+  cbModeChanged();
   gaChatbotRenderState();
   // Default report month = previous month
   const mEl=document.getElementById('ga-rep-month');
@@ -12514,7 +12589,23 @@ const CB_HEAD_START='<!-- foundry-chatbot:start -->';
 const CB_HEAD_END  ='<!-- foundry-chatbot:end -->';
 const CB_PARAM='chatbot';
 function gaChatbotCfg(){ const a=gaCfg(); if(!a.chatbot) a.chatbot={embed:'',testing:false}; return a.chatbot; }
-function gaHasChatbot(){ return String(gaChatbotCfg().embed||'').trim()!==''; }
+// 'fourge' (Fourge Chat), 'embed' (the CRM's own widget code) or '' (none).
+// Sites saved before Fourge Chat existed have no mode: an embed means 'embed'.
+function gaChatbotMode(){
+  const c=gaChatbotCfg();
+  if(c.mode==='fourge'||c.mode==='embed') return c.mode;
+  if(c.mode==='none') return '';
+  return String(c.embed||'').trim()?'embed':'';
+}
+// What goes on the pages for the chosen mode. Fourge Chat is one loader tag;
+// the widget reads its settings from data/chat.json.
+function gaChatbotEmbedMarkup(){
+  const m=gaChatbotMode();
+  if(m==='fourge') return '<scr'+'ipt src="/fourge-chat.js" defer></'+'scr'+'ipt>';
+  if(m==='embed') return String(gaChatbotCfg().embed||'').trim();
+  return '';
+}
+function gaHasChatbot(){ return gaChatbotEmbedMarkup()!==''; }
 function gaB64(str){
   const bytes=new TextEncoder().encode(String(str));
   let bin=''; for(let i=0;i<bytes.length;i++) bin+=String.fromCharCode(bytes[i]);
@@ -12522,7 +12613,7 @@ function gaB64(str){
 }
 function gaBuildChatbot(){
   const c=gaChatbotCfg();
-  const embed=String(c.embed||'').trim();
+  const embed=gaChatbotEmbedMarkup();
   if(!embed) return '';
   // Not in testing → the embed ships as-is and behaves exactly like any other
   // header snippet.
@@ -12564,30 +12655,283 @@ function gaBuildChatbot(){
 }
 async function gaSaveChatbot(){
   const a=gaCfg();
+  const mode=cbModeUI();
   const embed=document.getElementById('cb-embed')?.value||'';
   const testing=!!document.getElementById('cb-testing')?.checked;
-  if(embed.trim() && !/<\s*script|<\s*iframe|<\s*div/i.test(embed)){
-    toast('That does not look like an embed code — paste the full snippet the CRM gives you, including its script tag','err');
-    return;
+  if(mode==='embed'){
+    if(!embed.trim()){ toast('Paste the embed code from your CRM first','err'); return; }
+    if(!/<\s*script|<\s*iframe|<\s*div/i.test(embed)){
+      toast('That does not look like an embed code — paste the full snippet the CRM gives you, including its script tag','err');
+      return;
+    }
   }
-  a.chatbot={embed:embed.trim(),testing:testing};
+  if(mode==='fourge') await cbEnsureLoaded();
+  // The widget reads data/chat.json on every page and the chat endpoints only
+  // answer while it says enabled, so choosing anything else switches both off.
+  if(mode==='fourge'||gaChatbotMode()==='fourge'||_cbChat){
+    try{ await cbWriteChatJson(mode==='fourge'?Object.assign(cbDesignFromForm(),{enabled:true}):{enabled:false}); }
+    catch(e){ toast('Save failed: '+e.message,'err'); return; }
+  }
+  if(mode==='fourge' && !(await cbEnsureWidgetFile())) toast('Saved, but this site doesn\'t have fourge-chat.js yet. Install the latest Fourge update, then save again.','err');
+  a.chatbot={mode:(mode==='fourge'||mode==='embed')?mode:'none',embed:embed.trim(),testing:testing};
   try{ await gaPersistSite(); }
   catch(e){ toast('Save failed: '+e.message,'err'); return; }
   gaChatbotRenderState();
   if(a.ga4||a.gtm||a.ads||gaHasCustom()||gaHasChatbot()) await gaInjectAll();
-  else toast('Chatbot settings saved ✓','ok');
+  else await gaWalkPages(false);   // nothing left to publish: take the old block off every page
 }
 function gaChatbotRenderState(){
   const el=document.getElementById('cb-state'); if(!el) return;
   const c=gaChatbotCfg();
-  if(!String(c.embed||'').trim()){ el.textContent='No chatbot embed saved — the site has no chat widget.'; return; }
+  if(!gaHasChatbot()){ el.textContent='No chat on the site.'; return; }
   if(c.testing){
     const base=normSiteBase();
     el.innerHTML='<strong style="color:var(--ember)">In testing.</strong> Visitors see nothing. Test it at <code>'
       +esc((base||'')+'/?'+CB_PARAM+'=true')+'</code> — it stays on for the rest of that browsing session.';
   } else {
-    el.innerHTML='<strong style="color:#1E8A5B">Live for everyone.</strong> The chatbot loads for every visitor on every page.';
+    el.innerHTML='<strong style="color:#1E8A5B">Live for everyone.</strong> '+(gaChatbotMode()==='fourge'?'Fourge Chat':'The chatbot')+' loads for every visitor on every page.';
   }
+}
+
+// ── FOURGE CHAT (Analytics → Setup → Chatbot) ───────────────────────────────
+// The site's own chat window (/fourge-chat.js), answered by the CRM's
+// Conversation AI bot through api.php. Its look and texts live in
+// data/chat.json, which the widget reads on every page; the server records the
+// bot's id there itself, so every save here merges into a fresh copy. The bot
+// box and the AI test use the CRM token, so they are Super Admin only.
+const CB_DEFAULTS={position:'bottom-right',theme:'light',shape:'rounded',launcher:'icon',font:'site',
+  title:'Chat with us',subtitle:'We usually reply in a few seconds.',welcome:'Hi there! How can we help today?',
+  launcherText:'Chat with us',startButton:'Start chat',noReplyText:'Thanks for your message. Our team will follow up by email shortly.',
+  avatar:'',privacyUrl:'',askPhone:false};
+let _cbChat=null, _cbLoaded=false, _cbPrevTimer=null, _cbPrevLoad=null, _cbBot=null;
+
+function cbModeUI(){ const r=document.querySelector('input[name="cb-mode"]:checked'); return r?r.value:'none'; }
+function cbModeChanged(){
+  const m=cbModeUI();
+  const ew=document.getElementById('cb-embed-wrap'), fw=document.getElementById('cb-fourge-wrap');
+  if(ew) ew.hidden=(m!=='embed');
+  if(fw) fw.hidden=(m!=='fourge');
+  if(m==='fourge') cbEnsureLoaded();
+}
+// Loads data/chat.json into the form once; the promise lets Save wait for it,
+// so a quick click can never write the blank form over the saved settings.
+function cbEnsureLoaded(){
+  if(!_cbLoaded){
+    _cbLoaded=(async()=>{
+      _cbChat=await cbLoadChatJson();
+      cbFillForm(_cbChat);
+      cbPreviewSoon();
+      cbBotRefresh();
+    })();
+  }
+  cbPreviewSoon();
+  return _cbLoaded;
+}
+async function cbLoadChatJson(){
+  let cfg=null;
+  try{ const r=await fetch('../data/chat.json?t='+Date.now(),{cache:'no-store'}); if(r.ok) cfg=await r.json(); }catch(e){}
+  if(!cfg){ try{ const d=await apiCall('read_file',{path:'data/chat.json'}); if(d&&d.content) cfg=JSON.parse(d.content); }catch(e){} }
+  return (cfg&&typeof cfg==='object'&&!Array.isArray(cfg))?cfg:{};
+}
+async function cbWriteChatJson(patch){
+  const next=Object.assign({},await cbLoadChatJson(),patch);
+  await apiCall('write_file',{path:'data/chat.json',content:JSON.stringify(next,null,2)});
+  _cbChat=next;
+  return next;
+}
+function cbDefaultColor(){ const s=_site||{}; return (s.brand&&s.brand.primary)||(s.colors&&s.colors.primary)||'#155EEF'; }
+function cbDesignFromForm(){
+  const v=id=>(document.getElementById(id)?.value||'').trim();
+  return {
+    color:fcVal('cbx-color')||cbDefaultColor(), theme:v('cbx-theme')||'light', shape:v('cbx-shape')||'rounded',
+    launcher:v('cbx-launcher')||'icon', position:v('cbx-position')||'bottom-right', font:v('cbx-font')||'site',
+    title:v('cbx-title'), subtitle:v('cbx-subtitle'), welcome:v('cbx-welcome'), launcherText:v('cbx-label'),
+    startButton:v('cbx-start'), noReplyText:v('cbx-noreply'), avatar:v('cbx-avatar'), privacyUrl:v('cbx-privacy'),
+    askPhone:!!document.getElementById('cbx-phone')?.checked
+  };
+}
+function cbFillForm(c){
+  const d=Object.assign({},CB_DEFAULTS,{color:cbDefaultColor()},c||{});
+  const set=(id,val)=>{ const el=document.getElementById(id); if(el) el.value=(val==null?'':val); };
+  const col=document.getElementById('cbx-color'); if(col){ fcSet(col,d.color); fcSyncHex(col); }
+  set('cbx-theme',d.theme); set('cbx-shape',d.shape); set('cbx-launcher',d.launcher); set('cbx-position',d.position); set('cbx-font',d.font);
+  set('cbx-title',d.title); set('cbx-subtitle',d.subtitle); set('cbx-welcome',d.welcome); set('cbx-label',d.launcherText);
+  set('cbx-start',d.startButton); set('cbx-noreply',d.noReplyText); set('cbx-avatar',d.avatar); set('cbx-privacy',d.privacyUrl);
+  const ph=document.getElementById('cbx-phone'); if(ph) ph.checked=!!d.askPhone;
+}
+// The preview is the real widget (this site's /fourge-chat.js) drawn offline
+// into the box, so what you see here is what visitors get.
+function cbPreviewScript(){
+  if(window.FourgeChat) return Promise.resolve(true);
+  if(_cbPrevLoad) return _cbPrevLoad;
+  const load=()=>new Promise(res=>{
+    const s=document.createElement('script');
+    s.src='../fourge-chat.js?v='+encodeURIComponent(CMS_VERSION)+'&t='+Date.now();
+    s.setAttribute('data-fourge-preview','');
+    s.onload=()=>res(!!window.FourgeChat);
+    s.onerror=()=>{ s.remove(); res(false); };
+    document.head.appendChild(s);
+  });
+  _cbPrevLoad=load().then(ok=>ok?true:cbEnsureWidgetFile().then(got=>got?load():false)).then(ok=>{ if(!ok) _cbPrevLoad=null; return ok; });
+  return _cbPrevLoad;
+}
+// The first update to this version is run by the previous admin, whose engine
+// list doesn't know fourge-chat.js yet, so the file can be missing until the
+// next update. Fetch it from the CMS repo (as the ADAptify install does) when
+// the server doesn't have it. Later updates carry it like any engine file.
+async function cbEnsureWidgetFile(){
+  try{ const r=await fetch('../fourge-chat.js?t='+Date.now(),{method:'HEAD',cache:'no-store'}); if(r.ok) return true; }catch(e){}
+  try{
+    const{repo,branch}=parseTplRepo(getTplRepo());
+    const js=await fetchRepoFile(repo,branch,'fourge-chat.js');
+    if(js && js.indexOf('__fourgeChat')>=0){ await apiCall('write_file',{path:'fourge-chat.js',content:js}); return true; }
+  }catch(e){ console.warn('fourge-chat.js not installed yet:',e.message); }
+  return false;
+}
+function cbPreviewSoon(){ clearTimeout(_cbPrevTimer); _cbPrevTimer=setTimeout(cbPreview,150); }
+async function cbPreview(){
+  const box=document.getElementById('cb-preview'); if(!box) return;
+  if(!(await cbPreviewScript())){
+    box.innerHTML='<div style="padding:16px;font-size:12px;color:var(--muted)">The preview needs this site\'s fourge-chat.js. Update the site to the latest Fourge version, then reload.</div>';
+    return;
+  }
+  window.FourgeChat.preview(box,cbDesignFromForm());
+}
+
+// ── The bot ──
+function cbIsSuper(){ return accessLevel(getSessionUser())>=3; }
+async function cbBotRefresh(){
+  const el=document.getElementById('cb-bot'); if(!el) return;
+  if(!cbIsSuper()){ el.innerHTML='<div class="cb-bot-line">A Super Admin sets up the bot, because it uses your CRM\'s token and its AI.</div>'; return; }
+  el.innerHTML='<div class="cb-bot-line" style="color:var(--muted)">Checking your CRM…</div>';
+  let d; try{ d=await apiCall('chat_bot_status',{}); }catch(e){ d={ok:false,error:e.message}; }
+  _cbBot=d||{};
+  cbBotRender();
+}
+// Starting instructions for a new bot, from the site's own details.
+function cbBotDefaults(){
+  const s=_site||{};
+  const nm=String(s.name||'').trim(), biz=(nm&&nm!=='Site Name')?nm:'';
+  const who=biz||'the business';
+  const a=s.address||{}, h=s.hours||{};
+  const addr=[a.street,[a.city,[a.state,a.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ')].filter(Boolean).join(', ');
+  const hours=[h.weekday&&('Monday–Friday '+h.weekday),h.saturday&&('Saturday '+h.saturday),h.sunday&&('Sunday '+h.sunday)].filter(Boolean).join('; ');
+  const facts=[s.website&&('Website: '+s.website),s.phone&&('Phone: '+s.phone),s.email&&('Email: '+s.email),addr&&('Address: '+addr),hours&&('Hours: '+hours)].filter(Boolean);
+  return {
+    name:(biz?biz+' Assistant':'Website Assistant').slice(0,80),
+    businessName:biz,
+    personality:'Warm, helpful and to the point. Plain language, no jargon, like a friendly member of the '+(biz||'company')+' team.',
+    goal:'Answer visitors\' questions about '+who+' and help them take the next step: booking, a quote, or a call with the team.',
+    instructions:['You are the website chat assistant for '+who+(s.tagline?' ('+String(s.tagline).trim()+')':'')+'.',
+      'Keep replies short: one to three sentences, in plain language.',
+      'Only state facts from your knowledge base or the details below. If you don\'t know, say so and offer to have the team follow up by email.',
+      'Never make up prices, availability or promises.',
+      'If the visitor asks for a person, tell them someone from the team will reply here or by email shortly.']
+      .concat(facts.length?['','Business details:'].concat(facts.map(f=>'- '+f)):[]).join('\n')
+  };
+}
+function cbBotFieldsHtml(b,locked){
+  const dis=locked?' disabled':'';
+  return '<div class="cb-bot-fields">'
+    +(locked?'<div class="cb-bot-line" style="color:var(--muted)">This bot runs on a full custom prompt set in the CRM, which overrides these fields. Edit it in the CRM.</div>':'')
+    +'<div class="cb-grid"><div class="fg"><label for="cbb-name">Bot name</label><input id="cbb-name" maxlength="80" value="'+esc(b.name||'')+'"'+dis+'></div>'
+    +'<div class="fg"><label for="cbb-business">Business name</label><input id="cbb-business" maxlength="120" value="'+esc(b.businessName||'')+'"'+dis+'></div></div>'
+    +'<div class="fg"><label for="cbb-personality">Personality</label><textarea id="cbb-personality" rows="2" maxlength="2000"'+dis+'>'+esc(b.personality||'')+'</textarea></div>'
+    +'<div class="fg"><label for="cbb-goal">Goal</label><textarea id="cbb-goal" rows="2" maxlength="2000"'+dis+'>'+esc(b.goal||'')+'</textarea></div>'
+    +'<div class="fg"><label for="cbb-instructions">Instructions</label><textarea id="cbb-instructions" rows="9" maxlength="8000"'+dis+'>'+esc(b.instructions||'')+'</textarea></div>'
+    +'</div>';
+}
+function cbBotRender(){
+  const el=document.getElementById('cb-bot'); if(!el) return;
+  const d=_cbBot||{};
+  if(d.needsConnection){
+    el.innerHTML='<div class="cb-bot-line">Connect your CRM first in <strong>Plugins → Lead Generation</strong>, with a token that can use Contacts, Conversations, Conversation Messages and Conversation AI.</div>'
+      +'<div class="cb-actions"><button class="fd-btn-secondary" onclick="navTo(\'inject\')">Open Plugins</button><button class="fd-btn-ghost" onclick="cbBotRefresh()">Check again</button></div>';
+    return;
+  }
+  if(!d.ok){
+    el.innerHTML='<div class="cb-bot-line" style="color:var(--red)">'+esc(d.error||'Could not reach your CRM.')+'</div><div class="cb-actions"><button class="fd-btn-ghost" onclick="cbBotRefresh()">Check again</button></div>';
+    return;
+  }
+  if(d.bot){
+    const b=d.bot, auto=b.mode==='auto-pilot';
+    let h='<div class="cb-bot-line"><strong>'+esc(b.name||'Your bot')+'</strong> answers website chat.'
+      +'<span class="cb-pill '+(auto?'ok':'warn')+'">'+(auto?'Answers on its own':(b.mode==='suggestive'?'Drafts replies only':'Switched off'))+'</span></div>';
+    if(!auto){
+      h+='<div class="cb-bot-line">Right now it '+(b.mode==='suggestive'?'only drafts replies for your team to send':'is switched off')+', so visitors won\'t get an instant answer.</div>'
+        +'<div class="cb-actions"><button class="fd-btn-primary" onclick="cbBotAction(\'update\',{autoPilot:true})">Let it answer on its own</button></div>';
+    }
+    h+='<details class="cb-bot-edit"><summary>Edit what the bot knows and how it talks</summary>'+cbBotFieldsHtml(b,!!b.usesFullPrompt)
+      +'<div class="cb-actions"><button class="fd-btn-secondary" onclick="cbBotAction(\'update\')"'+(b.usesFullPrompt?' disabled':'')+'>Save bot changes</button></div></details>';
+    h+='<div class="cb-actions"><button class="fd-btn-secondary" id="cb-test-btn" onclick="cbRunTest()">Run AI test</button>'
+      +'<span style="font-size:12px;color:var(--muted);align-self:center">Sends one message as “Fourge Chat Test” and waits for the bot\'s reply.</span></div><div id="cb-test"></div>';
+    el.innerHTML=h;
+    return;
+  }
+  if(d.main){
+    el.innerHTML='<div class="cb-bot-line">Your CRM\'s main bot, <strong>'+esc(d.main.name||'')+'</strong>, isn\'t answering Live Chat yet. Fourge Chat can use it, and it keeps everything it already knows.</div>'
+      +'<div class="cb-actions"><button class="fd-btn-primary" onclick="cbBotAction(\'use\')">Use '+esc(d.main.name||'it')+' for website chat</button></div>';
+    return;
+  }
+  el.innerHTML='<div class="cb-bot-line">No bot yet. Fourge will create one in your CRM with these instructions; you can change them any time.</div>'
+    +cbBotFieldsHtml(cbBotDefaults(),false)
+    +'<div class="cb-actions"><button class="fd-btn-primary" onclick="cbBotAction(\'create\')">Create the bot</button></div>';
+}
+async function cbBotAction(op,extra){
+  const v=id=>(document.getElementById(id)?.value||'').trim();
+  const body=Object.assign({op},extra||{});
+  if(op==='create'||(op==='update'&&!(extra&&extra.autoPilot))){
+    Object.assign(body,{name:v('cbb-name'),businessName:v('cbb-business'),personality:v('cbb-personality'),goal:v('cbb-goal'),instructions:v('cbb-instructions')});
+  }
+  if(op==='update'&&_cbBot&&_cbBot.bot) body.agentId=_cbBot.bot.id;
+  toast(op==='create'?'Creating the bot…':'Saving…');
+  let d; try{ d=await apiCall('chat_bot_save',body); }catch(e){ d={ok:false,error:e.message}; }
+  if(!d||!d.ok){ toast((d&&d.error)||'Your CRM did not accept that','err'); return; }
+  toast(d.done==='created'?'Bot created ✓':d.done==='adopted'?'Your main bot now answers website chat ✓':'Bot saved ✓','ok');
+  if(_cbChat&&d.bot&&d.bot.id) _cbChat.agentId=d.bot.id;
+  cbBotRefresh();
+}
+// One test message as a test contact, then watch for the bot's reply. This is
+// the check that the CRM's bot answers chat messages Fourge hands it.
+async function cbRunTest(){
+  const out=document.getElementById('cb-test'), btn=document.getElementById('cb-test-btn'); if(!out) return;
+  if(btn) btn.disabled=true;
+  const done=()=>{ if(btn) btn.disabled=false; };
+  out.innerHTML='<ul class="cb-steps"><li class="wait"><span class="i">…</span><span>Sending a test message…</span></li></ul>';
+  let d; try{ d=await apiCall('chat_ai_test',{}); }catch(e){ d={ok:false,steps:[{label:'Run the test',ok:false,detail:e.message}]}; }
+  const row=(cls,icon,label,detail)=>'<li class="'+cls+'"><span class="i">'+icon+'</span><span>'+label+(detail?'<small>'+detail+'</small>':'')+'</span></li>';
+  const base=((d&&d.steps)||[]).map(s=>row(s.ok?'ok':'bad',s.ok?'✓':'✗',esc(s.label),esc(s.detail||''))).join('');
+  if(!d||!d.ok){
+    out.innerHTML='<ul class="cb-steps">'+base
+      +(d&&d.routeBlocked?row('bad','!','Your CRM didn\'t take the test message as a Live Chat message.','So the bot can\'t answer Fourge Chat this way yet. Send this result to your developer: the next step is the custom-channel route.'):'')
+      +'</ul>';
+    done(); return;
+  }
+  const t0=Date.now();
+  out.innerHTML='<ul class="cb-steps">'+base+row('wait','…','Waiting for the bot\'s reply…','')+'</ul>';
+  const tick=async()=>{
+    const secs=Math.round((Date.now()-t0)/1000);
+    let p; try{ p=await apiCall('chat_ai_test_poll',{conversationId:d.conversationId,since:d.since}); }catch(e){ p={ok:false,error:e.message}; }
+    if(p&&p.ok&&p.done){
+      out.innerHTML='<ul class="cb-steps">'+base
+        +row('ok','✓','The bot replied after '+(p.seconds!=null?p.seconds:secs)+' seconds','“'+esc(p.reply)+'”')
+        +row('ok','✓','Fourge Chat works with your CRM.','Turn it on with Save &amp; Apply below. Keep “In testing” ticked to try it on the live site first.')
+        +'</ul>';
+      done(); return;
+    }
+    if(secs>=75){
+      out.innerHTML='<ul class="cb-steps">'+base
+        +row('bad','✗','No reply from the bot after 75 seconds',
+          (p&&p.ok&&p.seenInbound)
+            ?'The test message reached the conversation, but the bot didn\'t answer it. Check that Conversation AI is switched on for this sub-account and the bot is on Auto-Pilot with Live Chat, then test again. If it still stays quiet, your CRM doesn\'t answer chat messages added this way: send this result to your developer.'
+            :'The test message didn\'t show up in the conversation. Look for “Fourge Chat Test” in your CRM\'s conversations, and send this result to your developer.')
+        +'</ul>';
+      done(); return;
+    }
+    out.innerHTML='<ul class="cb-steps">'+base+row('wait','…','Waiting for the bot\'s reply… '+secs+'s','')+'</ul>';
+    setTimeout(tick,3000);
+  };
+  setTimeout(tick,3000);
 }
 
 async function gaWalkPages(inject){
@@ -13068,7 +13412,7 @@ function ghlAddonHtml(){
       <span class="pl-logo">${logo}</span>
       <div style="flex:1;min-width:0">
         <div class="pl-n" style="display:flex;align-items:center;gap:8px">Lead Generation <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
-        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into your CRM as a lead — no separate form needed. When on, a <strong>Lead Generation</strong> dashboard appears in the left menu (visible to your whole team). In your CRM, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID.</div>
+        <div class="pl-s" style="margin-top:3px">Send every website form submission straight into your CRM as a lead — no separate form needed. When on, a <strong>Lead Generation</strong> dashboard appears in the left menu (visible to your whole team). In your CRM, go to <strong>Settings → Private Integrations</strong>, create a token with the <em>Contacts</em> scope, and paste it below with your Location ID. For <strong>Fourge Chat</strong> (Analytics → Setup → Chatbot), give it view and edit access to <em>Contacts</em>, <em>Conversations</em>, <em>Conversation Messages</em> and <em>Conversation AI</em>.</div>
       </div>
     </div>
     <div class="pl-addon-body">
