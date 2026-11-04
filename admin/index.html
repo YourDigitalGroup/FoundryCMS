@@ -2918,7 +2918,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.150';
+const CMS_VERSION='1.14.151';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3220,7 +3220,13 @@ function switchTab(btn,panelId){const p=btn.parentElement;p.querySelectorAll('.t
 function switchPropsTab(){}
 const NAV_MAP={'dash':'p-dash','overview':'p-dash','pages':'p-pages','tlp':'p-tlp','posts':'p-posts','forms':'p-forms','entries':'p-entries','media':'p-media','seo':'p-seo','site':'p-site','siteinfo':'p-site','injections':'p-inject','plugins':'p-inject','analytics':'p-analytics','leadgen':'p-leadgen','settings':'p-settings','factory':'p-factory','adaptify':'p-adaptify','reviews':'p-reviews','map':'p-map','events':'p-events','users':'p-users'};
 function navTo(name){goPanel(NAV_MAP[name]||('p-'+name));}
+// Panels a module switch can take away from an editor: hiding the menu item is not
+// enough, because other panels link straight to them (Plugins → "Open Custom Code").
+const PANEL_MODULE={'p-analytics':'analytics'};
+const PANEL_MODULE_LABEL={analytics:'Analytics'};
 function goPanel(id){
+  const mod=PANEL_MODULE[id];
+  if(mod && !getEffectivePerms(getSessionUser())[mod]){ toast(PANEL_MODULE_LABEL[mod]+' is switched off for your account. An Admin can turn it on in Users.','err'); return; }
   closeConversation();   // dismiss any open Lead Generation chat when switching modules
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
   const p=document.getElementById(id);if(p){p.classList.add('on');if(window.fxPanelIn)window.fxPanelIn(p);}
@@ -3686,10 +3692,12 @@ const ROLE_RANK = {superadmin:3, admin:2, editor:1};
 // SEO must always reach the pages, so the panel is on for every role and
 // getEffectivePerms() force-enables it even for users saved with an old
 // per-user override.
+// Analytics is on for every role by default (editors always had the panel), and an
+// Admin can switch it off per editor; the server refuses that editor its data too.
 const ROLE_DEFAULTS = {
-  superadmin: {pages:true,posts:true,forms:true,tlp:true,media:true,seo:true,design:true,plugins:true,siteFactory:true,settings:true,users:true,revisions:true,aiEdit:true},
-  admin:      {pages:true,posts:true,forms:true,tlp:true,media:true,seo:true,design:true,plugins:false,siteFactory:true,settings:false,users:true,revisions:true,aiEdit:true},
-  editor:     {pages:true,posts:true,forms:true,tlp:false,media:true,seo:true,design:false,plugins:false,siteFactory:false,settings:false,users:false,revisions:true,aiEdit:false}
+  superadmin: {pages:true,posts:true,forms:true,tlp:true,media:true,seo:true,design:true,plugins:true,siteFactory:true,settings:true,users:true,revisions:true,aiEdit:true,analytics:true},
+  admin:      {pages:true,posts:true,forms:true,tlp:true,media:true,seo:true,design:true,plugins:false,siteFactory:true,settings:false,users:true,revisions:true,aiEdit:true,analytics:true},
+  editor:     {pages:true,posts:true,forms:true,tlp:false,media:true,seo:true,design:false,plugins:false,siteFactory:false,settings:false,users:false,revisions:true,aiEdit:false,analytics:true}
 };
 
 // Modules admins can grant to editors (not shown for admin/superadmin since always-on)
@@ -3699,6 +3707,7 @@ const EDITOR_MODULES = [
   {key:'forms',       label:'Forms',            desc:'Build forms and view submissions'},
   {key:'tlp',         label:'Targeted Landing Pages', desc:'Generate city-targeted landing pages'},
   {key:'media',       label:'Media Library',    desc:'Upload and manage media files'},
+  {key:'analytics',   label:'Analytics',        desc:'Traffic reports, tracking codes, custom code and the chatbot'},
   // 'seo' removed on purpose: the SEO panel is always on for every user — SEO,
   // once filled out, must always apply and can't be switched off anywhere.
   {key:'aiEdit',      label:'General Markup',   desc:'Markup tools in the page editor toolbar'},
@@ -3718,6 +3727,7 @@ function getEffectivePerms(user){
   // User-specific overrides layered on top of role defaults
   const perms = Object.assign({}, defaults, arch ? {} : (user&&user.permissions||{}));
   perms.seo = true;   // SEO is always on — old saved per-user overrides can't hide it
+  if(role!=='editor') perms.analytics = true;   // only an editor's Analytics can be switched off (the server agrees: fourgeEditorModuleOn)
   return perms;
 }
 
@@ -3754,6 +3764,7 @@ function applyRole(){
     'ni-settings':  perms.settings,        // superadmin / Architect only — admins do not get Settings
     'ni-users':     rank>=2,               // editors never see users
     'ni-revisions': perms.revisions,
+    'ni-analytics': perms.analytics,
     'tb-ai-edit':   perms.aiEdit,
   };
   Object.entries(navShow).forEach(([id,show])=>{

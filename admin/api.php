@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.150');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.151');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -88,6 +88,10 @@ define('MG_NOTIFY_TO', (string)($__secret['mg_notify_to'] ?? ''));
 // below, since define() runs top-to-bottom (functions are hoisted; constants are not).
 define('GHL_API_BASE',    'https://services.leadconnectorhq.com');
 define('GHL_API_VERSION', '2021-07-28');
+// Google Analytics: the service-account credentials and the cached access token
+// (gaSaveCredentials / gaStatus / gaReport).
+define('GA_CRED_FILE',  __DIR__ . '/ga-service-account.json');
+define('GA_TOKEN_CACHE', __DIR__ . '/.ga-token.json');
 
 // Contact-form email via SMTP (Mailgun/SendGrid/any relay). When these are set,
 // the form handler sends over SMTP instead of the Mailgun HTTP API — so a
@@ -256,6 +260,13 @@ if (REQUIRE_HTTPS && in_array($action, $HTTPS_REQUIRED_ACTIONS, true) && !fourge
     ob_end_clean(); http_response_code(403);
     echo json_encode(['error' => 'For your security, signing in and changing credentials require a secure (HTTPS) connection. Please load this site over https:// and try again.']);
     exit;
+}
+
+// Analytics switched off for a signed-in editor: none of its data or credentials,
+// whatever calls for them (the API token's machine callers carry no account).
+if (in_array($action, ['ga_status', 'ga_report', 'ga_save_credentials'], true) && $authUser && !fourgeEditorModuleOn($authUser, 'analytics')) {
+    ob_end_clean(); http_response_code(403);
+    echo json_encode(['error' => 'Analytics is switched off for your account. An Admin can turn it on in Users.']); exit;
 }
 
 try {
@@ -2978,8 +2989,9 @@ function fourgeApiSendTestEmail($me, $body) {
 // (never in public data/). Add the service account email as a Viewer on the
 // GA4 property: Admin → Property Access Management.
 
-define('GA_CRED_FILE',  __DIR__ . '/ga-service-account.json');
-define('GA_TOKEN_CACHE', __DIR__ . '/.ga-token.json');
+// GA_CRED_FILE / GA_TOKEN_CACHE are define()d at the top of this file, with the
+// GHL constants: down here they did not exist yet when the dispatcher called these
+// functions, so every Analytics call ended in "Undefined constant" on PHP 8.
 
 function gaSaveCredentials($body) {
     $json = $body['credentials'] ?? '';
@@ -3124,6 +3136,16 @@ function foundryUserCanAI($username) {
         if (is_array($perms) && array_key_exists('aiEdit', $perms)) return (bool)$perms['aiEdit'];
     }
     return !empty($roleDefaults[$rec['role'] ?? 'editor']);
+}
+
+// One module switch, as the admin's getEffectivePerms() sees it, for modules an
+// editor has by default (Analytics): Architects, Super Admins and Admins always
+// have it; an editor has it unless an Admin switched it off for them in Users.
+function fourgeEditorModuleOn($user, $key) {
+    if (!is_array($user)) return false;
+    if (!empty($user['is_architect']) || ($user['role'] ?? 'editor') !== 'editor') return true;
+    $perms = json_decode((string)($user['permissions'] ?? ''), true);
+    return !(is_array($perms) && array_key_exists($key, $perms) && !$perms[$key]);
 }
 
 // Per-user hourly rate limit, tracked in data/ai_usage.json (best-effort).

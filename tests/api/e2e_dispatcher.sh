@@ -415,7 +415,26 @@ call "chat_bot_status as an editor" '{"action":"chat_bot_status"}'
 ans 'assert d.get("error")=="Super Admin access required", d' && chk 0 "the bot box is Super Admin only (it uses the CRM token)" || chk 1 "editor bot status — got: $(printf '%s' "$LAST" | head -c 200)"
 call "chat_ai_test as an editor" '{"action":"chat_ai_test"}'
 ans 'assert d.get("error")=="Super Admin access required", d' && chk 0 "…and so is the AI test (its replies cost AI credit)" || chk 1 "editor AI test — got: $(printf '%s' "$LAST" | head -c 200)"
+# Analytics switched off for an editor (1.14.151): the analytics calls refuse them; on by default as before
+call "ga_status as an editor (Analytics on by default)" '{"action":"ga_status"}'
+ans 'assert "error" not in d and "configured" in d, d' && chk 0 "an editor with no module changes still gets Analytics data" || chk 1 "editor ga_status — got: $(printf '%s' "$LAST" | head -c 200)"
+dbq '$pdo->prepare("UPDATE users SET permissions=? WHERE username=?")->execute(["{\"pages\":true,\"analytics\":false}","chat-editor@example.com"]);'
+call "ga_status as an editor with Analytics switched off" '{"action":"ga_status"}'
+ans 'assert d.get("error","").startswith("Analytics is switched off for your account"), d' && chk 0 "with Analytics switched off in Users, the editor gets none of its data (ga_status refused at once, same session)" || chk 1 "editor ga_status off — got: $(printf '%s' "$LAST" | head -c 200)"
+call "ga_report as that editor" '{"action":"ga_report","propertyId":"1","kind":"report","request":{}}'
+ans 'assert d.get("error","").startswith("Analytics is switched off for your account"), d' && chk 0 "…nor reports (ga_report)" || chk 1 "editor ga_report off — got: $(printf '%s' "$LAST" | head -c 200)"
+call "ga_save_credentials as that editor" '{"action":"ga_save_credentials","json":"{}"}'
+ans 'assert d.get("error","").startswith("Analytics is switched off for your account"), d' && chk 0 "…and cannot change its credentials (ga_save_credentials)" || chk 1 "editor ga_save_credentials off — got: $(printf '%s' "$LAST" | head -c 200)"
 TOK="$ARCH_TOK3"
+call "ga_status as an Architect" '{"action":"ga_status"}'
+ans 'assert "error" not in d and "configured" in d, d' && chk 0 "an Architect always has Analytics" || chk 1 "architect ga_status — got: $(printf '%s' "$LAST" | head -c 200)"
+# Analytics → Setup saves the Google credentials again: GA_CRED_FILE used to be define()d below the dispatcher,
+# so every ga_* call died with "Undefined constant" on PHP 8 (fixed in 1.14.151)
+call "ga_save_credentials as an Architect" "$(python3 -c 'import json; print(json.dumps({"action":"ga_save_credentials","credentials":json.dumps({"type":"service_account","client_email":"e2e@e2e.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nx\\n-----END PRIVATE KEY-----\\n"})}))')"
+ans 'assert d.get("ok") is True and d.get("client_email")=="e2e@e2e.iam.gserviceaccount.com", d' && [ -f "$S/admin/ga-service-account.json" ] && chk 0 "ga_save_credentials stores the service account (no more \"Undefined constant GA_CRED_FILE\")" || chk 1 "ga_save_credentials — got: $(printf '%s' "$LAST" | head -c 200)"
+call "ga_status after saving credentials" '{"action":"ga_status"}'
+ans 'assert d.get("configured") is True and d.get("client_email")=="e2e@e2e.iam.gserviceaccount.com", d' && chk 0 "…and ga_status reports them" || chk 1 "ga_status configured — got: $(printf '%s' "$LAST" | head -c 200)"
+rm -f "$S/admin/ga-service-account.json"
 call "delete_file data/chat.json" '{"action":"delete_file","path":"data/chat.json"}'
 call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
 
