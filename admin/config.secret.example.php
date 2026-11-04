@@ -82,7 +82,7 @@ return [
     //   Anthropic API key (starts with sk-ant-). Stays server-side; never sent
     //   to the browser.
     // 'anthropic_key'    => 'sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    // 'ai_rate_per_hour' => 40,                       // max AI calls per user per hour
+    // 'ai_rate_per_hour' => 300,                      // max AI answers per user per hour (0 = unlimited; default 300)
 
 
     // ── OPTIONAL — team onboarding across your client sites ─────────────────

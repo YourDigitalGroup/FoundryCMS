@@ -9,6 +9,7 @@ S="$SRC/tests/.cache/e2e_site"
 PORT="${E2E_PORT:-8932}"; BASE=http://127.0.0.1:$PORT/admin/api.php
 GHPORT="${E2E_GH_PORT:-8934}"; GHLOG="$SRC/tests/.cache/gh_stub_log.jsonl"; GHSTATE="$SRC/tests/.cache/gh_stub_state.json"; GHMODE="$SRC/tests/.cache/gh_stub_mode"
 GHLPORT="${E2E_GHL_PORT:-8935}"; GHLSTATE="$SRC/tests/.cache/ghl_stub_state.json"
+ANPORT="${E2E_ANTHROPIC_PORT:-8936}"; ANMODE="$SRC/tests/.cache/anthropic_stub_mode"; ANCOUNT="$SRC/tests/.cache/anthropic_stub_count"
 export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"   # the engine's curl must reach the stub directly
 command -v python3 >/dev/null 2>&1 || { echo "FAIL python3 is required for the dispatcher suite"; exit 1; }
 rm -rf "$S"; mkdir -p "$S"
@@ -35,10 +36,17 @@ GHSRV=$!
 mkdir -p "$S.ghlroot"; rm -f "$GHLSTATE"
 php -S 127.0.0.1:$GHLPORT -t "$S.ghlroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/ghl_stub.php" > "$S.ghlstub.log" 2>&1 &
 GHLSRV=$!
-FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+# the stand-in for Anthropic's Messages API (tests/lib/anthropic_stub.php) — FOURGE_ANTHROPIC_API_BASE
+mkdir -p "$S.anroot"; echo ok > "$ANMODE"; echo 0 > "$ANCOUNT"
+php -S 127.0.0.1:$ANPORT -t "$S.anroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/anthropic_stub.php" > "$S.anstub.log" 2>&1 &
+ANSRV=$!
+# opcache.revalidate_freq=0: the built-in server caches compiled PHP (opcache.enable_cli does not cover it), and the
+# suite edits config.secret.php mid-run; without it a request within 2 s of an edit still sees the old file.
+FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_ANTHROPIC_API_BASE="http://127.0.0.1:$ANPORT" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHLPORT/__state" && break; sleep 0.2; done
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$ANPORT/" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$PORT/admin/index.html" && break; sleep 0.2; done
 pass=0; fail=0
 chk(){ if [ "$1" = 0 ]; then echo "ok   $2"; pass=$((pass+1)); else echo "FAIL $2"; fail=$((fail+1)); fi; }
@@ -415,7 +423,49 @@ call "chat_bot_status as an editor" '{"action":"chat_bot_status"}'
 ans 'assert d.get("error")=="Super Admin access required", d' && chk 0 "the bot box is Super Admin only (it uses the CRM token)" || chk 1 "editor bot status — got: $(printf '%s' "$LAST" | head -c 200)"
 call "chat_ai_test as an editor" '{"action":"chat_ai_test"}'
 ans 'assert d.get("error")=="Super Admin access required", d' && chk 0 "…and so is the AI test (its replies cost AI credit)" || chk 1 "editor AI test — got: $(printf '%s' "$LAST" | head -c 200)"
+# Analytics switched off for an editor (1.14.151): the analytics calls refuse them; on by default as before
+call "ga_status as an editor (Analytics on by default)" '{"action":"ga_status"}'
+ans 'assert "error" not in d and "configured" in d, d' && chk 0 "an editor with no module changes still gets Analytics data" || chk 1 "editor ga_status — got: $(printf '%s' "$LAST" | head -c 200)"
+dbq '$pdo->prepare("UPDATE users SET permissions=? WHERE username=?")->execute(["{\"pages\":true,\"analytics\":false}","chat-editor@example.com"]);'
+call "ga_status as an editor with Analytics switched off" '{"action":"ga_status"}'
+ans 'assert d.get("error","").startswith("Analytics is switched off for your account"), d' && chk 0 "with Analytics switched off in Users, the editor gets none of its data (ga_status refused at once, same session)" || chk 1 "editor ga_status off — got: $(printf '%s' "$LAST" | head -c 200)"
+call "ga_report as that editor" '{"action":"ga_report","propertyId":"1","kind":"report","request":{}}'
+ans 'assert d.get("error","").startswith("Analytics is switched off for your account"), d' && chk 0 "…nor reports (ga_report)" || chk 1 "editor ga_report off — got: $(printf '%s' "$LAST" | head -c 200)"
+call "ga_save_credentials as that editor" '{"action":"ga_save_credentials","json":"{}"}'
+ans 'assert d.get("error","").startswith("Analytics is switched off for your account"), d' && chk 0 "…and cannot change its credentials (ga_save_credentials)" || chk 1 "editor ga_save_credentials off — got: $(printf '%s' "$LAST" | head -c 200)"
 TOK="$ARCH_TOK3"
+call "ga_status as an Architect" '{"action":"ga_status"}'
+ans 'assert "error" not in d and "configured" in d, d' && chk 0 "an Architect always has Analytics" || chk 1 "architect ga_status — got: $(printf '%s' "$LAST" | head -c 200)"
+# Analytics → Setup saves the Google credentials again: GA_CRED_FILE used to be define()d below the dispatcher,
+# so every ga_* call died with "Undefined constant" on PHP 8 (fixed in 1.14.151)
+call "ga_save_credentials as an Architect" "$(python3 -c 'import json; print(json.dumps({"action":"ga_save_credentials","credentials":json.dumps({"type":"service_account","client_email":"e2e@e2e.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nx\\n-----END PRIVATE KEY-----\\n"})}))')"
+ans 'assert d.get("ok") is True and d.get("client_email")=="e2e@e2e.iam.gserviceaccount.com", d' && [ -f "$S/admin/ga-service-account.json" ] && chk 0 "ga_save_credentials stores the service account (no more \"Undefined constant GA_CRED_FILE\")" || chk 1 "ga_save_credentials — got: $(printf '%s' "$LAST" | head -c 200)"
+call "ga_status after saving credentials" '{"action":"ga_status"}'
+ans 'assert d.get("configured") is True and d.get("client_email")=="e2e@e2e.iam.gserviceaccount.com", d' && chk 0 "…and ga_status reports them" || chk 1 "ga_status configured — got: $(printf '%s' "$LAST" | head -c 200)"
+rm -f "$S/admin/ga-service-account.json"
+# AI requests (1.14.151): 300 an hour per user by default (it was 40), and only answers count — an attempt Anthropic turns away is free
+call "set_secret claude_key" '{"action":"set_secret","name":"claude_key","value":"sk-ant-e2e"}'
+echo ok > "$ANMODE"; echo 0 > "$ANCOUNT"; rm -f "$S/data/ai_usage.json"
+AIB='{"action":"claude_proxy","user":"admin@44interactive.com","model":"stub","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}'
+aiused(){ python3 -c "import json,sys; d=json.load(open('$S/data/ai_usage.json')); print(d.get('admin@44interactive.com',{}).get('count',0))" 2>/dev/null || echo 0; }
+for i in $(seq 1 41); do qcall "$AIB"; done
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("content",[{}])[0].get("text")=="{\"title\":\"Stub answer\"}", d' && [ "$(aiused)" = 41 ] && [ "$(cat "$ANCOUNT")" = 41 ] && chk 0 "41 AI requests in one hour are all answered (the old limit stopped at 40), and all 41 count" || chk 1 "41 AI requests — last: $(printf '%s' "$LAST" | head -c 200) / counted $(aiused) / stub saw $(cat "$ANCOUNT")"
+echo overloaded > "$ANMODE"
+call "claude_proxy while Anthropic is overloaded" "$AIB"
+ans 'assert d.get("error",{}).get("type")=="overloaded_error", d' && [ "$(aiused)" = 41 ] && chk 0 "an attempt Anthropic turns away (overloaded) does not count toward the hour" || chk 1 "overloaded — got: $(printf '%s' "$LAST" | head -c 200) / counted $(aiused)"
+echo ok > "$ANMODE"
+python3 - "$S/admin/config.secret.php" <<'PY'
+import sys; p=sys.argv[1]; s=open(p).read(); i=s.rindex('];'); open(p,'w').write(s[:i]+"  'ai_rate_per_hour' => 42,\n"+s[i:])
+PY
+call "claude_proxy (the 42nd answer; this site's own limit is 42)" "$AIB"
+ans 'assert d.get("content"), d' && [ "$(aiused)" = 42 ] && chk 0 "a site's own limit (ai_rate_per_hour in config.secret.php) still applies: the 42nd is answered" || chk 1 "42nd — got: $(printf '%s' "$LAST" | head -c 200)"
+SEEN=$(cat "$ANCOUNT")
+call "claude_proxy (over this site's limit)" "$AIB"
+ans 'import re; e=d.get("error",""); assert re.match(r"^AI usage limit reached for this hour \(42 requests\)\. It resets in \d+ minutes?\.$", e), d' && [ "$(cat "$ANCOUNT")" = "$SEEN" ] && chk 0 "…and the next is refused before it reaches Anthropic, saying when the hour resets" || chk 1 "over the limit — got: $(printf '%s' "$LAST" | head -c 200)"
+python3 - "$S/admin/config.secret.php" <<'PY'
+import sys; p=sys.argv[1]; s=open(p).read(); open(p,'w').write(s.replace("  'ai_rate_per_hour' => 42,\n",""))
+PY
+rm -f "$S/data/ai_usage.json"
 call "delete_file data/chat.json" '{"action":"delete_file","path":"data/chat.json"}'
 call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
 
@@ -428,10 +478,11 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 call "form_view (public)" '{"action":"form_view","formId":"e2e-form"}'
 call "unknown action → JSON error" '{"action":"definitely_not_an_action"}'
 call "no session on a session action → 401 JSON" '{"action":"list_users"}'
-kill $SRV $GHSRV $GHLSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV 2>/dev/null
+kill $SRV $GHSRV $GHLSRV $ANSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV $ANSRV 2>/dev/null
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.server.log"; then chk 1 "php -S log has PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "php -S log shows no PHP warnings/notices/deprecations during the whole run"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghstub.log"; then chk 1 "the GitHub stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GitHub stub ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghlstub.log"; then chk 1 "the GoHighLevel stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghlstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GoHighLevel stub ran without PHP warnings"; fi
-rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE"
+if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.anstub.log"; then chk 1 "the Anthropic stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.anstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the Anthropic stub ran without PHP warnings"; fi
+rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE" "$S.anstub.log" "$S.anroot" "$ANMODE" "$ANCOUNT"
 echo; echo "$([ $fail = 0 ] && echo "all end-to-end dispatcher assertions passed ($pass)" || echo "SUITE FAILED ($fail failed, $pass passed)")"
 exit $([ $fail = 0 ] && echo 0 || echo 1)

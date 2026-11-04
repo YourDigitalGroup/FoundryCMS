@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.150');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.151');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -88,6 +88,10 @@ define('MG_NOTIFY_TO', (string)($__secret['mg_notify_to'] ?? ''));
 // below, since define() runs top-to-bottom (functions are hoisted; constants are not).
 define('GHL_API_BASE',    'https://services.leadconnectorhq.com');
 define('GHL_API_VERSION', '2021-07-28');
+// Google Analytics: the service-account credentials and the cached access token
+// (gaSaveCredentials / gaStatus / gaReport).
+define('GA_CRED_FILE',  __DIR__ . '/ga-service-account.json');
+define('GA_TOKEN_CACHE', __DIR__ . '/.ga-token.json');
 
 // Contact-form email via SMTP (Mailgun/SendGrid/any relay). When these are set,
 // the form handler sends over SMTP instead of the Mailgun HTTP API — so a
@@ -256,6 +260,13 @@ if (REQUIRE_HTTPS && in_array($action, $HTTPS_REQUIRED_ACTIONS, true) && !fourge
     ob_end_clean(); http_response_code(403);
     echo json_encode(['error' => 'For your security, signing in and changing credentials require a secure (HTTPS) connection. Please load this site over https:// and try again.']);
     exit;
+}
+
+// Analytics switched off for a signed-in editor: none of its data or credentials,
+// whatever calls for them (the API token's machine callers carry no account).
+if (in_array($action, ['ga_status', 'ga_report', 'ga_save_credentials'], true) && $authUser && !fourgeEditorModuleOn($authUser, 'analytics')) {
+    ob_end_clean(); http_response_code(403);
+    echo json_encode(['error' => 'Analytics is switched off for your account. An Admin can turn it on in Users.']); exit;
 }
 
 try {
@@ -2978,8 +2989,9 @@ function fourgeApiSendTestEmail($me, $body) {
 // (never in public data/). Add the service account email as a Viewer on the
 // GA4 property: Admin → Property Access Management.
 
-define('GA_CRED_FILE',  __DIR__ . '/ga-service-account.json');
-define('GA_TOKEN_CACHE', __DIR__ . '/.ga-token.json');
+// GA_CRED_FILE / GA_TOKEN_CACHE are define()d at the top of this file, with the
+// GHL constants: down here they did not exist yet when the dispatcher called these
+// functions, so every Analytics call ended in "Undefined constant" on PHP 8.
 
 function gaSaveCredentials($body) {
     $json = $body['credentials'] ?? '';
@@ -3126,27 +3138,41 @@ function foundryUserCanAI($username) {
     return !empty($roleDefaults[$rec['role'] ?? 'editor']);
 }
 
-// Per-user hourly rate limit, tracked in data/ai_usage.json (best-effort).
-function foundryRateOk($username, $limitPerHour) {
-    if ($limitPerHour <= 0) return true; // 0 = unlimited
+// One module switch, as the admin's getEffectivePerms() sees it, for modules an
+// editor has by default (Analytics): Architects, Super Admins and Admins always
+// have it; an editor has it unless an Admin switched it off for them in Users.
+function fourgeEditorModuleOn($user, $key) {
+    if (!is_array($user)) return false;
+    if (!empty($user['is_architect']) || ($user['role'] ?? 'editor') !== 'editor') return true;
+    $perms = json_decode((string)($user['permissions'] ?? ''), true);
+    return !(is_array($perms) && array_key_exists($key, $perms) && !$perms[$key]);
+}
+
+// Per-user hourly AI allowance, tracked in data/ai_usage.json (best-effort).
+// Only answers Anthropic actually gave count: an attempt it turned away
+// (overloaded, its own rate limit) costs nothing, and the browser retries those,
+// so counting them used up the hour on a busy day — a batch of landing pages
+// could hit the limit after a handful of pages.
+function foundryAiUsage($username, $add = false) {
     $dir = __DIR__ . '/../data';
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
     $file = $dir . '/ai_usage.json';
-    $now  = time();
-    $hour = (int)floor($now / 3600);
-    $data = file_exists($file) ? (json_decode(file_get_contents($file), true) ?: []) : [];
-
-    // prune old hours
-    foreach ($data as $u => $rec) {
-        if (($rec['hour'] ?? 0) !== $hour) unset($data[$u]);
-    }
+    $hour = (int)floor(time() / 3600);
+    $data = file_exists($file) ? (json_decode((string)file_get_contents($file), true) ?: []) : [];
+    foreach ($data as $u => $rec) { if (($rec['hour'] ?? 0) !== $hour) unset($data[$u]); }   // last hour's counts are gone
     $key = (string)$username ?: 'anon';
-    $cur = ($data[$key]['hour'] ?? 0) === $hour ? (int)($data[$key]['count'] ?? 0) : 0;
-    if ($cur >= $limitPerHour) return false;
-    $data[$key] = ['hour' => $hour, 'count' => $cur + 1];
-    @file_put_contents($file, json_encode($data));
-    return true;
+    $cur = (($data[$key]['hour'] ?? 0) === $hour) ? (int)($data[$key]['count'] ?? 0) : 0;
+    if ($add) { $data[$key] = ['hour' => $hour, 'count' => ++$cur]; @file_put_contents($file, json_encode($data)); }
+    return $cur;
 }
+// The per-user hourly limit: 'ai_rate_per_hour' in config.secret.php, else 300
+// (it was 40). 0 means unlimited.
+function foundryAiLimit() {
+    $cfg = foundrySecret();
+    return isset($cfg['ai_rate_per_hour']) ? (int)$cfg['ai_rate_per_hour'] : 300;
+}
+// Where Anthropic's API lives. FOURGE_ANTHROPIC_API_BASE points the tests at a stub.
+function foundryAnthropicBase() { $b = getenv('FOURGE_ANTHROPIC_API_BASE'); return ($b && preg_match('~^https?://~', $b)) ? rtrim($b, '/') : 'https://api.anthropic.com'; }
 
 function claudeProxy($body) {
     $secretPath = __DIR__ . '/config.secret.php';
@@ -3202,10 +3228,11 @@ function claudeProxy($body) {
         return;
     }
 
-    $limit = (int)($cfg['ai_rate_per_hour'] ?? 40);
-    if (!foundryRateOk($username, $limit)) {
+    $limit = foundryAiLimit();
+    if ($limit > 0 && foundryAiUsage($username) >= $limit) {
+        $mins = max(1, (int)ceil((3600 - time() % 3600) / 60));
         http_response_code(429);
-        echo json_encode(['error' => 'AI usage limit reached for this hour (' . $limit . '). Try again later.']);
+        echo json_encode(['error' => 'AI usage limit reached for this hour (' . $limit . ' requests). It resets in ' . $mins . ' minute' . ($mins === 1 ? '' : 's') . '.']);
         return;
     }
 
@@ -3225,7 +3252,7 @@ function claudeProxy($body) {
         return;
     }
 
-    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    $ch = curl_init(foundryAnthropicBase() . '/v1/messages');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST           => true,
@@ -3244,6 +3271,7 @@ function claudeProxy($body) {
     fourgeCurlClose($ch);
 
     if ($err) { http_response_code(502); echo json_encode(['error' => 'AI request failed: ' . $err]); return; }
+    if ($code >= 200 && $code < 300) foundryAiUsage($username, true);   // only an answer counts toward the hour
     // Pass Anthropic's JSON straight through (success or structured error),
     // preserving the upstream status code so the client's retry logic works.
     http_response_code($code ?: 200);
