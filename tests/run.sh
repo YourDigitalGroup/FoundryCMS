@@ -69,6 +69,14 @@ n=$(grep -n 'curl_close(' "$ROOT/admin/api.php" | grep -v 'function fourgeCurlCl
 if [ "$n" = 0 ]; then echo "ok   no direct curl_close() in admin/api.php (deprecated in PHP 8.5; fourgeCurlClose() instead)"
 else echo "FAIL $n direct curl_close() call(s) in admin/api.php — use fourgeCurlClose(): $(grep -n 'curl_close(' "$ROOT/admin/api.php" | grep -v 'function fourgeCurlClose(' | grep -vE '^[0-9]+:[[:space:]]*(//|#|\*)' | cut -d: -f1 | tr '\n' ' ')"; overall=1; fi
 
+# 6c. define() runs top to bottom and the request dispatcher exits, so a constant defined below it
+#     never exists while it runs: "Undefined constant" on PHP 8 (GA_CRED_FILE until 1.14.151;
+#     FOURGE_AI_STATE, FOURGE_LLMS_MARK and the FOURGE_TITLE_* / FOURGE_DESC_* lengths until 1.14.152)
+d=$(grep -n '^    switch (\$action) {' "$ROOT/admin/api.php" | head -1 | cut -d: -f1)
+late=$(awk -v d="$d" 'NR>d && /^(define\(|const [A-Za-z_])/ {printf "%s: %s; ", NR, substr($0,1,70)}' "$ROOT/admin/api.php")
+if [ -n "$d" ] && [ -z "$late" ]; then echo "ok   every top-level constant in admin/api.php is defined above the request dispatcher (line $d)"
+else echo "FAIL constants defined below the request dispatcher (line ${d:-not found}) never exist while it runs — move them up: $late"; overall=1; fi
+
 # 7. a release moves THREE numbers together (the login updater and the sign-in api.php check depend on it)
 v1=$(grep -o "^const CMS_VERSION='[^']*'" "$ROOT/admin/index.html" | cut -d"'" -f2)
 v2=$(php -r '$j=json_decode(file_get_contents($argv[1]),true); echo $j["version"];' "$ROOT/admin/version.json")

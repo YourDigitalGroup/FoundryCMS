@@ -2918,7 +2918,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.151';
+const CMS_VERSION='1.14.152';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -11879,6 +11879,9 @@ function plcCopyTodo(){
 // the machine endpoint can never disagree. This just validates the file, calls
 // preview/apply, and renders the returned report.
 let _pkgData=null;
+// The package's "format": "44i-deploy-package" until the platform was renamed,
+// "ydg-deploy-package" since (cmsPkgFormats() in api.php).
+const PKG_FORMATS=['ydg-deploy-package','44i-deploy-package'];
 function pkgFilePicked(){
   const inp=document.getElementById('pkg-file');
   const st=document.getElementById('pkg-status');
@@ -11887,19 +11890,22 @@ function pkgFilePicked(){
   _pkgData=null; if(pv) pv.disabled=true; if(ap) ap.disabled=true;
   const f=inp&&inp.files&&inp.files[0];
   if(!f){ if(st) st.textContent=''; return; }
-  if(f.size>8*1024*1024){ if(st) st.textContent='That file is '+fmtBytes(f.size)+' — the limit is 8 MB.'; return; }
+  // A file that can't be used says so in the status line AND as a toast: the
+  // buttons stay greyed out, and a quiet line under them read as "nothing happens".
+  const refuse=(msg)=>{ if(st) st.textContent=msg; toast(msg,'err'); };
+  if(f.size>8*1024*1024){ refuse('That file is '+fmtBytes(f.size)+' — the limit is 8 MB.'); return; }
   if(st) st.textContent='Reading '+f.name+' ('+fmtBytes(f.size)+')…';
   const fr=new FileReader();
   fr.onload=()=>{
     let j=null;
     try{ j=JSON.parse(fr.result); }
-    catch(e){ if(st) st.textContent='That file is not valid JSON — nothing was applied.'; return; }
-    if(!j||typeof j!=='object'||Array.isArray(j)||j.format!=='44i-deploy-package'){
-      if(st) st.textContent='That JSON is not a 44i deploy package (its "format" must be "44i-deploy-package") — nothing was applied.';
+    catch(e){ refuse('That file is not valid JSON — nothing was applied.'); return; }
+    if(!j||typeof j!=='object'||Array.isArray(j)||PKG_FORMATS.indexOf(j.format)<0){
+      refuse('That file is not a deploy package from the SEO platform (its "format" should be "ydg-deploy-package") — nothing was applied.');
       return;
     }
     if(+j.format_version>1){
-      if(st) st.textContent='This package is format version '+j.format_version+'; this site understands version 1. Update Fourge first.';
+      refuse('This package is format version '+j.format_version+'; this site understands version 1. Update Fourge first.');
       return;
     }
     _pkgData=j;
@@ -11911,7 +11917,7 @@ function pkgFilePicked(){
       +'. Preview before applying.';
     if(pv) pv.disabled=false; if(ap) ap.disabled=false;
   };
-  fr.onerror=()=>{ if(st) st.textContent='Could not read that file.'; };
+  fr.onerror=()=>{ refuse('Could not read that file.'); };
   fr.readAsText(f);
 }
 async function pkgRun(mode){
