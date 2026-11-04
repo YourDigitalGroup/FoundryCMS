@@ -6074,6 +6074,7 @@ async function generateTLPsFromFeed(){
       keywords
     });
     if(result) _tlpPreviews.push(result);
+    if(tlpHitLimit(result)) break;
   }
   if(!_tlpPreviews.length){ toast('Nothing generated — the source pages could not be read','err'); return; }
   renderTLPPreviews();
@@ -6094,6 +6095,7 @@ async function generateTLPs(){
 
   // Pre-read each source page once (cache), then loop cities
   const srcCache={};
+  let stopped=false;
   for(const pid of selected){
     const page=Object.assign({id:pid}, _pages[pid]);
     if(!_pages[pid]) continue;
@@ -6115,12 +6117,21 @@ async function generateTLPs(){
       out.innerHTML='<div class="tlp-loading">['+done+'/'+total+'] Rewriting "'+esc(decodeHtml(page.title||pid))+'" for '+esc(city)+(state?', '+esc(state):'')+'…</div>';
       const result=await tlpRewrite(srcHtml, page, city, state, apiKey);
       if(result) _tlpPreviews.push(result);
+      if(tlpHitLimit(result)){ stopped=true; break; }
     }
+    if(stopped) break;
   }
 
   renderTLPPreviews();
 }
 
+// The hour's AI allowance ran out: every page after this one would fail the same
+// way, so the batch stops here and says so (the pages written so far are kept).
+function tlpHitLimit(result){
+  if(!result || !result.error || !/limit reached/i.test(result.error)) return false;
+  toast(result.error+' The pages written so far are below; generate the rest after that.','err');
+  return true;
+}
 async function tlpRewrite(srcHtml, page, city, state, apiKey, opt){
   opt=opt||{};
   const cityState=state?city+', '+state:city;
@@ -6162,7 +6173,8 @@ async function tlpRewrite(srcHtml, page, city, state, apiKey, opt){
     return {sourceId:page.id, sourceTitle:page.title||page.id, newId, newFile, city, state, ai, html:newHtml,
             service:svc, fromFeed:!!opt.slug};
   }catch(e){
-    return {sourceId:page.id, sourceTitle:page.title||page.id, error:e.message};
+    // city/state too, so the failed card sits under its city (it was filed under "undefined")
+    return {sourceId:page.id, sourceTitle:page.title||page.id, city, state, error:e.message};
   }
 }
 

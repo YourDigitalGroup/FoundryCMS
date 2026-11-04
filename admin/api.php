@@ -3148,27 +3148,31 @@ function fourgeEditorModuleOn($user, $key) {
     return !(is_array($perms) && array_key_exists($key, $perms) && !$perms[$key]);
 }
 
-// Per-user hourly rate limit, tracked in data/ai_usage.json (best-effort).
-function foundryRateOk($username, $limitPerHour) {
-    if ($limitPerHour <= 0) return true; // 0 = unlimited
+// Per-user hourly AI allowance, tracked in data/ai_usage.json (best-effort).
+// Only answers Anthropic actually gave count: an attempt it turned away
+// (overloaded, its own rate limit) costs nothing, and the browser retries those,
+// so counting them used up the hour on a busy day — a batch of landing pages
+// could hit the limit after a handful of pages.
+function foundryAiUsage($username, $add = false) {
     $dir = __DIR__ . '/../data';
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
     $file = $dir . '/ai_usage.json';
-    $now  = time();
-    $hour = (int)floor($now / 3600);
-    $data = file_exists($file) ? (json_decode(file_get_contents($file), true) ?: []) : [];
-
-    // prune old hours
-    foreach ($data as $u => $rec) {
-        if (($rec['hour'] ?? 0) !== $hour) unset($data[$u]);
-    }
+    $hour = (int)floor(time() / 3600);
+    $data = file_exists($file) ? (json_decode((string)file_get_contents($file), true) ?: []) : [];
+    foreach ($data as $u => $rec) { if (($rec['hour'] ?? 0) !== $hour) unset($data[$u]); }   // last hour's counts are gone
     $key = (string)$username ?: 'anon';
-    $cur = ($data[$key]['hour'] ?? 0) === $hour ? (int)($data[$key]['count'] ?? 0) : 0;
-    if ($cur >= $limitPerHour) return false;
-    $data[$key] = ['hour' => $hour, 'count' => $cur + 1];
-    @file_put_contents($file, json_encode($data));
-    return true;
+    $cur = (($data[$key]['hour'] ?? 0) === $hour) ? (int)($data[$key]['count'] ?? 0) : 0;
+    if ($add) { $data[$key] = ['hour' => $hour, 'count' => ++$cur]; @file_put_contents($file, json_encode($data)); }
+    return $cur;
 }
+// The per-user hourly limit: 'ai_rate_per_hour' in config.secret.php, else 300
+// (it was 40). 0 means unlimited.
+function foundryAiLimit() {
+    $cfg = foundrySecret();
+    return isset($cfg['ai_rate_per_hour']) ? (int)$cfg['ai_rate_per_hour'] : 300;
+}
+// Where Anthropic's API lives. FOURGE_ANTHROPIC_API_BASE points the tests at a stub.
+function foundryAnthropicBase() { $b = getenv('FOURGE_ANTHROPIC_API_BASE'); return ($b && preg_match('~^https?://~', $b)) ? rtrim($b, '/') : 'https://api.anthropic.com'; }
 
 function claudeProxy($body) {
     $secretPath = __DIR__ . '/config.secret.php';
@@ -3224,10 +3228,11 @@ function claudeProxy($body) {
         return;
     }
 
-    $limit = (int)($cfg['ai_rate_per_hour'] ?? 40);
-    if (!foundryRateOk($username, $limit)) {
+    $limit = foundryAiLimit();
+    if ($limit > 0 && foundryAiUsage($username) >= $limit) {
+        $mins = max(1, (int)ceil((3600 - time() % 3600) / 60));
         http_response_code(429);
-        echo json_encode(['error' => 'AI usage limit reached for this hour (' . $limit . '). Try again later.']);
+        echo json_encode(['error' => 'AI usage limit reached for this hour (' . $limit . ' requests). It resets in ' . $mins . ' minute' . ($mins === 1 ? '' : 's') . '.']);
         return;
     }
 
@@ -3247,7 +3252,7 @@ function claudeProxy($body) {
         return;
     }
 
-    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    $ch = curl_init(foundryAnthropicBase() . '/v1/messages');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST           => true,
@@ -3266,6 +3271,7 @@ function claudeProxy($body) {
     fourgeCurlClose($ch);
 
     if ($err) { http_response_code(502); echo json_encode(['error' => 'AI request failed: ' . $err]); return; }
+    if ($code >= 200 && $code < 300) foundryAiUsage($username, true);   // only an answer counts toward the hour
     // Pass Anthropic's JSON straight through (success or structured error),
     // preserving the upstream status code so the client's retry logic works.
     http_response_code($code ?: 200);
