@@ -53,6 +53,8 @@ function fourgeMigrate($pdo) {
     foreach ($pdo->query("PRAGMA table_info(users)") as $r) { $cols[] = $r['name']; }
     if (!in_array('first_name', $cols, true)) $pdo->exec("ALTER TABLE users ADD COLUMN first_name TEXT");
     if (!in_array('last_name',  $cols, true)) $pdo->exec("ALTER TABLE users ADD COLUMN last_name TEXT");
+    // The change id of the last shared-account password applied from the engine (fourgeApplyManagedPasswords in api.php).
+    if (!in_array('pw_rotation', $cols, true)) $pdo->exec("ALTER TABLE users ADD COLUMN pw_rotation TEXT");
 }
 
 function fourgeInitSchema($pdo) {

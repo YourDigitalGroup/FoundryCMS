@@ -75,7 +75,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.152');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.153');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -239,6 +239,8 @@ $sessionToken = $_SERVER['HTTP_X_SESSION_TOKEN'] ?? ($body['session_token'] ?? '
 // The Architect accounts are restored before anyone is resolved, so a sign-in or
 // a signed-in request already sees them as they should be (fourgeEnsureArchitects).
 if ($sessionToken || $action === 'login') { try { fourgeEnsureArchitects(fourgeDb()); } catch (Throwable $e) {} }
+// A new password for a shared agency account lands the same way, so it works from the very first sign-in (fourgeApplyManagedPasswords).
+if ($sessionToken || $action === 'login') { try { fourgeApplyManagedPasswords(fourgeDb()); } catch (Throwable $e) {} }
 $authUser     = null;
 try { if ($sessionToken) $authUser = fourgeSessionUser(fourgeDb(), $sessionToken); } catch (Throwable $e) { $authUser = null; }
 
@@ -3324,6 +3326,48 @@ function fourgeEnsureArchitects($pdo) {
     $up = $pdo->prepare("UPDATE users SET is_architect=1, role='superadmin', permissions=NULL, updated_at=? WHERE id=?");
     foreach ($ids as $id) $up->execute([date('c'), (int)$id]);
     return count($ids);
+}
+
+// ── SHARED AGENCY ACCOUNTS: PASSWORD CHANGES ACROSS EVERY SITE ─────────────
+// Each site keeps its accounts in its own database, so a password the agency
+// changes for a shared account (editor44i) has to travel with the engine. Each
+// entry is [change id, password hash] — the hash only, never the password. A
+// site applies a change once, on the first sign-in or signed-in request after
+// it updates: the account gets that hash, any forced password change is
+// cleared, and its open sessions on that site end, so the old password stops
+// working everywhere the new engine runs. users.pw_rotation records the change
+// id, so it is not applied again: a password set later on one site (Users)
+// stays until the next change here. A site without the account is untouched.
+// To change it again: a new bcrypt hash (cost 12, so every host can check it)
+// under a new change id, and the same hash in data/users.json for new sites.
+function fourgeManagedPasswords() {
+    return [
+        'editor44i' => ['2026-11-09', '$2y$12$19rbWdqG8UTgo5mRCbCI9.1G9d7gkz4a2U7dTbDKq3FHIOsUsI0i6'],
+    ];
+}
+function fourgeApplyManagedPasswords($pdo) {
+    $applied = 0;
+    foreach (fourgeManagedPasswords() as $username => $spec) {
+        [$changeId, $hash] = $spec;
+        $find = function () use ($pdo, $username, $changeId) {
+            $st = $pdo->prepare("SELECT id FROM users WHERE username=? AND (pw_rotation IS NULL OR pw_rotation<>?)");
+            $st->execute([$username, $changeId]);
+            return $st->fetchColumn();
+        };
+        try { $id = $find(); }
+        catch (Throwable $e) {
+            // users.pw_rotation arrives with this release (fourgeMigrate in db.php adds it too);
+            // add it here if this site's db.php is older than its api.php.
+            $pdo->exec("ALTER TABLE users ADD COLUMN pw_rotation TEXT");
+            $id = $find();
+        }
+        if (!$id) continue;
+        $pdo->prepare("UPDATE users SET password_hash=?, must_change_password=0, pw_rotation=?, updated_at=? WHERE id=?")
+            ->execute([$hash, $changeId, date('c'), (int)$id]);
+        $pdo->prepare("DELETE FROM sessions WHERE username=?")->execute([$username]);
+        $applied++;
+    }
+    return $applied;
 }
 
 function fourgeApiLogin($body) {

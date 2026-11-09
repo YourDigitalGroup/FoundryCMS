@@ -28,6 +28,8 @@ PHP
 php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"admin@44interactive.com","E2ePass!234"); $pdo->exec("UPDATE users SET must_change_password=0, is_architect=1 WHERE username=\"admin@44interactive.com\""); fourgeSetPassword($pdo,"editor44i","E2ePass!234"); $pdo->exec("UPDATE users SET role=\"superadmin\", must_change_password=0, is_architect=0 WHERE username=\"editor44i\""); $u=fourgeGetUser($pdo,"admin@44interactive.com"); echo "user ready: role=",($u["role"]??"?"),"\n";' "$S" || { echo "FAIL could not prepare the test DB"; exit 1; }
 php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); fourgeSetPassword($pdo,"kellar@44interactive.com","E2ePass!234"); $pdo->prepare("UPDATE users SET is_architect=0, role=?, permissions=?, must_change_password=0 WHERE username=?")->execute(["admin","{\"pages\":true}","kellar@44interactive.com"]); $u=fourgeGetUser($pdo,"kellar@44interactive.com"); echo "kellar ready as on an older site: role=",$u["role"]," architect=",$u["is_architect"],"\n";' "$S" || { echo "FAIL could not prepare Kellar"; exit 1; }
 dbq(){ php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); eval($argv[2]);' "$S" "$1"; }
+# a session editor44i had open before the shared-password change below (1.14.153) — the change ends it
+OLDED=$(dbq 'echo fourgeCreateSession($pdo, "editor44i");')
 # the stand-in for api.github.com (tests/lib/gh_stub.php) — the engine is pointed at it with FOURGE_GH_API_BASE
 mkdir -p "$S.ghroot"; rm -f "$GHLOG" "$GHSTATE"; echo ok > "$GHMODE"
 php -S 127.0.0.1:$GHPORT -t "$S.ghroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/gh_stub.php" > "$S.ghstub.log" 2>&1 &
@@ -60,6 +62,18 @@ call "login (bad password → 401 JSON)" '{"action":"login","username":"admin@44
 call "login" '{"action":"login","username":"admin@44interactive.com","password":"E2ePass!234"}'
 TOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
 [ -n "$TOK" ] && chk 0 "login returned a session token" || chk 1 "login returned a session token"
+# 1.14.153: a new password for the shared agency account (fourgeManagedPasswords: a change id and a bcrypt
+# hash, never the password) lands on the first sign-in after the update — checked through the database,
+# since the password itself is not in this repository
+MID=$(grep -o "'editor44i' => \['[^']*', '[^']*'\]" "$S/admin/api.php" | cut -d"'" -f4); MH=$(grep -o "'editor44i' => \['[^']*', '[^']*'\]" "$S/admin/api.php" | cut -d"'" -f6)
+edrow(){ dbq '$u=fourgeGetUser($pdo,"editor44i"); echo $u["password_hash"],"|",$u["pw_rotation"],"|",$u["must_change_password"],"|",$pdo->query("SELECT COUNT(*) FROM sessions WHERE username=\"editor44i\"")->fetchColumn();'; }
+[ -n "$MID" ] && [ "${MH:0:7}" = '$2y$12$' ] && [ "$(edrow)" = "$MH|$MID|0|0" ] && [ -n "$OLDED" ] && chk 0 "editor44i gets the agency's new password hash on the first sign-in after the update; its forced change is cleared and its open sessions end" || chk 1 "shared password change — editor44i: $(edrow | cut -c1-12)… want $(printf '%s' "$MH" | cut -c1-12)… ($MID)"
+python3 -c "import json,sys; u=[x for x in json.load(open(sys.argv[1])) if x.get('username')=='editor44i'][0]; assert u['hash']==sys.argv[2], u['hash'][:12]" "$SRC/data/users.json" "$MH" && chk 0 "the seed for new sites (data/users.json) carries the same password hash" || chk 1 "data/users.json editor44i hash differs from fourgeManagedPasswords()"
+call "login as editor44i with the password it had before" '{"action":"login","username":"editor44i","password":"E2ePass!234"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "token" not in d and d.get("error")=="Invalid login or password", d' && chk 0 "…so the password it had before no longer signs in" || chk 1 "old editor44i password — got: $(printf '%s' "$LAST" | head -c 200)"
+dbq 'fourgeSetPassword($pdo, "editor44i", "E2ePass!234");'
+call "login as editor44i after this site set its own password for it" '{"action":"login","username":"editor44i","password":"E2ePass!234"}'
+printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("token"), d' && [ "$(edrow | cut -d'|' -f2)" = "$MID" ] && [ "$(edrow | cut -d'|' -f1)" != "$MH" ] && chk 0 "the change is applied once: a password set later on one site is kept, not put back on every request" || chk 1 "local editor44i password after the change — got: $(printf '%s' "$LAST" | head -c 200)"
 call "ping" '{"action":"ping"}'
 V=$(python3 -c "import json;print(json.load(open('$SRC/admin/version.json'))['version'])")
 printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('api_version')=='$V' and d.get('version')=='$V', d" && chk 0 "ping reports api_version $V (1.14.136: the sign-in stale-api check reads this)" || chk 1 "ping api_version — got: $LAST"
