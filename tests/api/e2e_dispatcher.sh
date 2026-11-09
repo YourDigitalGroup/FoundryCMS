@@ -557,6 +557,7 @@ cat > "$S/send.php" <<PHPX
   'cc_email'      => 'office@e2e-site.example, Manager <manager@e2e-site.example>; not-an-address, refused@e2e-site.example',
 ];
 PHPX
+notify_email(){ python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['notifyEmail']=sys.argv[2]; json.dump(d,open(p,'w'))" "$S/data/site.json" "$1"; }
 smail(){ python3 - "$SMLOG" "$1" <<'PY'
 import json,sys
 m=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
@@ -568,9 +569,10 @@ PY
 : > "$SMLOG"
 call "send_form (mail settings from a legacy send.php with a cc_email)" '{"action":"send_form","subject":"E2E enquiry","fields":{"Name":"Pat Doe","Email":"pat@example.com","Message":"Hello"},"siteUrl":"https://e2e-site.example"}'
 ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"]==["owner@e2e-site.example","office@e2e-site.example","manager@e2e-site.example"], x["rcpt"]; assert "To: <owner@e2e-site.example>" in hdr and "Cc: <office@e2e-site.example>, <manager@e2e-site.example>" in hdr and "former-manager" not in x["data"] and "refused@" not in hdr, hdr' && chk 0 "a form email goes to send.php's to_email and is copied to its cc_email (Cc header and envelope); a commented-out line, a bad address, and a CC the relay refuses are left out, and the email still goes" || chk 1 "form email CC — got: $(printf '%s' "$LAST" | head -c 200) / relay: $(head -c 700 "$SMLOG")"
-: > "$SMLOG"
-call "send_form to an address that is also on the CC list" '{"action":"send_form","to":"office@e2e-site.example","subject":"E2E enquiry","fields":{"Name":"Pat Doe"},"siteUrl":"https://e2e-site.example"}'
+: > "$SMLOG"; notify_email 'office@e2e-site.example'
+call "send_form to Site Info's Notify Email, which is also on the CC list" '{"action":"send_form","to":"office@e2e-site.example","subject":"E2E enquiry","fields":{"Name":"Pat Doe"},"siteUrl":"https://e2e-site.example"}'
 ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"]==["office@e2e-site.example","manager@e2e-site.example"], x["rcpt"]; assert "Cc: <manager@e2e-site.example>\r\n" in hdr+"\r\n", hdr' && chk 0 "…an address is never copied on an email it is already addressed to" || chk 1 "CC equal to To — relay: $(head -c 500 "$SMLOG")"
+notify_email ''
 : > "$SMLOG"
 call "send_test_email (with a send.php cc_email)" '{"action":"send_test_email","to":"tester@e2e-site.example"}'
 ans 'assert d.get("ok") is True and d.get("source")=="send.php" and d.get("cc")=="office@e2e-site.example, manager@e2e-site.example, refused@e2e-site.example" and d.get("ccSource")=="send.php", d' && smail 'assert x["rcpt"]==["tester@e2e-site.example"] and "\r\nCc:" not in hdr, x' && chk 0 "…the mail test lists the CC (from send.php) and sends only to the address typed" || chk 1 "test email CC — got: $(printf '%s' "$LAST" | head -c 300) / relay: $(head -c 300 "$SMLOG")"
@@ -583,6 +585,27 @@ ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"]==["owner@e2e-site
 python3 - "$S/admin/config.secret.php" <<'PY'
 import sys; p=sys.argv[1]; s=open(p).read(); open(p,'w').write(s.replace("  'mg_notify_cc' => 'boss@e2e-site.example',\n",""))
 PY
+
+# Form email recipients (1.14.155): send_form is public and used to send to whatever "to" a request named,
+# so anyone could send mail anywhere through the site's mail account. Now only the site's own addresses —
+# Site Info's Notify Email or the mail settings' recipient (here send.php's to_email) — are used as given
+notify_email 'notify@e2e-site.example'
+: > "$SMLOG"
+call "send_form naming someone else's address" '{"action":"send_form","to":"victim@elsewhere.example","subject":"Buy now","fields":{"Message":"spam"},"siteUrl":"https://e2e-site.example"}'
+ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"][0]=="notify@e2e-site.example", x["rcpt"]' && ! grep -q 'elsewhere.example' "$SMLOG" && chk 0 "a request naming an address that is not the site's own sends to the site's own (Notify Email) instead — never to the address named" || chk 1 "foreign recipient — relay: $(head -c 400 "$SMLOG")"
+: > "$SMLOG"
+call "send_form naming the site's address and someone else's" '{"action":"send_form","to":"notify@e2e-site.example, victim@elsewhere.example","subject":"x","fields":{"Message":"spam"},"siteUrl":"https://e2e-site.example"}'
+ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"][0]=="notify@e2e-site.example" and len([r for r in x["rcpt"] if "elsewhere" in r])==0, x["rcpt"]' && ! grep -q 'elsewhere.example' "$SMLOG" && chk 0 "…and so does one that adds an outside address to the site's own" || chk 1 "mixed recipients — relay: $(head -c 400 "$SMLOG")"
+: > "$SMLOG"
+OUTSIDE=$(curl -s -X POST -F action=send_form -F to=victim@elsewhere.example -F subject=x -F Message=spam "$BASE")
+printf '%s' "$OUTSIDE" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("ok") is True' && smail 'assert x["rcpt"][0]=="notify@e2e-site.example", x["rcpt"]' && ! grep -q 'elsewhere.example' "$SMLOG" && chk 0 "…the same for a multipart submission (how a form with a file upload posts)" || chk 1 "multipart foreign recipient — got: $(printf '%s' "$OUTSIDE" | head -c 200) / relay: $(head -c 300 "$SMLOG")"
+: > "$SMLOG"
+call "send_form to the mail settings' recipient" '{"action":"send_form","to":"owner@e2e-site.example","subject":"E2E enquiry","fields":{"Name":"Pat Doe"},"siteUrl":"https://e2e-site.example"}'
+ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"][0]=="owner@e2e-site.example", x["rcpt"]' && chk 0 "the site's own addresses are used as given (here the mail settings' recipient, not the Notify Email)" || chk 1 "own recipient — relay: $(head -c 300 "$SMLOG")"
+: > "$SMLOG"
+call "send_form with an empty to (a page-block form on a site with no Notify Email)" '{"action":"send_form","to":"","subject":"E2E enquiry","fields":{"Name":"Pat Doe"},"siteUrl":"https://e2e-site.example"}'
+ans 'assert d.get("ok") is True and d.get("stored") is True and "no email" in d.get("note",""), d' && [ ! -s "$SMLOG" ] && chk 0 "an empty \"to\" still stores the entry without emailing, as before" || chk 1 "empty to — got: $(printf '%s' "$LAST" | head -c 200) / relay: $(head -c 200 "$SMLOG")"
+notify_email ''
 rm -f "$S/send.php"
 call "delete_file data/chat.json" '{"action":"delete_file","path":"data/chat.json"}'
 call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
