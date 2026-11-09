@@ -2918,7 +2918,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.153';
+const CMS_VERSION='1.14.154';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -13546,6 +13546,8 @@ function renderMailResult(d){
   if(d.user)   rows.push(['Login',d.user]);
   if(d.from)   rows.push(['From',d.from]);
   if(d.to)     rows.push(['To',d.to]);
+  // Form emails are copied to the site's CC list (the test itself goes only to the address above).
+  if(d.cc)     rows.push(['Form emails CC',d.cc+(d.ccSource?' (from '+d.ccSource+')':'')]);
   const kv=rows.map(r=>`<tr><td style="padding:3px 14px 3px 0;color:var(--muted);white-space:nowrap;vertical-align:top">${esc(r[0])}</td><td style="padding:3px 0;color:var(--text);word-break:break-word">${esc(r[1])}</td></tr>`).join('');
   const color=ok?'var(--green)':'var(--red)';
   const bg=ok?'rgba(22,163,74,.10)':'rgba(225,72,59,.10)';

@@ -38,8 +38,8 @@ return [
     //  reuse the exact same credentials.
     //
     //  ALREADY HAVE AN OLD send.php ON THIS SITE? You can skip this whole
-    //  section — the CMS automatically reads the SMTP host/user/password and
-    //  from/to out of an existing send.php (it's parsed as text, never run).
+    //  section — the CMS automatically reads the SMTP host/user/password,
+    //  from/to and cc out of an existing send.php (it's parsed as text, never run).
     //  Only fill the keys below if you WANT to override what send.php uses.
     // ════════════════════════════════════════════════════════════════════════
 
@@ -55,6 +55,7 @@ return [
     //       'smtp_password'                   ->  'smtp_password'
     //       'from_name' + 'from_email'        ->  'mg_from'       (combined, see below)
     //       'to_email'                        ->  'mg_notify_to'  (where mail lands)
+    //       'cc_email'                        ->  'mg_notify_cc'  (copied on every form email)
     //
     // 'smtp_host'     => 'smtp.mailgun.org',        // EU region: 'smtp.eu.mailgun.org'
     // 'smtp_port'     => 587,                        // 587 = STARTTLS (usual), 465 = SSL
@@ -71,6 +72,8 @@ return [
     //   the mail service will REJECT the message. Format: Display Name <address>
     // 'mg_from'       => 'Your Business <info@YOURDOMAIN.com>',
     // 'mg_notify_to'  => 'you@YOURDOMAIN.com',       // inbox that receives submissions
+    // 'mg_notify_cc'  => 'office@YOURDOMAIN.com',    // optional: copied (CC) on every form email; several
+    //                                                //   separated by commas. Without it, a send.php's 'cc_email' is used.
 
 
     // ── OPTIONAL — shared server API token (legacy / external callers) ──────
