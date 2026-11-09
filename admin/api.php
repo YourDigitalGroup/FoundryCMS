@@ -50,6 +50,38 @@ function fourgeLegacySendConfig($root) {
     }
     return [];
 }
+// A list of email addresses: one, several separated by commas, semicolons or
+// spaces, or "Name <address>" forms. Anything that isn't a valid address is
+// dropped, and so are repeats. Returns "a@x.com, b@y.com", or ''.
+function fourgeEmailList($s) {
+    $out = []; $seen = [];
+    foreach (preg_split('/[\s,;]+/', (string)$s, -1, PREG_SPLIT_NO_EMPTY) as $a) {
+        $a = trim($a, " \t\r\n<>\"'");
+        if ($a === '' || !filter_var($a, FILTER_VALIDATE_EMAIL) || isset($seen[strtolower($a)])) continue;
+        $seen[strtolower($a)] = true; $out[] = $a;
+    }
+    return implode(', ', $out);
+}
+// The CC list in a legacy send.php's $CONFIG ('cc_email'): who the old handler
+// copied on every form email. Read as text, never run, like the settings above;
+// a commented-out line doesn't count. One address, a comma-separated list, or an
+// array of them. Returns fourgeEmailList()'s form, or '' when there is none.
+function fourgeLegacySendCc($root) {
+    if (!$root) return '';
+    $files = [];
+    if (is_file($root . '/send.php')) $files[] = $root . '/send.php';
+    else foreach (glob($root . '/*/send.php') ?: [] as $g) $files[] = $g;
+    foreach ($files as $file) {
+        $src = @file_get_contents($file);
+        if ($src === false || stripos($src, 'cc_email') === false) continue;
+        $src = preg_replace(['~/\*[\s\S]*?\*/~', '~^[ \t]*(?://|#).*$~m'], '', $src);
+        if (!preg_match('/[\'"]cc_email[\'"]\s*=>\s*(\[[^\]]*\]|array\s*\([^)]*\)|\'[^\']*\'|"[^"]*")/i', $src, $m)) continue;
+        preg_match_all('/\'([^\']*)\'|"([^"]*)"/', $m[1], $q);
+        $list = fourgeEmailList(implode(',', array_merge($q[1], $q[2])));
+        if ($list !== '') return $list;
+    }
+    return '';
+}
 // Only when config.secret.php configures no mail of its own — explicit config always wins.
 // Record where the mail credentials ultimately came from so the "Send test email"
 // diagnostic can show it (config.secret.php vs the legacy send.php vs none).
@@ -75,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.153');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.154');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -2569,6 +2601,22 @@ function cmsMailgun() {
     ];
 }
 
+// Who form emails are copied to (CC): 'mg_notify_cc' in config.secret.php when
+// it is set, otherwise the 'cc_email' of a legacy send.php — whichever of them
+// the rest of the mail settings come from, since that is who the site's old
+// handler copied. Read only when mail is sent. Returns ['list' => …, 'source' => …].
+function cmsMailCc() {
+    $own = fourgeEmailList((string)(foundrySecret()['mg_notify_cc'] ?? ''));
+    if ($own !== '') return ['list' => $own, 'source' => 'config.secret.php'];
+    $legacy = fourgeLegacySendCc(PUBLIC_HTML);
+    return ['list' => $legacy, 'source' => $legacy !== '' ? 'send.php' : ''];
+}
+// The CC list for one message: without the address it is already going to.
+function cmsCcFor($ccList, $to) {
+    $to = strtolower(trim((string)$to));
+    return implode(', ', array_filter(explode(', ', (string)$ccList), function ($a) use ($to) { return $a !== '' && strtolower($a) !== $to; }));
+}
+
 function cmsSmtpEnabled() {
     return SMTP_HOST !== '' && SMTP_USER !== '' && SMTP_PASS !== '';
 }
@@ -2576,7 +2624,9 @@ function cmsSmtpEnabled() {
 // Minimal dependency-free SMTP sender (no PHPMailer needed). Speaks enough of
 // ESMTP to authenticate and deliver a multipart/alternative message. $opt keys:
 // host, port, secure(auto|tls|ssl|none), user, pass, from, fromName, to, toName,
-// replyTo, replyName, subject, html, text. Returns true, or false with $err set.
+// cc (comma-separated, optional), replyTo, replyName, subject, html, text.
+// Returns true, or false with $err set. A CC address the server refuses is left
+// out (and logged) rather than failing the message to the main recipient.
 function cmsSmtpSend($opt, &$err) {
     $host = (string)$opt['host']; $port = (int)$opt['port'];
     $secure = $opt['secure'] ?? 'auto';
@@ -2585,6 +2635,7 @@ function cmsSmtpSend($opt, &$err) {
     // (Reply-To comes from the visitor) to prevent command / header injection.
     $strip = function ($s) { return str_replace(["\r", "\n", "\0"], '', (string)$s); };
     $from = $strip($opt['from']); $to = $strip($opt['to']); $rt = $strip($opt['replyTo'] ?? '');
+    $cc = array_values(array_filter(explode(', ', fourgeEmailList(cmsCcFor($strip($opt['cc'] ?? ''), $to)))));
 
     $remote = ($secure === 'ssl' ? 'ssl://' : 'tcp://') . $host . ':' . $port;
     $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]);
@@ -2623,6 +2674,12 @@ function cmsSmtpSend($opt, &$err) {
 
     $put("MAIL FROM:<$from>"); $r = $read(); if ($code($r) !== 250) return $bail('MAIL FROM: ' . trim($r));
     $put("RCPT TO:<$to>");     $r = $read(); if ($code($r) !== 250 && $code($r) !== 251) return $bail('RCPT TO: ' . trim($r));
+    $ccOk = [];
+    foreach ($cc as $a) {
+        $put("RCPT TO:<$a>"); $r = $read();
+        if ($code($r) === 250 || $code($r) === 251) $ccOk[] = $a;
+        else error_log('Fourge SMTP: CC ' . $a . ' refused, sent without it: ' . trim($r));
+    }
     $put("DATA");              $r = $read(); if ($code($r) !== 354) return $bail('DATA: ' . trim($r));
 
     $enc = function ($s) { return '=?UTF-8?B?' . base64_encode((string)$s) . '?='; };   // RFC2047 for names/subject
@@ -2632,6 +2689,7 @@ function cmsSmtpSend($opt, &$err) {
     $H[] = 'Message-ID: <' . bin2hex(random_bytes(12)) . '@' . $host . '>';
     $H[] = 'From: ' . (($opt['fromName'] ?? '') !== '' ? $enc($opt['fromName']) . ' ' : '') . "<$from>";
     $H[] = 'To: '   . (($opt['toName'] ?? '')   !== '' ? $enc($opt['toName'])   . ' ' : '') . "<$to>";
+    if ($ccOk) $H[] = 'Cc: ' . implode(', ', array_map(function ($a) { return "<$a>"; }, $ccOk));
     if ($rt !== '') $H[] = 'Reply-To: ' . (!empty($opt['replyName']) ? $enc($opt['replyName']) . ' ' : '') . "<$rt>";
     $H[] = 'Subject: ' . $enc($opt['subject']);
     $H[] = 'MIME-Version: 1.0';
@@ -2878,6 +2936,9 @@ function cmsSendForm($body) {
     // Reply-To = the first submitted value that looks like an email address.
     $replyTo = ''; foreach ($fields as $val) { $v = trim((string)$val); if (filter_var($v, FILTER_VALIDATE_EMAIL)) { $replyTo = $v; break; } }
 
+    // Copied (CC) to the site's CC list — config.secret.php's, or a legacy send.php's cc_email.
+    $cc = cmsCcFor(cmsMailCc()['list'], $toEmail);
+
     // Prefer SMTP when configured (a migrated site's existing SMTP creds work
     // as-is); otherwise fall through to the Mailgun HTTP API below.
     if (cmsSmtpEnabled()) {
@@ -2885,7 +2946,7 @@ function cmsSendForm($body) {
         $err = '';
         $sent = cmsSmtpSend([
             'host' => SMTP_HOST, 'port' => SMTP_PORT, 'secure' => SMTP_SECURE, 'user' => SMTP_USER, 'pass' => SMTP_PASS,
-            'from' => $fromEmail, 'fromName' => $fromName, 'to' => $toEmail, 'toName' => '',
+            'from' => $fromEmail, 'fromName' => $fromName, 'to' => $toEmail, 'toName' => '', 'cc' => $cc,
             'replyTo' => $replyTo, 'replyName' => '', 'subject' => $subject, 'html' => $html, 'text' => $text,
         ], $err);
         if ($sent) { echo json_encode(['ok' => true]); }
@@ -2898,7 +2959,7 @@ function cmsSendForm($body) {
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_USERPWD        => 'api:' . $mg['key'],
         CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => ['from'=>$mg['from'],'to'=>$toEmail,'subject'=>$subject,'text'=>$text,'html'=>$html],
+        CURLOPT_POSTFIELDS     => ['from'=>$mg['from'],'to'=>$toEmail,'subject'=>$subject,'text'=>$text,'html'=>$html] + ($cc !== '' ? ['cc' => $cc] : []),
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_TIMEOUT        => 15,
     ]);
@@ -2925,6 +2986,9 @@ function cmsSendTestEmail($to, &$info) {
         'source' => $GLOBALS['__mail_source'] ?? 'config.secret.php',
         'method' => 'none',
     ];
+    // Shown, not used: a test goes only to the address typed, but the form emails are copied to these.
+    $ccInfo = cmsMailCc();
+    if ($ccInfo['list'] !== '') { $info['cc'] = $ccInfo['list']; $info['ccSource'] = $ccInfo['source']; }
     $subject = 'Fourge CMS test email';
     $text = "This is a test email sent from your Fourge CMS mail settings.\n"
           . "If you received it, outbound email from your site is working.\n\n"

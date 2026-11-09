@@ -10,6 +10,7 @@ PORT="${E2E_PORT:-8932}"; BASE=http://127.0.0.1:$PORT/admin/api.php
 GHPORT="${E2E_GH_PORT:-8934}"; GHLOG="$SRC/tests/.cache/gh_stub_log.jsonl"; GHSTATE="$SRC/tests/.cache/gh_stub_state.json"; GHMODE="$SRC/tests/.cache/gh_stub_mode"
 GHLPORT="${E2E_GHL_PORT:-8935}"; GHLSTATE="$SRC/tests/.cache/ghl_stub_state.json"
 ANPORT="${E2E_ANTHROPIC_PORT:-8936}"; ANMODE="$SRC/tests/.cache/anthropic_stub_mode"; ANCOUNT="$SRC/tests/.cache/anthropic_stub_count"
+SMPORT="${E2E_SMTP_PORT:-8937}"; SMLOG="$SRC/tests/.cache/smtp_stub.jsonl"
 export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"   # the engine's curl must reach the stub directly
 command -v python3 >/dev/null 2>&1 || { echo "FAIL python3 is required for the dispatcher suite"; exit 1; }
 rm -rf "$S"; mkdir -p "$S"
@@ -42,6 +43,10 @@ GHLSRV=$!
 mkdir -p "$S.anroot"; echo ok > "$ANMODE"; echo 0 > "$ANCOUNT"
 php -S 127.0.0.1:$ANPORT -t "$S.anroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/anthropic_stub.php" > "$S.anstub.log" 2>&1 &
 ANSRV=$!
+# a stand-in SMTP relay (tests/lib/smtp_stub.php): every message it accepts is a JSON line in $SMLOG
+: > "$SMLOG"
+php -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/smtp_stub.php" "$SMPORT" "$SMLOG" > "$S.smtpstub.log" 2>&1 &
+SMSRV=$!
 # opcache.revalidate_freq=0: the built-in server caches compiled PHP (opcache.enable_cli does not cover it), and the
 # suite edits config.secret.php mid-run; without it a request within 2 s of an edit still sees the old file.
 FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_ANTHROPIC_API_BASE="http://127.0.0.1:$ANPORT" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
@@ -533,6 +538,52 @@ call "ai_autofix (run)" '{"action":"ai_autofix","metaCap":0,"altCap":0,"linkCap"
 ans 'assert d.get("ok") is True and d.get("dry_run") is False, d' && python3 -c "import json; s=json.load(open('$S/data/ai_autofix.json')); assert s.get('last_run'), s" && chk 0 "…and a run saves its state (data/ai_autofix.json)" || chk 1 "ai_autofix run — got: $(printf '%s' "$LAST" | head -c 300)"
 for f in pages.json seo.json posts.json; do if [ -f "$S.pkgbak.$f" ]; then mv "$S.pkgbak.$f" "$S/data/$f"; else rm -f "$S/data/$f"; fi; done
 rm -f "$S/brick-supply-testville-in.html" "$S/pavers-testville.html" "$S"/retaining-walls-and-more-*.html "$S/data/seo-package-report.json" "$S/data/ai_autofix.json" "$S.pkg.json"
+
+# Form email CC (1.14.154): a legacy send.php — the handler a site used before the CMS, read as text and
+# never run — can list who every form email is copied to ('cc_email'); the CMS now copies them too
+cat > "$S/send.php" <<PHPX
+<?php
+// this site's old PHPMailer handler
+\$CONFIG = [
+  'smtp_host'     => '127.0.0.1',
+  'smtp_port'     => $SMPORT,
+  'smtp_secure'   => 'none',
+  'smtp_username' => 'e2e-relay',
+  'smtp_password' => 'e2e-relay-pass',
+  'from_email'    => 'forms@e2e-site.example',
+  'from_name'     => 'E2E Site',
+  'to_email'      => 'owner@e2e-site.example',
+  // 'cc_email'   => 'former-manager@e2e-site.example',
+  'cc_email'      => 'office@e2e-site.example, Manager <manager@e2e-site.example>; not-an-address, refused@e2e-site.example',
+];
+PHPX
+smail(){ python3 - "$SMLOG" "$1" <<'PY'
+import json,sys
+m=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert len(m)==1, m
+x=m[0]; hdr=x['data'].split('\r\n\r\n',1)[0]
+exec(sys.argv[2])
+PY
+}
+: > "$SMLOG"
+call "send_form (mail settings from a legacy send.php with a cc_email)" '{"action":"send_form","subject":"E2E enquiry","fields":{"Name":"Pat Doe","Email":"pat@example.com","Message":"Hello"},"siteUrl":"https://e2e-site.example"}'
+ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"]==["owner@e2e-site.example","office@e2e-site.example","manager@e2e-site.example"], x["rcpt"]; assert "To: <owner@e2e-site.example>" in hdr and "Cc: <office@e2e-site.example>, <manager@e2e-site.example>" in hdr and "former-manager" not in x["data"] and "refused@" not in hdr, hdr' && chk 0 "a form email goes to send.php's to_email and is copied to its cc_email (Cc header and envelope); a commented-out line, a bad address, and a CC the relay refuses are left out, and the email still goes" || chk 1 "form email CC — got: $(printf '%s' "$LAST" | head -c 200) / relay: $(head -c 700 "$SMLOG")"
+: > "$SMLOG"
+call "send_form to an address that is also on the CC list" '{"action":"send_form","to":"office@e2e-site.example","subject":"E2E enquiry","fields":{"Name":"Pat Doe"},"siteUrl":"https://e2e-site.example"}'
+ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"]==["office@e2e-site.example","manager@e2e-site.example"], x["rcpt"]; assert "Cc: <manager@e2e-site.example>\r\n" in hdr+"\r\n", hdr' && chk 0 "…an address is never copied on an email it is already addressed to" || chk 1 "CC equal to To — relay: $(head -c 500 "$SMLOG")"
+: > "$SMLOG"
+call "send_test_email (with a send.php cc_email)" '{"action":"send_test_email","to":"tester@e2e-site.example"}'
+ans 'assert d.get("ok") is True and d.get("source")=="send.php" and d.get("cc")=="office@e2e-site.example, manager@e2e-site.example, refused@e2e-site.example" and d.get("ccSource")=="send.php", d' && smail 'assert x["rcpt"]==["tester@e2e-site.example"] and "\r\nCc:" not in hdr, x' && chk 0 "…the mail test lists the CC (from send.php) and sends only to the address typed" || chk 1 "test email CC — got: $(printf '%s' "$LAST" | head -c 300) / relay: $(head -c 300 "$SMLOG")"
+python3 - "$S/admin/config.secret.php" <<'PY'
+import sys; p=sys.argv[1]; s=open(p).read(); i=s.rindex('];'); open(p,'w').write(s[:i]+"  'mg_notify_cc' => 'boss@e2e-site.example',\n"+s[i:])
+PY
+: > "$SMLOG"
+call "send_form (config.secret.php sets its own mg_notify_cc)" '{"action":"send_form","subject":"E2E enquiry","fields":{"Name":"Pat Doe"},"siteUrl":"https://e2e-site.example"}'
+ans 'assert d.get("ok") is True, d' && smail 'assert x["rcpt"]==["owner@e2e-site.example","boss@e2e-site.example"], x["rcpt"]' && chk 0 "config.secret.php's own mg_notify_cc wins over send.php's cc_email" || chk 1 "mg_notify_cc override — relay: $(head -c 400 "$SMLOG")"
+python3 - "$S/admin/config.secret.php" <<'PY'
+import sys; p=sys.argv[1]; s=open(p).read(); open(p,'w').write(s.replace("  'mg_notify_cc' => 'boss@e2e-site.example',\n",""))
+PY
+rm -f "$S/send.php"
 call "delete_file data/chat.json" '{"action":"delete_file","path":"data/chat.json"}'
 call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
 
@@ -545,11 +596,12 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 call "form_view (public)" '{"action":"form_view","formId":"e2e-form"}'
 call "unknown action → JSON error" '{"action":"definitely_not_an_action"}'
 call "no session on a session action → 401 JSON" '{"action":"list_users"}'
-kill $SRV $GHSRV $GHLSRV $ANSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV $ANSRV 2>/dev/null
+kill $SRV $GHSRV $GHLSRV $ANSRV $SMSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV $ANSRV $SMSRV 2>/dev/null
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.server.log"; then chk 1 "php -S log has PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "php -S log shows no PHP warnings/notices/deprecations during the whole run"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghstub.log"; then chk 1 "the GitHub stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GitHub stub ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghlstub.log"; then chk 1 "the GoHighLevel stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghlstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GoHighLevel stub ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.anstub.log"; then chk 1 "the Anthropic stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.anstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the Anthropic stub ran without PHP warnings"; fi
-rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE" "$S.anstub.log" "$S.anroot" "$ANMODE" "$ANCOUNT"
+if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.smtpstub.log"; then chk 1 "the SMTP stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.smtpstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the SMTP stub ran without PHP warnings"; fi
+rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE" "$S.anstub.log" "$S.anroot" "$ANMODE" "$ANCOUNT" "$S.smtpstub.log" "$SMLOG"
 echo; echo "$([ $fail = 0 ] && echo "all end-to-end dispatcher assertions passed ($pass)" || echo "SUITE FAILED ($fail failed, $pass passed)")"
 exit $([ $fail = 0 ] && echo 0 || echo 1)
