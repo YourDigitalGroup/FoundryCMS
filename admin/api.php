@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.154');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.155');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -2611,6 +2611,29 @@ function cmsMailCc() {
     $legacy = fourgeLegacySendCc(PUBLIC_HTML);
     return ['list' => $legacy, 'source' => $legacy !== '' ? 'send.php' : ''];
 }
+// Who a form email may be sent to. send_form is public, and it used to send to
+// whatever "to" a request named, so anyone could post a message to any address
+// through this site's mail account — the way an account gets suspended or a
+// domain blacklisted. The site's own forms only ever name its own addresses:
+// page-block forms send Site Info's Notify Email (data/site.json notifyEmail),
+// Form Builder forms send none. So:
+//   no "to"      → the mail settings' recipient (mg_notify_to), as before;
+//   an empty one → nobody (the entry is stored, not emailed), as before;
+//   a "to" whose every address is the site's own (Site Info's Notify Email or
+//   mg_notify_to) → as given; any other → the site's own recipient instead
+//   (Notify Email, else mg_notify_to), never the address the request named.
+function cmsFormRecipient($hasTo, $requested, $mgNotify) {
+    if (!$hasTo) return (string)$mgNotify;
+    $req = is_scalar($requested) ? trim((string)$requested) : '-';
+    if ($req === '') return '';
+    $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+    $siteNotify = is_array($site) ? fourgeEmailList((string)($site['notifyEmail'] ?? '')) : '';
+    $mailNotify = fourgeEmailList((string)$mgNotify);
+    $own = array_map('strtolower', array_filter(array_merge(explode(', ', $siteNotify), explode(', ', $mailNotify))));
+    $list = fourgeEmailList($req);
+    if ($list !== '' && !array_diff(array_map('strtolower', explode(', ', $list)), $own)) return $list;
+    return $siteNotify !== '' ? $siteNotify : $mailNotify;
+}
 // The CC list for one message: without the address it is already going to.
 function cmsCcFor($ccList, $to) {
     $to = strtolower(trim((string)$to));
@@ -2823,7 +2846,7 @@ function cmsSendForm($body) {
     if (empty($body) && (!empty($_POST) || !empty($_FILES))) {
         $formId  = (string)($_POST['formId']  ?? '');
         $subject = (string)($_POST['subject'] ?? 'New Form Submission');
-        $toEmail = (string)($_POST['to']      ?? $mg['notify']);
+        $toEmail = cmsFormRecipient(isset($_POST['to']), $_POST['to'] ?? '', $mg['notify']);   // only this site's own addresses
         $siteUrl = (string)($_POST['siteUrl'] ?? '');
         $rcToken = (string)($_POST['recaptcha'] ?? '');
         $hcToken = (string)($_POST['hcaptcha'] ?? '');
@@ -2841,7 +2864,7 @@ function cmsSendForm($body) {
     } else {
     $fields  = $body['fields']  ?? [];
     $subject = $body['subject'] ?? 'New Form Submission';
-    $toEmail = $body['to']      ?? $mg['notify'];
+    $toEmail = cmsFormRecipient(isset($body['to']), $body['to'] ?? '', $mg['notify']);   // only this site's own addresses
     $siteUrl = $body['siteUrl'] ?? '';
     $formId  = $body['formId']  ?? '';
     $rcToken = $body['recaptcha'] ?? '';
