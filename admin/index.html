@@ -2918,7 +2918,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.155';
+const CMS_VERSION='1.14.156';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3619,7 +3619,7 @@ function captureFooterCredit(doc){
     const txt = (el.textContent||'').replace(/\s+/g,' ').trim().replace(/^site\s+by\s*[:\-]?\s*/i,'');
     if(!txt || txt===_site.credit) return;
     _site.credit = txt;
-    if(canCallApi()) apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}).catch(()=>{});
+    if(canCallApi()) apiCall('write_file',{path:F_SITE,content:siteJsonText()}).catch(()=>{});
     applyLoginFooter();
   }catch{}
 }
@@ -4987,7 +4987,7 @@ async function generatorTagSweepOnce(){
     }catch(e){}
   }
   _site.generatorTagSwept=true;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }catch(e){}
 }
 
 // ── FORM PLACEMENTS (attribute every on-page form to a managed form) ──
@@ -6381,7 +6381,7 @@ async function blogSyncAutoPlaceIfNeeded(){
     await placePostListOnPage(cand,{auto:true});
     if(_postListPageIds && _postListPageIds.has(cand)){
       _site.blogSync.autoPlaced={page:_pages[cand].path||_pages[cand].file, at:new Date().toISOString()};
-      try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+      try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }catch(e){}
     }
     return;
   }
@@ -6470,7 +6470,7 @@ async function blogSyncSave(){
   _site.blogSync.enabled=enabled;
   _site.blogSync.sourceUrl=sourceUrl;
   try{
-    await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)});
+    await apiCall('write_file',{path:F_SITE,content:siteJsonText()});
     toast(enabled?'Blog Sync saved — checking for new posts…':'Blog Sync saved','ok');
     blogSyncRender();
     if(enabled) blogSyncCheckNow();
@@ -7706,7 +7706,7 @@ async function postsRuntimeSweepIfStale(){
     }catch(e){}
   }
   _site.postsRuntimeSweptVersion=POSTS_RUNTIME_SWEEP_VERSION;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }catch(e){}
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -8265,7 +8265,7 @@ async function eventsRuntimeSweepIfStale(){
     }catch(e){}
   }
   _site.eventsRuntimeSweptVersion=EVENTS_RUNTIME_SWEEP_VERSION;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }catch(e){}
 }
 
 // ── VIDEO ───────────────────────────────────────────────────────────────────
@@ -10535,6 +10535,7 @@ function renderSEO(pid){
     +'<div class="fg"><label>Meta Description <span style="font-weight:400;color:var(--muted)">(120–160)</span></label><textarea rows="3" maxlength="200" oninput="updateSEO(\''+pid+'\',\'description\',this.value)">'+esc(s.description||'')+'</textarea><small id="seo-desc-count">'+(s.description||'').length+'/160</small></div>'
     +'<div class="fr"><div class="fg"><label>Preferred web address <span style="font-weight:400;color:var(--muted)">(leave blank to set automatically)</span></label><input type="text" value="'+esc(s.canonical||'')+'" oninput="updateSEO(\''+pid+'\',\'canonical\',this.value)" placeholder="Set automatically from your website address"></div>'
     +'<div class="fg"><label>Page type</label><select onchange="updateSEO(\''+pid+'\',\'schemaType\',this.value)">'+opt(['WebPage','Article','Service','LocalBusiness','AboutPage','ContactPage','FAQPage','none'],s.schemaType||'WebPage')+'</select></div></div>'
+    +'<div class="fg"><label>Breadcrumb name <span style="font-weight:400;color:var(--muted)">(blank = SEO title)</span></label><input type="text" id="seo-crumb" value="'+esc(s.breadcrumbName||'')+'" oninput="updateSEO(\''+pid+'\',\'breadcrumbName\',this.value)" placeholder="A short name for search results, e.g. Programs"></div>'
     +'<div class="fr" style="margin-bottom:20px"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.noindex?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'noindex\',this.checked)"> Hide this page from search results</label>'
     +'<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" '+(s.nofollow?'checked':'')+' onchange="updateSEO(\''+pid+'\',\'nofollow\',this.checked)"> Don’t follow links on this page</label></div>'
     +'<div class="si-sec"><h2 style="font-size:13px">Social sharing preview</h2>'
@@ -10928,7 +10929,9 @@ function seoBuildSchema(pg,s,canon,docFaqs){
     if(cpath && cbase){
       graph.push({'@type':'BreadcrumbList', itemListElement:[
         {'@type':'ListItem', position:1, name:'Home', item:cbase+'/'},
-        {'@type':'ListItem', position:2, name:(s.title||pg.label||pg.title||cpath), item:cbase+'/'+cpath}
+        // breadcrumbName (Page SEO → Breadcrumb name): a short name such as "Programs",
+        // since the SEO title is usually a long title tag that reads badly as a crumb.
+        {'@type':'ListItem', position:2, name:(String(s.breadcrumbName||'').trim()||s.title||pg.label||pg.title||cpath), item:cbase+'/'+cpath}
       ]});
     }
     // AEO (answer-engine) fields: a direct answer becomes the page's abstract,
@@ -11327,7 +11330,7 @@ async function siteIdentityAutofillOnce(){
   if(needName && d.name){ _site.name=d.name; got.push('name “'+d.name+'” from '+d.nameSource); }
   if(needWeb && d.website){ _site.website=d.website; got.push('address '+d.website+' from '+d.websiteSource); }
   if(!got.length) return;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); toast('Site identity read from your site: '+got.join('; ')+' ✓','ok'); applyLoginFooter&&applyLoginFooter(); }catch(e){}
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); toast('Site identity read from your site: '+got.join('; ')+' ✓','ok'); applyLoginFooter&&applyLoginFooter(); }catch(e){}
   const nameEl=document.getElementById('si-name'), webEl=document.getElementById('si-website');
   if(_siteInfoLoaded){ if(nameEl&&!nameEl.value.trim()) nameEl.value=_site.name||''; if(webEl&&!webEl.value.trim()) webEl.value=_site.website||''; }
 }
@@ -11386,7 +11389,7 @@ async function brandApplyAll(){
   // swatches as deliberately chosen, exactly as a manual change would.
   ['si-brand-primary','si-brand-secondary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.dataset.set='1'; });
   if(!_site.brand) _site.brand={}; _site.brand.primary=primary; _site.brand.secondary=secondary;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }catch(e){}
   if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
   const st=document.getElementById('si-brand-status'); if(st) st.textContent='Applying…';
@@ -11479,7 +11482,7 @@ async function uploadFavicon(file){
     _site.favicon=primary;
     _site.faviconIcons=icons;
     _site.faviconVer=Date.now();   // cache-buster: replaced icons show up immediately
-    await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)});
+    await apiCall('write_file',{path:'data/site.json',content:siteJsonText()});
     faviconRender();
     await faviconApplyAll(true);   // publish to every page in one step (no separate "Apply" click)
     toast('Favicon uploaded'+(icons.apple?' — tab, Android, and iPhone sizes generated':'')+' ✓','ok');
@@ -11488,7 +11491,7 @@ async function uploadFavicon(file){
 async function faviconRemove(){
   if(!(await uiConfirm('Clear the favicon from all pages?', 'Clear favicon', 'Clear favicon'))) return;
   _site.favicon=''; _site.faviconIcons={}; _site.faviconVer=0;
-  try{ await apiCall('write_file',{path:'data/site.json',content:JSON.stringify(_site,null,2)}); }catch(e){}
+  try{ await apiCall('write_file',{path:'data/site.json',content:siteJsonText()}); }catch(e){}
   faviconRender();
   await faviconApplyAll(true);   // strip it from every page in one step
 }
@@ -12315,9 +12318,17 @@ function rcInjectIntoHtml(html){
     head.appendChild(boot);
     // Load Google's v3 script for the badge — but only if the page doesn't
     // already carry one (a placed form injects its own), to avoid a double load.
+    // It loads on the visitor's first scroll, tap, key press, focus or mouse move,
+    // not with the page: it is a large script, and nothing needs it before
+    // someone reaches a form. A form sent before it arrives goes through
+    // unverified, the same as when Google can't be reached (cmsVerifyRecaptcha).
     if(!doc.querySelector('script[src*="recaptcha/api.js"]')){
-      const s=doc.createElement('script'); s.setAttribute('data-fourge-rc',''); s.async=true; s.defer=true;
-      s.src='https://www.google.com/recaptcha/api.js?render='+encodeURIComponent(key);
+      const s=doc.createElement('script'); s.setAttribute('data-fourge-rc','');
+      s.textContent='(function(){var u='+JSON.stringify('https://www.google.com/recaptcha/api.js?render='+encodeURIComponent(key))
+        +',ev=["scroll","pointerdown","touchstart","keydown","mousemove","focusin"],done=0;'
+        +'function go(){if(done)return;done=1;ev.forEach(function(e){removeEventListener(e,go,true);});'
+        +'var s=document.createElement("script");s.src=u;s.async=true;document.head.appendChild(s);}'
+        +'ev.forEach(function(e){addEventListener(e,go,{capture:true,passive:true});});})();';
       head.appendChild(s);
     }
   }
@@ -12341,6 +12352,13 @@ async function rcApplyAll(silent){
 }
 
 // ── PLUGINS ───────────────────────────────────
+// data/site.json as it is written. That file is public (every page loads it), so
+// the captcha secrets never go in it: they live in the server's secret store
+// (set_secret recaptcha_secret / hcaptcha_secret). A copy an older version left
+// in memory is not written back; the server moves any it still finds on disk.
+function siteJsonText(){
+  return JSON.stringify(_site,function(k,v){ return (k==='secret'&&_site&&(this===_site.recaptcha||this===_site.hcaptcha))?undefined:v; },2);
+}
 async function saveSiteInfo(){
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
   const prevWebsite=String(_site.website||'');
@@ -12374,7 +12392,7 @@ async function saveSiteInfo(){
   // Site-wide custom CSS — same guard: only when the Design tab has been rendered.
   if(document.getElementById('si-customcss')){ const css=document.getElementById('si-customcss').value; if(css.trim()) _site.customCss=css; else delete _site.customCss; }
 
-  const json=JSON.stringify(_site,null,2);
+  const json=siteJsonText();
   let savedLocal=false, savedGH=false;
 
   // 1. Save to server via api.php (works without GitHub). The server mirrors
@@ -12461,7 +12479,7 @@ async function gaRefreshCredStatus(){
 // ── SETTINGS PERSISTENCE (writes only the analytics key — never touches
 //    other site fields, unlike saveSiteInfo which reads Design-panel inputs) ──
 async function gaPersistSite(){
-  const json=JSON.stringify(_site,null,2);
+  const json=siteJsonText();
   const{url,token}=getApiCfg();
   let saved=false, wd=null;
   if(url&&token){ try{ wd=await apiCall('write_file',{path:'data/site.json',content:json}); saved=true; }catch(e){} }
@@ -13227,7 +13245,8 @@ function renderPlugins(){
 // Where each legacy preset now lives in Analytics → Custom Code.
 const PLUG_PRESET_HOME={'Facebook Pixel':'Marketing → Header','Custom CSS':'Functional → Header (wrap it in a &lt;style&gt; tag)','Custom JavaScript':'Functional → Body'};
 // The reCAPTCHA add-on lives here in Plugins (its home) instead of buried in Site
-// Foundry. Keys are stored server-side in site.json (saveRecaptcha → saveSiteInfo);
+// Foundry. The site key is in site.json (public by design); the secret is in the
+// server's secret store (saveRecaptcha → set_secret recaptcha_secret);
 // api.php verifies submissions; renderFormHtml injects the widget into every form
 // while enabled. This card is just the on/off + key-configuration surface.
 function recaptchaAddonHtml(){
@@ -13339,11 +13358,12 @@ async function saveHcaptcha(){
   const siteKey=document.getElementById('s-hc-site')?.value.trim()||'';
   const secret=document.getElementById('s-hc-secret')?.value.trim()||'';
   if(!_site.hcaptcha) _site.hcaptcha={};
-  _site.hcaptcha.siteKey=siteKey;
-  if(secret) _site.hcaptcha.secret=secret;
-  _site.hcaptcha.hasSecret=!!(secret||_site.hcaptcha.secret);
-  _site.hcaptcha.enabled=!!siteKey;
   try{
+    // The secret goes to the server's secret store, never into site.json (public).
+    if(secret) await apiCall('set_secret',{name:'hcaptcha_secret',value:secret});
+    _site.hcaptcha.siteKey=siteKey;
+    _site.hcaptcha.hasSecret=!!(secret||_site.hcaptcha.hasSecret||_site.hcaptcha.secret);
+    _site.hcaptcha.enabled=!!siteKey;
     await saveSiteInfo();
     const hcSec=document.getElementById('s-hc-secret');if(hcSec){hcSec.value='';hcSec.placeholder='Secret saved on server';}
     if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
@@ -13742,13 +13762,14 @@ async function saveRecaptcha(){
   const thrRaw=parseFloat(document.getElementById('s-rc-threshold')?.value);
   const threshold=isFinite(thrRaw)?Math.max(0,Math.min(1,thrRaw)):0.5;
   if(!_site.recaptcha) _site.recaptcha={};
-  _site.recaptcha.siteKey=siteKey;
-  if(secret) _site.recaptcha.secret=secret;          // stored in site.json (server-side file)
-  _site.recaptcha.hasSecret=!!(secret||_site.recaptcha.secret);
-  _site.recaptcha.enabled=!!siteKey;
-  _site.recaptcha.version=version;
-  _site.recaptcha.threshold=threshold;               // server enforces this for v3 scores
   try{
+    // The secret goes to the server's secret store, never into site.json (public).
+    if(secret) await apiCall('set_secret',{name:'recaptcha_secret',value:secret});
+    _site.recaptcha.siteKey=siteKey;
+    _site.recaptcha.hasSecret=!!(secret||_site.recaptcha.hasSecret||_site.recaptcha.secret);
+    _site.recaptcha.enabled=!!siteKey;
+    _site.recaptcha.version=version;
+    _site.recaptcha.threshold=threshold;               // server enforces this for v3 scores
     await saveSiteInfo();
     const rcSec=document.getElementById('s-rc-secret');if(rcSec){rcSec.value='';rcSec.placeholder='Secret saved on server';}
     if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();  // refresh the add-on card (badge/state)
@@ -15140,7 +15161,7 @@ async function typographyApplyAll(){
   if(ty) _site.typography=ty; else delete _site.typography;
   const hs=document.getElementById('sh-h1-size')?siReadHeadings():(_site.headingStyles||{});
   if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }
   catch(e){ toast('Could not save the site settings: '+e.message,'err'); return; }
   if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList();
@@ -15248,7 +15269,7 @@ async function headingsApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
   const hs=siReadHeadings();
   if(Object.keys(hs).length) _site.headingStyles=hs; else delete _site.headingStyles;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }catch(e){}
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }catch(e){}
   if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList(); if(!pages.length){ toast('No pages found','err'); return; }
   const st=document.getElementById('si-headings-status'); if(st) st.textContent='Applying…';
@@ -15269,7 +15290,7 @@ async function customCssApplyAll(){
   if(!canCallApi()){ toast('Sign in again to apply','err'); return; }
   const css=document.getElementById('si-customcss')?.value||'';
   if(css.trim()) _site.customCss=css; else delete _site.customCss;
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }
   catch(e){ toast('Could not save the site settings: '+e.message,'err'); return; }
   if(!Object.keys(_pages).length) await loadPages();
   const pages=getPageList();
@@ -17354,7 +17375,7 @@ async function siteCssSaveFile(s){
 async function siteCssSaveSite(s){
   const ta=document.getElementById('si-customcss'); if(ta) ta.value=s.text;          // keep the Design tab in step
   if(String(s.text).trim()) _site.customCss=s.text; else delete _site.customCss;
-  const json=JSON.stringify(_site,null,2);
+  const json=siteJsonText();
   let wd=null; try{ wd=await apiCall('write_file',{path:F_SITE,content:json}); }catch(e){ throw new Error('could not save site.json: '+e.message); }
   try{ if(typeof ghMirror==='function') await ghMirror(F_SITE,json,'Fourge: site css',{serverResult:wd&&wd.gh}); }catch(e){}
   if(!Object.keys(_pages).length){ try{ await loadPages(); }catch(e){} }
@@ -19620,7 +19641,7 @@ async function createNewPage(){
       if(!(await savePagesJson())) throw new Error('Could not save pages.json');
       try{
         if(!_site.nav) _site.nav=[];
-        if(!_site.nav.find(n=>n.id===id)){ _site.nav.push({id,label:title,file}); await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+        if(!_site.nav.find(n=>n.id===id)){ _site.nav.push({id,label:title,file}); await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }
       }catch(e){ console.warn('Nav update failed:',e.message); }
     } else {
       const r=await ghWrite(F_PAGES,JSON.stringify(_pages,null,2),_pagesSHA,'Fourge: add page "'+title+'"');
@@ -19670,7 +19691,7 @@ async function saveTplRepo(){
   _site.update.repo=v; _site.update.mode='auto';
   if(!canCallApi()){ toast('Sign in again to save','err'); return; }
   try{
-    await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)});
+    await apiCall('write_file',{path:F_SITE,content:siteJsonText()});
     toast('CMS repo saved site-wide','ok');
   }catch(e){ toast('Save failed: '+e.message,'err'); }
 }
@@ -19836,7 +19857,7 @@ function renderManagePages(){
 }
 async function persistHiddenPages(){
   if(!canCallApi()){ toast('Sign in again to save','err'); return; }
-  try{ await apiCall('write_file',{path:F_SITE,content:JSON.stringify(_site,null,2)}); }
+  try{ await apiCall('write_file',{path:F_SITE,content:siteJsonText()}); }
   catch(e){ toast('Save failed: '+e.message,'err'); }
 }
 async function removePageFromCMS(path){

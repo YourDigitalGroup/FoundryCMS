@@ -355,6 +355,12 @@ function fourgeSecretPolicy() {
         'ai_endpoint_url'   => 4,
         'ai_endpoint_key'   => 4,
         'ai_endpoint_model' => 4,
+        // Form captcha secret keys — Admin and above, the people who manage
+        // Plugins. They used to sit in data/site.json, which every visitor can
+        // download; the public site key stays there, the secret lives here
+        // (cmsCaptchaSecret / fourgeCaptchaSecretsOut in api.php).
+        'recaptcha_secret' => 2,
+        'hcaptcha_secret'  => 2,
     ];
 }
 

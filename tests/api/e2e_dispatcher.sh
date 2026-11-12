@@ -607,6 +607,89 @@ call "send_form with an empty to (a page-block form on a site with no Notify Ema
 ans 'assert d.get("ok") is True and d.get("stored") is True and "no email" in d.get("note",""), d' && [ ! -s "$SMLOG" ] && chk 0 "an empty \"to\" still stores the entry without emailing, as before" || chk 1 "empty to — got: $(printf '%s' "$LAST" | head -c 200) / relay: $(head -c 200 "$SMLOG")"
 notify_email ''
 rm -f "$S/send.php"
+
+# Captcha secret keys (1.14.156): they were saved into data/site.json, which every visitor can download. The
+# encrypted secret store holds them now; site.json keeps the public site key and hasSecret
+cp "$S/data/site.json" "$S.sitebak.json"
+secret_of(){ dbq 'echo (string)fourgeGetSecret($pdo, "'"$1"'");'; }
+siteput(){ python3 - "$S/data/site.json" "$1" <<'PY'
+import json,sys
+p=sys.argv[1]; d=json.load(open(p)); exec(sys.argv[2]); open(p,'w').write(json.dumps(d,indent=2))
+PY
+}
+sitejs(){ python3 -c "import json,sys; d=json.load(open(sys.argv[1])); exec(sys.argv[2]); print(json.dumps(json.dumps(d,indent=2)))" "$S/data/site.json" "$1"; }
+siteok(){ python3 -c "import json,sys; d=json.load(open(sys.argv[1])); exec(sys.argv[2])" "$S/data/site.json" "$1"; }
+call "write_file data/site.json carrying captcha secrets (as an older admin page saves it)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$(sitejs "d['recaptcha']={'enabled':True,'siteKey':'e2e-site-key','secret':'e2e-rc-secret-1','version':'v2'}; d['hcaptcha']={'enabled':False,'siteKey':'','secret':'e2e-hc-secret-1'}")}"
+siteok "assert 'secret' not in d['recaptcha'] and 'secret' not in d['hcaptcha'] and d['recaptcha']['hasSecret'] is True and d['hcaptcha']['hasSecret'] is True and d['recaptcha']['siteKey']=='e2e-site-key', d['recaptcha']" && [ "$(secret_of recaptcha_secret)" = "e2e-rc-secret-1" ] && [ "$(secret_of hcaptcha_secret)" = "e2e-hc-secret-1" ] && ! curl -s "http://127.0.0.1:$PORT/data/site.json" | grep -q 'e2e-rc-secret' && chk 0 "captcha secrets saved into site.json go to the server's secret store instead; the public site.json keeps the site key and hasSecret" || chk 1 "captcha secrets out of site.json — file: $(python3 -c "import json; print(json.load(open('$S/data/site.json')).get('recaptcha'))") / store: $(secret_of recaptcha_secret)"
+call "write_file data/site.json without a secret (the admin now)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$(sitejs "d['tagline']='e2e tagline'")}"
+[ "$(secret_of recaptcha_secret)" = "e2e-rc-secret-1" ] && siteok "assert d['recaptcha']['hasSecret'] is True and 'secret' not in d['recaptcha']" && chk 0 "…a save without the secret leaves the stored one in place" || chk 1 "save without secret — store: $(secret_of recaptcha_secret)"
+call "write_file data/site.json with a new secret (an older admin page)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$(sitejs "d['recaptcha']['secret']='e2e-rc-secret-2'")}"
+[ "$(secret_of recaptcha_secret)" = "e2e-rc-secret-2" ] && siteok "assert 'secret' not in d['recaptcha']" && chk 0 "…a secret saved later replaces the stored one" || chk 1 "newer secret — store: $(secret_of recaptcha_secret)"
+call "send_form (reCAPTCHA on; its secret only in the store)" '{"action":"send_form","subject":"rc check","fields":{"Name":"RC Probe 7731"},"siteUrl":"https://e2e-site.example"}'
+python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1])); es=list(d.values()) if isinstance(d,dict) else d
+e=[x for x in es if 'RC Probe 7731' in json.dumps(x)]
+assert e and e[-1].get('recaptcha',{}).get('outcome')=='allowed_unverified', e
+" "$S/data/entries.json" && chk 0 "…and forms are still checked with it (no token here, so the entry is let through and marked, as before)" || chk 1 "reCAPTCHA check with the stored secret — entries: $(tail -c 300 "$S/data/entries.json")"
+echo '{"auto":false}' > "$S/data/ai_autofix.json"   # sign-in below: keep the daily AI auto-fix out of this
+dbq '$pdo->prepare("DELETE FROM secrets WHERE name=?")->execute(["recaptcha_secret"]);'
+siteput "d['recaptcha']['secret']='e2e-rc-legacy'"
+call "install_clean_urls (a site.json from before this release, its secret still in it)" '{"action":"install_clean_urls"}'
+ans 'assert d.get("captchaSecrets")=="moved", d' && [ "$(secret_of recaptcha_secret)" = "e2e-rc-legacy" ] && siteok "assert 'secret' not in d['recaptcha'] and d['recaptcha']['hasSecret'] is True" && chk 0 "the sign-in self-heal moves a secret still in site.json into the store (captchaSecrets: moved)" || chk 1 "sign-in move — got: $(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("captchaSecrets"))' 2>/dev/null) / store: $(secret_of recaptcha_secret)"
+siteput "d['recaptcha']['secret']='e2e-rc-stale'"
+call "install_clean_urls (an old site.json a deploy put back)" '{"action":"install_clean_urls"}'
+ans 'assert d.get("captchaSecrets")=="moved", d' && [ "$(secret_of recaptcha_secret)" = "e2e-rc-legacy" ] && siteok "assert 'secret' not in d['recaptcha']" && chk 0 "…and an old copy put back later is taken out without replacing the stored secret" || chk 1 "stale copy — store: $(secret_of recaptcha_secret)"
+call "install_clean_urls (nothing left to move)" '{"action":"install_clean_urls"}'
+ans 'assert d.get("captchaSecrets")=="none", d' && chk 0 "…after which there is nothing to move (captchaSecrets: none)" || chk 1 "captchaSecrets none — got: $(printf '%s' "$LAST" | head -c 200)"
+dbq '$pdo->prepare("DELETE FROM secrets WHERE name IN (?,?)")->execute(["recaptcha_secret","hcaptcha_secret"]);'
+cp "$S.sitebak.json" "$S/data/site.json"
+
+# Scheduled package content (1.14.156): going live flipped only the flag, so each page kept its noindex
+# stamp and stayed out of sitemap.xml until someone saved SEO
+for f in pages.json seo.json posts.json; do if [ -f "$S/data/$f" ]; then cp "$S/data/$f" "$S.pkgbak.$f"; else rm -f "$S.pkgbak.$f"; fi; done
+siteput "d['website']='https://e2e-site.example'"
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://e2e-site.example/</loc></url>\n</urlset>\n' > "$S/sitemap.xml"
+python3 - "$S.pkg2.json" <<'PY'
+import json,sys
+body='<p>Classroom and road training for professional drivers, with placement help once you finish.</p>'
+it=lambda **k: dict({'body_html':body,'approved':True,'qa':[],'status':'schedule','schedule':'2099-01-01T15:00:00Z'}, **k)
+pkg={'format':'ydg-deploy-package','format_version':1,'site':'https://e2e-site.example','manual_tasks':[],'content':[
+  it(external_id='e2e-due',title='Due Page',post_type='page',slug='/due-page'),
+  it(external_id='e2e-stuck',title='Stuck Page',post_type='page',slug='/stuck-page'),
+  it(external_id='e2e-hidden',title='Hidden Page',post_type='page',slug='/hidden-page'),
+  it(external_id='e2e-duepost',title='Due Post',post_type='post',slug='/due-post')]}
+json.dump({'action':'seo_package','mode':'apply','package':pkg},open(sys.argv[1],'w'))
+PY
+call "seo_package apply (three pages and a post, scheduled for 2099)" "$(cat "$S.pkg2.json")"
+grep -q '<meta name="robots" content="noindex,follow" data-fourge-seo>' "$S/due-page.html" && chk 0 "(setup) a scheduled page waits stamped noindex" || chk 1 "setup: due-page robots — $(grep -o '<meta name="robots"[^>]*>' "$S/due-page.html" 2>&1)"
+# time passes: Due Page, Hidden Page (marked noindex in SEO) and Due Post come due; Stuck Page went live under the old code
+python3 - "$S" <<'PY'
+import json,sys; S=sys.argv[1]
+pg=json.load(open(S+'/data/pages.json')); seo=json.load(open(S+'/data/seo.json'))
+for k,v in pg.items():
+    if not isinstance(v,dict): continue
+    if v.get('extId') in ('e2e-due','e2e-hidden'): v['publishAt']='2020-01-01T00:00:00+00:00'
+    if v.get('extId')=='e2e-stuck': v['draft']=False; v.pop('publishAt',None)
+    if v.get('extId')=='e2e-hidden': seo.setdefault(k,{})['noindex']=True
+json.dump(pg,open(S+'/data/pages.json','w')); json.dump(seo,open(S+'/data/seo.json','w'))
+po=json.load(open(S+'/data/posts.json'))
+for p in po:
+    if isinstance(p,dict) and p.get('extId')=='e2e-duepost': p['publishAt']='2020-01-01T00:00:00+00:00'
+json.dump(po,open(S+'/data/posts.json','w'))
+PY
+call "seo_pkg_tick (their time has come)" '{"action":"seo_pkg_tick"}'
+robots(){ grep -o '<meta name="robots"[^>]*data-fourge-seo>' "$S/$1" | head -1; }   # the tag Fourge stamped
+python3 -c "import json,sys; pg=json.load(open(sys.argv[1])); r=[v for v in pg.values() if isinstance(v,dict) and v.get('extId')=='e2e-due'][0]; assert r.get('draft') is False and 'publishAt' not in r, r" "$S/data/pages.json" && [ "$(robots due-page.html)" = '<meta name="robots" content="index,follow" data-fourge-seo>' ] && grep -q '<loc>https://e2e-site.example/due-page</loc><lastmod>' "$S/sitemap.xml" && chk 0 "a scheduled page that comes due is live, indexable (robots index) and in sitemap.xml" || chk 1 "due page — robots: $(robots due-page.html) / sitemap: $(tr '\n' ' ' < "$S/sitemap.xml" | head -c 500)"
+grep -q '<loc>https://e2e-site.example/posts.html?p=due-post</loc>' "$S/sitemap.xml" && chk 0 "…a scheduled post that comes due joins sitemap.xml too" || chk 1 "due post — sitemap: $(tr '\n' ' ' < "$S/sitemap.xml" | head -c 500)"
+[ "$(robots stuck-page.html)" = '<meta name="robots" content="index,follow" data-fourge-seo>' ] && grep -q '<loc>https://e2e-site.example/stuck-page</loc>' "$S/sitemap.xml" && chk 0 "…a page that went live before this fix, still stamped noindex, is repaired the same way" || chk 1 "stuck page — robots: $(robots stuck-page.html)"
+[ "$(robots hidden-page.html)" = '<meta name="robots" content="noindex,follow" data-fourge-seo>' ] && ! grep -q 'hidden-page' "$S/sitemap.xml" && chk 0 "…a page marked noindex in SEO stays noindex and out of the sitemap when it goes live" || chk 1 "hidden page — robots: $(robots hidden-page.html)"
+SM1=$(md5sum < "$S/sitemap.xml")
+call "seo_pkg_tick (again)" '{"action":"seo_pkg_tick"}'
+[ "$(md5sum < "$S/sitemap.xml")" = "$SM1" ] && [ "$(grep -c '<loc>https://e2e-site.example/due-page</loc>' "$S/sitemap.xml")" = 1 ] && grep -q '<loc>https://e2e-site.example/</loc>' "$S/sitemap.xml" && chk 0 "…another tick changes nothing: each URL once, and the sitemap's other entries kept" || chk 1 "second tick — sitemap: $(tr '\n' ' ' < "$S/sitemap.xml" | head -c 600)"
+for f in pages.json seo.json posts.json; do if [ -f "$S.pkgbak.$f" ]; then mv "$S.pkgbak.$f" "$S/data/$f"; else rm -f "$S/data/$f"; fi; done
+rm -f "$S/due-page.html" "$S/stuck-page.html" "$S/hidden-page.html" "$S/sitemap.xml" "$S/data/seo-package-report.json" "$S/data/ai_autofix.json" "$S.pkg2.json"
+cp "$S.sitebak.json" "$S/data/site.json"; rm -f "$S.sitebak.json"
 call "delete_file data/chat.json" '{"action":"delete_file","path":"data/chat.json"}'
 call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
 

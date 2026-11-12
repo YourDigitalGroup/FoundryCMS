@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.155');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.156');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -648,6 +648,7 @@ function cmsWriteFile($body) {
     // data/site.json from the admin: keep the server's own Blog Sync bookkeeping (see fourgeBlogSyncMergeSiteBookkeeping).
     if (ltrim(str_replace('\\', '/', (string)$relPath), '/') === 'data/site.json') { try { $content = fourgeBlogSyncMergeSiteBookkeeping($content, $dest); } catch (Throwable $e) {} }
     if (ltrim(str_replace('\\', '/', (string)$relPath), '/') === 'data/site.json') { try { $content = fourgeSiteJsonKeepWebsite($content); } catch (Throwable $e) {} }   // and never let a stale copy put a dev link back as the Website URL
+    if (ltrim(str_replace('\\', '/', (string)$relPath), '/') === 'data/site.json') { try { $content = fourgeSiteJsonSecretsOut($content); } catch (Throwable $e) {} }   // and keep captcha secrets out of the public file
     $guard = cmsWriteFilePreflight($dest, $content);
     if ($guard !== '') { http_response_code(409); echo json_encode(['error' => $guard]); return; }
     // Atomic write: the whole file lands under a temp name first and is renamed
@@ -854,17 +855,83 @@ function cmsStoreEntry($formId, $fields, $siteUrl, $recaptcha = null) {
     } catch (Exception $e) { /* non-fatal */ }
 }
 
-function cmsRecaptchaSecret() {
-    // Read the secret from data/site.json (server-side only; never exposed to client)
+// The reCAPTCHA / hCaptcha secret keys. They used to sit in data/site.json, which
+// every visitor can download (the public site loads it), so they now live in the
+// encrypted secret store as recaptcha_secret / hcaptcha_secret; site.json keeps
+// the public site key and hasSecret. A secret still in site.json is moved out the
+// first time the server sees it (fourgeCaptchaSecretsOut: when the file is
+// written, and at sign-in) and is read from there until then, so a site's forms
+// keep their protection throughout. $kind: 'recaptcha' | 'hcaptcha'.
+function cmsCaptchaSecret($kind) {
+    try { $v = trim((string)fourgeGetSecret(fourgeDb(), $kind . '_secret')); if ($v !== '') return $v; } catch (Throwable $e) {}
+    $site = json_decode((string)@file_get_contents(__DIR__ . '/../data/site.json'), true);
+    return is_array($site) ? trim((string)($site[$kind]['secret'] ?? '')) : '';
+}
+// Store one captcha secret found in site.json. $fresh: someone just saved it (an
+// older admin page still writes it into site.json), so it replaces what is
+// stored; otherwise it is an old copy (a site.json from before this release, or
+// one a deploy put back) and only fills an empty store. True when the store holds
+// a secret afterwards, so the copy in the public file can go.
+function fourgeCaptchaStore($kind, $secret, $fresh) {
+    $name = $kind . '_secret';
     try {
-        $file = __DIR__ . '/../data/site.json';
-        if (!file_exists($file)) return '';
-        $site = json_decode(file_get_contents($file), true);
-        if (isset($site['recaptcha']['enabled']) && $site['recaptcha']['enabled'] && !empty($site['recaptcha']['secret'])) {
-            return $site['recaptcha']['secret'];
+        $pdo = fourgeDb();
+        if ($fresh || trim((string)fourgeGetSecret($pdo, $name)) === '') fourgeSetSecret($pdo, $name, $secret, 'site.json');
+        return trim((string)fourgeGetSecret($pdo, $name)) !== '';
+    } catch (Throwable $e) { return false; }
+}
+// Take the captcha secrets out of a site.json array. $disk: the file on disk when
+// $site is about to replace it, so a secret only the old file still has is moved
+// rather than dropped with it. $inFresh: whether a secret in $site was just saved.
+// A secret the store refuses stays in the file: a form never loses its protection.
+function fourgeCaptchaSecretsOut(array $site, $disk = null, $inFresh = true, &$changed = false) {
+    $changed = false;
+    foreach (['recaptcha', 'hcaptcha'] as $kind) {
+        $in  = (is_array($site[$kind] ?? null) && array_key_exists('secret', $site[$kind])) ? trim((string)$site[$kind]['secret']) : null;
+        $old = (is_array($disk) && is_array($disk[$kind] ?? null)) ? trim((string)($disk[$kind]['secret'] ?? '')) : '';
+        if ($in === null && $old === '') continue;
+        if ($in !== null && $in !== '') $ok = fourgeCaptchaStore($kind, $in, $inFresh);
+        elseif ($old !== '')            $ok = fourgeCaptchaStore($kind, $old, false);
+        else                            $ok = true;   // an empty "secret" field: nothing to keep
+        if ($ok) {
+            if (is_array($site[$kind] ?? null)) {
+                unset($site[$kind]['secret']);
+                if (($in !== null && $in !== '') || $old !== '') $site[$kind]['hasSecret'] = true;
+                $changed = true;
+            }
+        } elseif (($in === null || $in === '') && $old !== '') {
+            if (!is_array($site[$kind] ?? null)) $site[$kind] = [];
+            $site[$kind]['secret'] = $old;   // the store refused it: keep the old copy
+            $changed = true;
         }
-    } catch (Exception $e) {}
-    return '';
+    }
+    return $site;
+}
+// The same for site.json content on its way to disk (write_file).
+function fourgeSiteJsonSecretsOut($content) {
+    $in = json_decode((string)$content, true);
+    if (!is_array($in)) return $content;
+    $disk = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+    $out = fourgeCaptchaSecretsOut($in, is_array($disk) ? $disk : null, true, $changed);
+    return $changed ? json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : $content;
+}
+// Sign-in self-heal: move a secret an older admin left in site.json. Answers
+// 'none' (nothing there), 'moved', or 'kept' (the secret store refused it).
+function fourgeMoveCaptchaSecrets() {
+    $f = PUBLIC_HTML . '/data/site.json';
+    $site = is_file($f) ? json_decode((string)@file_get_contents($f), true) : null;
+    if (!is_array($site)) return 'none';
+    $has = false;
+    foreach (['recaptcha', 'hcaptcha'] as $kind) if (is_array($site[$kind] ?? null) && array_key_exists('secret', $site[$kind])) $has = true;
+    if (!$has) return 'none';
+    $out = fourgeCaptchaSecretsOut($site, null, false, $changed);
+    foreach (['recaptcha', 'hcaptcha'] as $kind) if (is_array($out[$kind] ?? null) && array_key_exists('secret', $out[$kind])) return 'kept';
+    return fourgeSitePut($f, json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: captcha secret moved out of the public site.json') !== false ? 'moved' : 'kept';
+}
+function cmsRecaptchaSecret() {
+    $site = json_decode((string)@file_get_contents(__DIR__ . '/../data/site.json'), true);
+    if (!is_array($site) || empty($site['recaptcha']['enabled'])) return '';
+    return cmsCaptchaSecret('recaptcha');
 }
 
 // The v3 score threshold from data/site.json (default 0.5). v2 ignores it.
@@ -967,15 +1034,9 @@ function cmsVerifyRecaptcha($secret, $token, $threshold = 0.5) {
 // hCaptcha: an alternative to reCAPTCHA (Plugins → hCaptcha), same site-wide
 // on/off + two-key shape as reCAPTCHA above, read straight from data/site.json.
 function cmsHcaptchaSecret() {
-    try {
-        $file = __DIR__ . '/../data/site.json';
-        if (!file_exists($file)) return '';
-        $site = json_decode(file_get_contents($file), true);
-        if (!empty($site['hcaptcha']['enabled']) && !empty($site['hcaptcha']['secret'])) {
-            return $site['hcaptcha']['secret'];
-        }
-    } catch (Exception $e) {}
-    return '';
+    $site = json_decode((string)@file_get_contents(__DIR__ . '/../data/site.json'), true);
+    if (!is_array($site) || empty($site['hcaptcha']['enabled'])) return '';
+    return cmsCaptchaSecret('hcaptcha');
 }
 // hCaptcha's checkbox challenge has no score to threshold against (unlike
 // reCAPTCHA v3) — same non-losing philosophy as reCAPTCHA v2: a successful
@@ -6601,6 +6662,9 @@ function fourgeApiInstallCleanUrls($me) {
     // A copy of the Fleet Dashboard that came with the repository is not part of the site.
     $fleetCopy = 'absent';
     try { $fleetCopy = fourgeRemoveStrayFleetDashboard(); } catch (Throwable $e) { $fleetCopy = 'error'; }
+    // A captcha secret an older admin saved into the public site.json moves to the secret store.
+    $captchaSecrets = 'none';
+    try { $captchaSecrets = fourgeMoveCaptchaSecrets(); } catch (Throwable $e) { $captchaSecrets = 'error'; }
     // The four safe security headers, and an llms.txt if the site has none.
     $hdr = false; $llms = false;
     try { $hdr    = fourgeWriteDefaultHeaders();   } catch (Throwable $e) { $hdr = false; }
@@ -6620,7 +6684,7 @@ function fourgeApiInstallCleanUrls($me) {
     echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'websiteAuto' => $websiteAuto, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
         'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
-        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'fleetDashboardCopy' => $fleetCopy]);
+        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'fleetDashboardCopy' => $fleetCopy, 'captchaSecrets' => $captchaSecrets]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
@@ -6670,6 +6734,7 @@ function cmsPkgReadJson($name, $fallback) {
     return ($j === null) ? $fallback : $j;
 }
 function cmsPkgWriteJson($name, $data) {
+    if ($name === 'site.json' && is_array($data)) { try { $disk = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true); $data = fourgeCaptchaSecretsOut($data, is_array($disk) ? $disk : null, false); } catch (Throwable $e) {} }   // never a captcha secret in the public file
     $dir = PUBLIC_HTML . '/data';
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
     return fourgeSitePut(cmsPkgDataPath($name), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), 'Fourge: SEO package data') !== false;
@@ -7062,7 +7127,7 @@ function cmsPkgPageFromShell($title, $bodyHtml, $h1 = '') {
 // also self-publish in the public runtime (it treats publishAt<=now as live);
 // this is what flips the stored record and handles page-type items.
 function cmsPkgTick($dry = false) {
-    $now = time(); $done = [];
+    $now = time(); $done = []; $live = [];
     $posts = cmsPkgReadJson('posts.json', []);
     $postsDirty = false;
     if (is_array($posts)) {
@@ -7073,6 +7138,7 @@ function cmsPkgTick($dry = false) {
             $posts[$i]['published'] = true; unset($posts[$i]['publishAt']);
             $postsDirty = true;
             $done[] = ['type' => 'post', 'title' => (string)($p['title'] ?? '')];
+            $live[] = ['post', $posts[$i]];
         }
     }
     $pages = cmsPkgReadJson('pages.json', []);
@@ -7085,13 +7151,108 @@ function cmsPkgTick($dry = false) {
             $pages[$pid]['draft'] = false; unset($pages[$pid]['publishAt']);
             $pagesDirty = true;
             $done[] = ['type' => 'page', 'title' => (string)($rec['title'] ?? $pid)];
+            $live[] = ['page', $pid, $pages[$pid]];
         }
     }
     if (!$dry) {
         if ($postsDirty) cmsPkgWriteJson('posts.json', $posts);
         if ($pagesDirty) cmsPkgWriteJson('pages.json', $pages);
+        // Going live has to reach the page itself and the sitemap too: the flag
+        // alone left each page stamped noindex and out of sitemap.xml, so it was
+        // "published" but hidden from search engines until someone saved SEO.
+        try { cmsPkgGoneLive($live); } catch (Throwable $e) {}
+        try { cmsPkgReleaseStuck(); } catch (Throwable $e) {}
     }
     return $done;
+}
+// Flip the robots tag Fourge stamped on a page (data-fourge-seo, or the admin's
+// data-fourge-canon) from noindex to index — unless seo.json marks the page
+// noindex on purpose. A robots tag someone wrote by hand is never touched.
+function cmsReleaseRobots($html, $srec) {
+    if (is_array($srec) && !empty($srec['noindex'])) return (string)$html;
+    return (string)preg_replace_callback('~<meta\b[^>]*>~i', function ($m) {
+        $tag = $m[0];
+        if (!preg_match('~\bname\s*=\s*["\']robots["\']~i', $tag) || !preg_match('~\bdata-fourge-(?:seo|canon)\b~i', $tag)) return $tag;
+        return preg_replace('~(\bcontent\s*=\s*["\'][^"\']*?)\bnoindex\b~i', '$1index', $tag, 1);
+    }, (string)$html);
+}
+// Add URLs that just went live to sitemap.xml. The admin rebuilds the whole file
+// on Save SEO; until then a page published on schedule was missing from it. Only
+// a plain <urlset> is touched (a sitemap index, over the URL cap, waits for the
+// next rebuild), and each URL is added once, dated today.
+function cmsSitemapAdd(array $urls) {
+    $f = PUBLIC_HTML . '/sitemap.xml';
+    if (!$urls || !is_file($f)) return 0;
+    $xml = (string)@file_get_contents($f);
+    if (stripos($xml, '<urlset') === false || !preg_match('~</urlset>\s*$~i', $xml)) return 0;
+    $add = ''; $n = 0;
+    foreach (array_unique($urls) as $u) {
+        $loc = str_replace('&', '&amp;', (string)$u);
+        if ($loc === '' || strpos($xml, '<loc>' . $loc . '</loc>') !== false) continue;
+        $add .= '  <url><loc>' . $loc . '</loc><lastmod>' . gmdate('Y-m-d') . '</lastmod></url>' . "\n";
+        $n++;
+    }
+    if (!$n) return 0;
+    $xml = (string)preg_replace('~\n?</urlset>\s*$~i', "\n" . $add . '</urlset>' . "\n", $xml, 1);
+    return fourgeSitePut($f, $xml, 'Fourge: sitemap (scheduled content went live)') !== false ? $n : 0;
+}
+function cmsPkgSiteBase() {
+    $site = cmsPkgReadJson('site.json', []);
+    $base = trim((string)(is_array($site) ? ($site['website'] ?? '') : ''));
+    if ($base !== '' && !preg_match('~^https?://~i', $base)) $base = 'https://' . $base;
+    return rtrim($base, '/');
+}
+// A page's robots tag released (backed up first); returns its public URL, or ''.
+function cmsPkgReleasePage($pid, array $rec, array $seo, $base) {
+    $file = (string)($rec['path'] ?? ($rec['file'] ?? ($pid . '.html')));
+    $abs = PUBLIC_HTML . '/' . ltrim($file, '/');
+    $srec = is_array($seo[$pid] ?? null) ? $seo[$pid] : [];
+    if (!empty($srec['noindex'])) return '';
+    if (is_file($abs)) {
+        $html = (string)@file_get_contents($abs);
+        $out = cmsReleaseRobots($html, $srec);
+        if ($html !== '' && $out !== $html) { cmsPkgBackup($file); fourgeSitePut($abs, $out, 'Fourge: scheduled page went live'); }
+    }
+    return cmsPkgPageUrl($base, $file);
+}
+// What cmsPkgTick just released: pages get their robots tag flipped, and pages and
+// posts are added to sitemap.xml.
+function cmsPkgGoneLive(array $live) {
+    if (!$live) return 0;
+    $base = cmsPkgSiteBase();
+    $seo = cmsPkgReadJson('seo.json', []); if (!is_array($seo)) $seo = [];
+    $urls = [];
+    foreach ($live as $item) {
+        if ($item[0] === 'page') { $u = cmsPkgReleasePage((string)$item[1], (array)$item[2], $seo, $base); if ($u !== '') $urls[] = $u; }
+        elseif ($base !== '') {
+            $p = (array)$item[1];
+            if (!empty($p['path'])) $urls[] = cmsPkgPageUrl($base, (string)$p['path']);
+            elseif (trim((string)($p['slug'] ?? '')) !== '') $urls[] = $base . '/posts.html?p=' . rawurlencode((string)$p['slug']);
+        }
+    }
+    return $base !== '' ? cmsSitemapAdd($urls) : 0;
+}
+// Package pages that went live before that was fixed: live (no draft flag, no
+// schedule), not marked noindex, yet still carrying Fourge's noindex stamp. Each
+// is released the same way. Package pages only (extId) — the ones a schedule
+// stamped. Returns how many were released.
+function cmsPkgReleaseStuck() {
+    $pages = cmsPkgReadJson('pages.json', []);
+    if (!is_array($pages)) return 0;
+    $seo = null; $base = null; $urls = []; $n = 0;
+    foreach ($pages as $pid => $rec) {
+        if (!is_array($rec) || trim((string)($rec['extId'] ?? '')) === '' || !empty($rec['draft']) || !empty($rec['publishAt'])) continue;
+        $file = (string)($rec['path'] ?? ($rec['file'] ?? ''));
+        $abs = PUBLIC_HTML . '/' . ltrim($file, '/');
+        if ($file === '' || !is_file($abs)) continue;
+        $html = (string)@file_get_contents($abs);
+        if (!preg_match('~<meta\b[^>]*name\s*=\s*["\']robots["\'][^>]*noindex[^>]*data-fourge-(?:seo|canon)|<meta\b[^>]*data-fourge-(?:seo|canon)[^>]*name\s*=\s*["\']robots["\'][^>]*noindex~i', $html)) continue;
+        if ($seo === null) { $seo = cmsPkgReadJson('seo.json', []); if (!is_array($seo)) $seo = []; $base = cmsPkgSiteBase(); }
+        $u = cmsPkgReleasePage((string)$pid, $rec, $seo, $base);
+        if ($u !== '') { $urls[] = $u; $n++; }
+    }
+    if ($urls && $base !== '') cmsSitemapAdd($urls);
+    return $n;
 }
 // Session (admin ≥2) OR constant-time Bearer match against the stored key.
 function cmsPkgAuthorized($me, $body) {
