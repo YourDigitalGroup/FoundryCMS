@@ -11,7 +11,9 @@ GHPORT="${E2E_GH_PORT:-8934}"; GHLOG="$SRC/tests/.cache/gh_stub_log.jsonl"; GHST
 GHLPORT="${E2E_GHL_PORT:-8935}"; GHLSTATE="$SRC/tests/.cache/ghl_stub_state.json"
 ANPORT="${E2E_ANTHROPIC_PORT:-8936}"; ANMODE="$SRC/tests/.cache/anthropic_stub_mode"; ANCOUNT="$SRC/tests/.cache/anthropic_stub_count"
 SMPORT="${E2E_SMTP_PORT:-8937}"; SMLOG="$SRC/tests/.cache/smtp_stub.jsonl"
-export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"   # the engine's curl must reach the stub directly
+MKAPORT="${E2E_MARKUP_PORT:-8938}"; MKSTATE="$SRC/tests/.cache/markup_stub_state.json"   # the MarkUp API stand-in (tests/lib/markup_stub.php)
+MKCPORT="${E2E_CLIENT_PORT:-8939}"; S2="$SRC/tests/.cache/e2e_client"                    # a second site: a MarkUp client of the hub below
+export NO_PROXY="127.0.0.1,localhost,.example${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost,.example${no_proxy:+,$no_proxy}"   # the engine's curl must reach the stubs directly
 command -v python3 >/dev/null 2>&1 || { echo "FAIL python3 is required for the dispatcher suite"; exit 1; }
 rm -rf "$S"; mkdir -p "$S"
 # a throwaway copy of the site (never the repo itself): no .git, no tests, no scratch folders
@@ -60,14 +62,33 @@ SMSRV=$!
 # a MarkUp hub signing key for this run: the site trusts its public half through FOURGE_MARKUP_HUB_KEYS
 MKKEYS=$(php -r '$kp=sodium_crypto_sign_keypair(); echo base64_encode(sodium_crypto_sign_secretkey($kp))," ",base64_encode(sodium_crypto_sign_publickey($kp));')
 MKSK="${MKKEYS%% *}"; MKPK="${MKKEYS##* }"
+# MarkUp's API (tests/lib/markup_stub.php) — the engine is pointed at it with FOURGE_MARKUP_API_BASE
+mkdir -p "$S.mkroot"; rm -f "$MKSTATE"
+php -S 127.0.0.1:$MKAPORT -t "$S.mkroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/markup_stub.php" > "$S.mkstub.log" 2>&1 &
+MKASRV=$!
+# A client site of the MarkUp hub: its own copy and database, answering as client-e2e.example. It is given no
+# key: it trusts the hub (the main test site, FOURGE_MARKUP_HUB_URL) by fetching the key the hub publishes.
+rm -rf "$S2"; cp -a "$S" "$S2"; rm -f "$S2"/admin/fourge-e2e.db*
+printf '{"name":"Client E2E","website":"http://client-e2e.example:%s","devHosts":["dev.client-e2e.example"]}' "$MKCPORT" > "$S2/data/site.json"
+python3 - "$S2/hello-client.html" <<'PY'
+import sys
+body=''.join('<p>Paragraph %d about the client, long enough to give the page a real size.</p>\n' % i for i in range(30))
+open(sys.argv[1],'w').write('<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8"><title>Client Page</title></head><body>\n<h1 data-fourge-block="bhead01">Old heading</h1>\n<p data-fourge-block="bpara01">Some paragraph text to change.</p>\n'+body+'</body></html>\n')
+PY
+FOURGE_MARKUP_HUB_URL="http://127.0.0.1:$PORT" FOURGE_PROBE_ALLOW_LOCAL=1 PHP_CLI_SERVER_WORKERS=3 php -S 127.0.0.1:$MKCPORT -t "$S2" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S2.server.log" 2>&1 &
+MKCSRV=$!
 # opcache.revalidate_freq=0: the built-in server caches compiled PHP (opcache.enable_cli does not cover it), and the
 # suite edits config.secret.php mid-run; without it a request within 2 s of an edit still sees the old file.
-FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_ANTHROPIC_API_BASE="http://127.0.0.1:$ANPORT" FOURGE_MARKUP_HUB_KEYS="$MKPK" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_ANTHROPIC_API_BASE="http://127.0.0.1:$ANPORT" FOURGE_MARKUP_HUB_KEYS="$MKPK" \
+FOURGE_MARKUP_HUB_URL="http://127.0.0.1:$PORT" FOURGE_MARKUP_API_BASE="http://127.0.0.1:$MKAPORT/api/v2" FOURGE_PROBE_ALLOW_LOCAL=1 \
+FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1,client-e2e.example:$MKCPORT:127.0.0.1,www.client-e2e.example:$MKCPORT:127.0.0.1,dev.client-e2e.example:$MKCPORT:127.0.0.1,not-fourge.example:$ANPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHLPORT/__state" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$ANPORT/" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$PORT/admin/index.html" && break; sleep 0.2; done
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$MKAPORT/__state" && break; sleep 0.2; done
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$MKCPORT/admin/index.html" && break; sleep 0.2; done
 pass=0; fail=0
 chk(){ if [ "$1" = 0 ]; then echo "ok   $2"; pass=$((pass+1)); else echo "FAIL $2"; fail=$((fail+1)); fi; }
 TOK=""
@@ -800,6 +821,163 @@ mkcall "$(mkreq markup_upload "{\"name\":\"a.png\",\"data_b64\":\"$PNG\"}")"; { 
 cp "$S.mkbak.json" "$S/data/site.json"
 rm -rf "$S/mk-page.html" "$S/mk" "$S/mk-shell.html" "$S/assets/markup" "$S/data/bak/mk-page.html" "$S.mkold.html" "$S.mknew.html" "$S.mkbad.html" "$S.mkbak.json"
 
+# MarkUp hub (1.14.159): this test site is the agency's hub (FOURGE_MARKUP_HUB_URL), MarkUp's API is the stand-in
+# (tests/lib/markup_stub.php, key mk-e2e-key) and the second site on :$MKCPORT is a client that is given no key: it
+# trusts the hub by fetching the public key the hub publishes. Changes are made in the browser (tests/browser/
+# markup_hub.mjs); here, the hub's server side: settings, the webhook, events, sites and pages found on their own,
+# approve / decline / revert on the client site, and MarkUp told.
+mkstub(){ curl -s -X POST -H 'Content-Type: application/json' --data "$2" "http://127.0.0.1:$MKAPORT$1" > /dev/null; }
+mkstate(){ local c="$1"; shift; curl -s "http://127.0.0.1:$MKAPORT/__state" | python3 -c 'import json,sys; s=json.load(sys.stdin); exec(sys.argv[1])' "$c" "$@"; }
+cdbq(){ php -d display_errors=1 -r 'define("PUBLIC_HTML", $argv[1]); require $argv[1]."/admin/db.php"; $pdo=fourgeDb(); eval($argv[2]);' "$S2" "$1"; }
+mkpost(){ local out; out=$(curl -s -w $'\n__STATUS__%{http_code}' -X POST -H 'Content-Type: application/json' --data "$2" "$1"); MKST="${out##*__STATUS__}"; LAST="${out%$'\n'__STATUS__*}"; }
+item_of(){ printf '%s' "$LAST" | python3 -c 'import json,sys; print([i["id"] for i in json.load(sys.stdin)["items"] if i["threadId"]==sys.argv[1]][0])' "$1"; }
+mkstub /__reset '{}'
+TOK="$ARCH_TOK"
+call "markup_hub_status (the hub, before it is set up)" '{"action":"markup_hub_status"}'
+ans 'assert d.get("ok") is True and d.get("isHub") is True and d.get("hasKey") is False and d.get("canSetup") is True, d' && chk 0 "this install is the MarkUp hub (it answers at FOURGE_MARKUP_HUB_URL); not connected yet, and an Architect can set it up" || chk 1 "hub status — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_save with a key MarkUp refuses" '{"action":"markup_hub_save","apiKey":"not-the-key"}'
+ans 'assert d.get("ok") is False and "did not accept" in d.get("error",""), d' && [ "$(dbq 'echo (int)(fourgeGetSecret($pdo,"markup_api_key")!==null);')" = 0 ] && chk 0 "a key MarkUp refuses is not saved, and the answer says why" || chk 1 "refused key — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_save (connect MarkUp)" '{"action":"markup_hub_save","apiKey":"mk-e2e-key"}'
+ans '
+assert d.get("ok") is True and d.get("hasKey") is True and d["workspace"]["name"]=="E2E Agency", d
+w=d["webhook"]; assert w["registered"] is True and w["mode"]=="direct" and "action=markup_webhook&secret=" in w["url"], w
+assert len(d.get("publicKey",""))==44, d.get("publicKey")
+assert "mk-e2e-key" not in json.dumps(d)' && chk 0 "connecting checks the key with MarkUp, makes the hub's signing key and registers the webhook (at the plain address: php -S doesn't rewrite the short one); the key never comes back" || chk 1 "connect — got: $(printf '%s' "$LAST" | head -c 400)"
+HUBPK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["publicKey"])' 2>/dev/null)
+HOOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["webhook"]["url"])' 2>/dev/null)
+mkstate 'h=list(s["hooks"].values()); assert len(h)==1 and h[0]["workspaceId"]=="ws_e2e" and h[0]["enabled"] and {"markup_status_changed","comment_created","comment_reply_created"}<=set(h[0]["eventTypes"]) and h[0]["url"]==sys.argv[2], h' "$HOOK" && chk 0 "…one webhook registration in MarkUp: the hub's address, with the comment and status events" || chk 1 "webhook registration — $(curl -s "http://127.0.0.1:$MKAPORT/__state" | head -c 400)"
+call "markup_hub_save registerWebhook again" '{"action":"markup_hub_save","registerWebhook":true}'
+mkstate 'assert len(s["hooks"])==1, s["hooks"]' && chk 0 "…registering again updates that registration instead of adding a second" || chk 1 "re-register — $(curl -s "http://127.0.0.1:$MKAPORT/__state" | head -c 300)"
+call "install_clean_urls (the hub's sign-in self-heal)" '{"action":"install_clean_urls"}'
+ans 'assert d.get("markupWebhook") is True, d.get("markupWebhook")' && [ "$(grep -c '^# BEGIN Fourge MarkUp Webhook' "$S/.htaccess")" = 1 ] && awk '/^# BEGIN Fourge MarkUp Webhook/{m=NR} /^# BEGIN Fourge Clean URLs/{c=NR} END{exit !(m && c && m<c)}' "$S/.htaccess" && grep -qF 'RewriteRule ^integrations/markup/webhook/([A-Za-z0-9_-]{20,100})/?$ admin/api.php?action=markup_webhook&secret=$1 [L,QSA]' "$S/.htaccess" && chk 0 "on the hub, .htaccess routes /integrations/markup/webhook/<secret> to the webhook, once, above the clean-URL rules" || chk 1 "webhook rewrite — $(grep -n 'MarkUp Webhook\|Clean URLs' "$S/.htaccess")"
+TOK=""
+mkcall '{"action":"markup_hub_key"}'
+[ "$MKST" = 200 ] && ans "assert d['key']=='$HUBPK'" && chk 0 "markup_hub_key (public) gives the hub's public key, the one client sites check its signatures with" || chk 1 "markup_hub_key — $(mkerr)"
+mkpost "http://127.0.0.1:$MKCPORT/admin/api.php" '{"action":"markup_hub_key"}'
+[ "$MKST" = 404 ] && chk 0 "…a client site publishes none" || chk 1 "client markup_hub_key — $(mkerr)"
+mkpost "${HOOK%%secret=*}secret=wrongwrongwrongwrongwrongwrong01" '{"id":"ev_x","type":"comment_created","data":{}}'
+[ "$MKST" = 404 ] && [ "$(dbq 'echo $pdo->query("SELECT COUNT(*) FROM markup_events")->fetchColumn();')" = 0 ] && chk 0 "the webhook at a wrong secret address: 404, nothing recorded" || chk 1 "webhook wrong secret — $(mkerr)"
+curl -s "$HOOK" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("markup")=="webhook"' && chk 0 "…a GET at the right address answers as the webhook (the hub's check that its address works)" || chk 1 "webhook GET — $(curl -s "$HOOK" | head -c 200)"
+mkpost "$HOOK" '{"webhookUrl":"x","id":"ev_1","type":"comment_created","workspaceId":"ws_e2e","createdAt":"2026-11-17T10:00:00Z","data":{"markup":{"id":"mk_1"},"comment":{"id":"th_1","firstMessage":{"text":"IGNORED: a payload is never acted on"}}}}'
+[ "$MKST" = 200 ] && ans 'assert d=={"ok":True,"duplicate":False}, d' && chk 0 "a MarkUp event is recorded and answered at once" || chk 1 "webhook event — $(mkerr)"
+mkpost "$HOOK" '{"id":"ev_1","type":"comment_created","data":{"markup":{"id":"mk_1"},"comment":{"id":"th_1"}}}'
+[ "$MKST" = 200 ] && ans 'assert d.get("duplicate") is True, d' && [ "$(dbq 'echo $pdo->query("SELECT COUNT(*) FROM markup_events WHERE id=\"ev_1\"")->fetchColumn();')" = 1 ] && chk 0 "…the same event again (MarkUp retrying) is answered and ignored: one row per event id" || chk 1 "webhook duplicate — $(mkerr)"
+CL="http://client-e2e.example:$MKCPORT"
+python3 - "$CL" "$MKAPORT" "$ANPORT" "$MKCPORT" > "$S.mkseed.json" <<'PY'
+import json,sys
+cl, mport, aport, cport = sys.argv[1:5]
+def msg(i, text, atts=()):
+    return {'id':'m_%s'%i,'message':text,'user':{'id':'u_c','name':'Casey Client','email':'casey@example.com','guest':True},'loomVideos':[],'createdAt':1763380000000,
+            'attachments':[{'id':'a_%s'%i,'url':a,'mimeType':'image/png','originalFilename':'new-logo.png','width':1,'height':1} for a in atts]}
+def th(i, url, path, text, hl='', atts=()):
+    return {'id':'th_%s'%i,'markupId':'mk_1','number':i,'resolved':False,'canonicalUrl':url,'originalUrl':url,'elements':[{'id':'e%s'%i,'path':path,'offsetXPercentage':10,'offsetYPercentage':20}],
+            'parents':[],'textHighlight':{'text':hl} if hl else None,'viewModeId':'desktop','browserContext':{'viewportWidth':1440,'viewportHeight':900},
+            'screenshot':{'id':'s%s'%i,'url':'http://127.0.0.1:%s/files/shot.png'%mport,'width':1,'height':1},'messages':[msg(i,text,atts)],'createdAt':1763380000000}
+print(json.dumps({'markups':[{'id':'mk_1','type':'webpage','name':'Client site review','url':cl+'/','markupUrl':'https://app.markup.io/markup/mk_1','status':'editing','activeThreads':5}],
+ 'threads':[th(1, cl+'/hello-client', 'html > body > h1', 'Please change this heading to "Welcome to Client Co".', atts=['http://127.0.0.1:%s/files/logo.png'%mport]),
+            th(2, 'http://www.client-e2e.example:%s/hello-client.html'%cport, '#nowhere', 'Make this say we are open on Sundays.', hl='Some paragraph text'),
+            th(3, cl+'/no-such-page', 'html > body > h1', 'Where is this?'),
+            th(4, 'http://not-fourge.example:%s/'%aport, 'body', 'Not a Fourge site'),
+            th(5, 'http://dev.client-e2e.example:%s/hello-client/'%cport, 'html > body > p', 'Staging: say we are open on Sundays.')]}))
+PY
+mkstub /__seed "$(cat "$S.mkseed.json")"
+TOK="$ARCH_TOK"
+call "markup_hub_process (a comment event)" '{"action":"markup_hub_process"}'
+ans 'assert d.get("processed")==1 and d.get("pending")==0, d' && [ "$(dbq 'echo $pdo->query("SELECT COUNT(*) FROM markup_items")->fetchColumn();')" = 0 ] && [ "$(dbq 'echo $pdo->query("SELECT COUNT(*) FROM markup_threads WHERE id=\"th_1\"")->fetchColumn();')" = 1 ] && chk 0 "a comment event only refreshes the hub's copy of the thread (read again from MarkUp): nothing is queued" || chk 1 "comment event — got: $(printf '%s' "$LAST" | head -c 300)"
+mkstub /__seed '{"markups":[{"id":"mk_1","status":"Approved"}]}'
+mkpost "$HOOK" '{"id":"ev_2","type":"markup_status_changed","data":{"markup":{"id":"mk_1"}}}'
+call "markup_hub_process (the markup moved to Approved)" '{"action":"markup_hub_process"}'
+dbq 'foreach ($pdo->query("SELECT thread_id, site, page, status, note FROM markup_items ORDER BY thread_id") as $r) echo $r["thread_id"],"|",$r["site"],"|",$r["page"],"|",$r["status"],"|",$r["note"],"\n";' > "$S.mkitems.txt"
+python3 - "$S.mkitems.txt" <<'PY' && chk 0 "…a status change to a trigger status queues every open thread, each on its site (found by a signed hello: www. and the bare host are one site, and so is the staging host the site reports) and page — or unmapped, with the reason" || chk 1 "queued items: $(tr '\n' ';' < "$S.mkitems.txt")"
+import sys
+rows={l.split('|')[0]:l.rstrip('\n').split('|') for l in open(sys.argv[1]) if l.strip()}
+assert rows['th_1'][1:4]==['client-e2e.example','hello-client.html','new'], rows['th_1']
+assert rows['th_2'][1:4]==['client-e2e.example','hello-client.html','new'], rows['th_2']
+assert rows['th_5'][1:4]==['client-e2e.example','hello-client.html','new'], rows['th_5']
+assert rows['th_3'][1:4]==['client-e2e.example','','unmapped'] and 'No page on Client E2E matches /no-such-page' in rows['th_3'][4], rows['th_3']
+assert rows['th_4'][1:4]==['','','unmapped'] and 'did not answer as a Fourge site' in rows['th_4'][4], rows['th_4']
+PY
+[ "$(cdbq 'echo (string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched\"")->fetchColumn();')" = "$HUBPK" ] && chk 0 "the client site, given no key, fetched the hub's public key from the hub's address and checked the hello with it" || chk 1 "client's hub key: $(cdbq 'echo (string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched\"")->fetchColumn();')"
+call "markup_hub_status (statuses MarkUp has sent)" '{"action":"markup_hub_status"}'
+ans 'assert "editing" in d["statusesSeen"] and "Approved" in d["statusesSeen"] and "approved" in d["triggerStatuses"], d' && chk 0 "the settings offer the statuses MarkUp has actually sent (its documentation lists none); Approved is a trigger by default" || chk 1 "statuses — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_queue" '{"action":"markup_hub_queue"}'
+ans '
+it={i["threadId"]:i for i in d["items"]}
+t=it["th_1"]["thread"]; assert t["messages"][0]["text"].startswith("Please change this heading") and t["messages"][0]["author"]=="Casey Client" and "@" not in json.dumps(t), t
+assert t["screenshot"]["url"].endswith("/files/shot.png") and t["messages"][0]["attachments"][0]["name"]=="new-logo.png", t
+assert it["th_1"]["markup"]["appUrl"]=="https://app.markup.io/markup/mk_1"
+s=[x for x in d["sites"] if x["site"]=="client-e2e.example"][0]; assert "dev.client-e2e.example" in s["hosts"] and any(p["path"]=="hello-client.html" for p in s["pages"]) and s["name"]=="Client E2E", s
+assert "IGNORED" not in json.dumps(d)' && chk 0 "the queue has each thread as MarkUp has it (no e-mail addresses kept), the markup's MarkUp link, and the client site with its staging host and pages" || chk 1 "queue — got: $(printf '%s' "$LAST" | head -c 400)"
+I1=$(item_of th_1); I2=$(item_of th_2); I3=$(item_of th_3); I5=$(item_of th_5)
+TS1=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print([i["threadSig"] for i in json.load(sys.stdin)["items"] if i["threadId"]=="th_1"][0])')
+call "markup_hub_page (the page, read from the client site)" '{"action":"markup_hub_page","site":"client-e2e.example","page":"hello-client.html"}'
+SHA0=$(sha256sum < "$S2/hello-client.html" | cut -d' ' -f1); cp "$S2/hello-client.html" "$S.mkc0.html"
+ans "assert d['ok'] is True and d['sha256']=='$SHA0' and d['html']==open('$S.mkc0.html').read() and d['url']=='$CL/hello-client.html', {k:d.get(k) for k in ('ok','sha256','url','error')}" && chk 0 "markup_hub_page reads the page from the client site with a signed request" || chk 1 "hub page — got: $(printf '%s' "$LAST" | head -c 300)"
+mkgen(){ python3 -c 'import json,sys; i,sha,sig,blk,before,after,val=sys.argv[1:8]; print(json.dumps({"action":"markup_hub_item","id":int(i),"op":"save","status":"pending","sig":sig,"gen":{"classification":"text_edit","summary":"Change it to "+val,"device":"all","ops":[{"field":"text","value":val}],"confidence":0.9,"method":"path","methodConfidence":0.95,"block":blk,"blockBefore":before,"blockAfter":after,"pageSha":sha,"tries":1,"note":"","evil":"<script>"}}))' "$@"; }
+mkapply(){ python3 -c 'import json,sys; i,html,sha,blk,before,after,val=sys.argv[1:8]; print(json.dumps({"action":"markup_hub_apply","id":int(i),"mode":"apply","html":open(html).read(),"expect":sha,"ops":[{"field":"text","value":val}],"summary":"Change it to "+val,"block":blk,"blockBefore":before,"blockAfter":after}))' "$@"; }
+H1B='<h1 data-fourge-block="bhead01">Old heading</h1>'; H1A='<h1 data-fourge-block="bhead01">Welcome to Client Co</h1>'
+call "markup_hub_item save (the browser's generated change)" "$(mkgen "$I1" "$SHA0" "$TS1" bhead01 "$H1B" "$H1A" 'Welcome to Client Co')"
+ans "i=d['item']; g=i['gen']; assert i['status']=='pending' and g['ops']==[{'field':'text','value':'Welcome to Client Co'}] and g['method']=='path' and g['methodConfidence']==0.95 and 'evil' not in g and g['by'] and i['sig']=='$TS1', i" && chk 0 "a generated change is kept as pending, in the AI Markup op format, with how its element was found and how sure that is" || chk 1 "save gen — got: $(printf '%s' "$LAST" | head -c 300)"
+sed 's|>Old heading</h1>|>Welcome to Client Co</h1>|' "$S.mkc0.html" > "$S.mkc1.html"
+APPLY1=$(mkapply "$I1" "$S.mkc1.html" "$SHA0" bhead01 "$H1B" "$H1A" 'Welcome to Client Co')
+call "markup_hub_apply (Approve)" "$APPLY1"
+ans 'assert d.get("ok") is True and d["loop"]["state"]=="done" and d["item"]["status"]=="applied" and d["item"]["applied"]["hasPageBefore"] is True and "pageBefore" not in d["item"]["applied"], d' && cmp -s "$S2/hello-client.html" "$S.mkc1.html" && cmp -s "$S2/data/bak/hello-client.html" "$S.mkc0.html" && chk 0 "Approve: the client site writes the page (a signed write, the copy from before kept in its data/bak/)" || chk 1 "approve — got: $(printf '%s' "$LAST" | head -c 400)"
+python3 - "$S2" <<'PY' && chk 0 "…the change is in the client site's Revisions as MarkUp, credited by name (never an address)" || chk 1 "client revision — $(head -c 300 "$S2/data/revisions.json" 2>&1)"
+import json,sys
+r=json.load(open(sys.argv[1]+'/data/revisions.json'))[0]
+assert r['path']=='hello-client.html' and r['user'].startswith('MarkUp: ') and '@' not in r['user'] and r['username']=='markup', r
+PY
+mkstate 'L=[l for l in s["log"] if l["path"].startswith("/api/v2/threads/th_1/")]; assert [(l["method"],l["path"].rsplit("/",1)[1]) for l in L]==[("POST","messages"),("POST","resolve")] and L[0]["body"]=={"content":"Done — this change is now live."}, L; assert s["threads"]["th_1"]["resolved"] is True' && chk 0 "…and MarkUp is told: the reply \"Done — this change is now live.\", then the thread is resolved" || chk 1 "MarkUp told — $(curl -s "http://127.0.0.1:$MKAPORT/__state" | python3 -c 'import json,sys; print([l["path"] for l in json.load(sys.stdin)["log"]][-6:])')"
+dbq 'echo $pdo->query("SELECT log FROM markup_items WHERE thread_id=\"th_1\"")->fetchColumn();' > "$S.mklog.json"
+python3 -c "import json; L=json.load(open('$S.mklog.json')); a=[x for x in L if x['what']=='approved'][0]; assert a['threadId']=='th_1' and a['ops']==[{'field':'text','value':'Welcome to Client Co'}] and a['by'] and a['at'], L" && chk 0 "…and the hub's log has who approved it, when, the thread and the ops" || chk 1 "approval log — $(head -c 300 "$S.mklog.json")"
+call "markup_hub_apply again" "$APPLY1"
+ans 'assert d.get("ok") is False and "already applied" in d["error"], d' && chk 0 "…an applied change can't be applied twice" || chk 1 "apply twice — got: $(printf '%s' "$LAST" | head -c 200)"
+P2B='<p data-fourge-block="bpara01">Some paragraph text to change.</p>'; P2A='<p data-fourge-block="bpara01">Open on Sundays.</p>'
+call "markup_hub_item save (a change made from the page before that one went live)" "$(mkgen "$I2" "$SHA0" '' bpara01 "$P2B" "$P2A" 'Open on Sundays.')"
+sed 's|Some paragraph text to change.|Open on Sundays.|' "$S.mkc0.html" > "$S.mkc2.html"
+call "markup_hub_apply from an older copy of the page" "$(mkapply "$I2" "$S.mkc2.html" "$SHA0" bpara01 "$P2B" "$P2A" 'Open on Sundays.')"
+ans 'assert d.get("ok") is False and d.get("reason")=="stale", d' && cmp -s "$S2/hello-client.html" "$S.mkc1.html" && chk 0 "a change built from an older copy of the page is refused as stale, and the page is left alone" || chk 1 "stale apply — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_item decline" "{\"action\":\"markup_hub_item\",\"id\":$I2,\"op\":\"decline\"}"
+ans 'assert d["item"]["status"]=="declined", d' && mkstate 'assert not [l for l in s["log"] if l["path"].startswith("/api/v2/threads/th_2/")] and s["threads"]["th_2"]["resolved"] is False' && chk 0 "Decline: nothing is posted in MarkUp and the thread stays open there" || chk 1 "decline — got: $(printf '%s' "$LAST" | head -c 300)"
+SHA1=$(sha256sum < "$S2/hello-client.html" | cut -d' ' -f1)
+call "markup_hub_apply revert (the page is as the change left it)" "{\"action\":\"markup_hub_apply\",\"id\":$I1,\"mode\":\"revert\",\"full\":true,\"expect\":\"$SHA1\"}"
+ans 'assert d.get("ok") is True and d["item"]["status"]=="reverted" and d.get("unresolved") is True, d' && cmp -s "$S2/hello-client.html" "$S.mkc0.html" && mkstate 'assert s["threads"]["th_1"]["resolved"] is False and s["log"][-1]["path"]=="/api/v2/threads/th_1/unresolve" and len([l for l in s["log"] if l["path"]=="/api/v2/threads/th_1/messages"])==1' && chk 0 "Revert: the page is exactly as it was before, and the thread is open again in MarkUp (nothing posted)" || chk 1 "revert — got: $(printf '%s' "$LAST" | head -c 300)"
+mkstub /__mode '{"failResolve":2}'   # the hub tries a 5xx once more at once, so two failures in a row
+call "markup_hub_item save (a staging-host comment)" "$(mkgen "$I5" "$SHA0" '' bpara01 "$P2B" "$P2A" 'Open on Sundays.')"
+call "markup_hub_apply while MarkUp can't resolve" "$(mkapply "$I5" "$S.mkc2.html" "$SHA0" bpara01 "$P2B" "$P2A" 'Open on Sundays.')"
+ans 'assert d.get("ok") is True and d["loop"]["state"]=="resolve" and "500" in d["loop"]["error"], d' && cmp -s "$S2/hello-client.html" "$S.mkc2.html" && chk 0 "when MarkUp fails, the change is still live; the queue shows MarkUp hasn't been told yet" || chk 1 "loop pending — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_item loop (tell MarkUp again)" "{\"action\":\"markup_hub_item\",\"id\":$I5,\"op\":\"loop\"}"
+ans 'assert d["item"]["loop"]["state"]=="done", d' && mkstate 'assert len([l for l in s["log"] if l["path"]=="/api/v2/threads/th_5/messages"])==1 and s["threads"]["th_5"]["resolved"] is True' && chk 0 "…trying again resolves the thread without posting the reply twice" || chk 1 "loop retry — got: $(printf '%s' "$LAST" | head -c 300)"
+python3 - "$CL" > "$S.mkseed2.json" <<'PY'
+import json,sys
+print(json.dumps({'threads':[{'id':'th_6','markupId':'mk_1','number':6,'resolved':False,'canonicalUrl':sys.argv[1]+'/hello-client','originalUrl':'','elements':[{'path':'html > body > h1'}],'parents':[],'textHighlight':None,'viewModeId':'mobile','messages':[{'id':'m_6','message':'On my phone this heading is too big.','user':{'name':'Casey Client'},'attachments':[],'loomVideos':[]}]}]}))
+PY
+mkstub /__seed "$(cat "$S.mkseed2.json")"
+call "markup_hub_pull (Pull changes now, one site)" '{"action":"markup_hub_pull","site":"client-e2e.example"}'
+ans 'assert d.get("ok") is True and d.get("done") is True and d["markups"]==1 and d["queued"]>=1 and not d["errors"], d' && [ "$(dbq 'echo $pdo->query("SELECT status FROM markup_items WHERE thread_id=\"th_6\"")->fetchColumn();')" = new ] && [ "$(dbq 'echo $pdo->query("SELECT status FROM markup_items WHERE thread_id=\"th_2\"")->fetchColumn();')" = declined ] && chk 0 "Pull changes now brings in a site's open comments whatever the markup's status; a declined one stays declined" || chk 1 "pull — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_item assign (a page that isn't on the site)" "{\"action\":\"markup_hub_item\",\"id\":$I3,\"op\":\"assign\",\"site\":\"client-e2e.example\",\"page\":\"admin/index.html\"}"
+ans 'assert d.get("ok") is False, d' && chk 0 "Assign refuses a page the site doesn't list" || chk 1 "bad assign — got: $(printf '%s' "$LAST" | head -c 200)"
+call "markup_hub_item assign (remembered for the markup)" "{\"action\":\"markup_hub_item\",\"id\":$I3,\"op\":\"assign\",\"site\":\"client-e2e.example\",\"page\":\"hello-client.html\",\"remember\":true}"
+ans 'i=d["item"]; assert i["status"]=="new" and i["page"]=="hello-client.html" and i["mappedBy"]=="manual", i' && [ "$(dbq 'echo $pdo->query("SELECT COUNT(*) FROM markup_overrides WHERE markup_id=\"mk_1\"")->fetchColumn();')" = 2 ] && chk 0 "Assign: an unmapped comment gets the site and page a person picked, remembered for its markup (that address → that page, the markup's other pages → that site)" || chk 1 "assign — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_image (the client's attachment)" "{\"action\":\"markup_hub_image\",\"id\":$I1,\"url\":\"http://127.0.0.1:$MKAPORT/files/logo.png\"}"
+IMGURL=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("url",""))' 2>/dev/null)
+[[ "$IMGURL" =~ ^/assets/markup/[0-9]{8}-[0-9a-f]{6}-new-logo\.png$ ]] && [ -s "$S2$IMGURL" ] && chk 0 "an image the client attached is copied onto the client site (assets/markup/) for an image swap" || chk 1 "attachment — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_image (an address that isn't an attachment)" "{\"action\":\"markup_hub_image\",\"id\":$I1,\"url\":\"http://127.0.0.1:$MKAPORT/files/shot.png\"}"
+ans 'assert d.get("ok") is False and "attached to this comment" in d["error"], d' && chk 0 "…any other address is refused: only this comment's own attachments are fetched" || chk 1 "non-attachment — got: $(printf '%s' "$LAST" | head -c 200)"
+call "login as the Super Admin (MarkUp)" '{"action":"login","username":"editor44i","password":"E2ePass!234"}'
+TOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
+call "markup_hub_status as a Super Admin" '{"action":"markup_hub_status"}'
+ans 'assert d.get("ok") is True and d["canSetup"] is False and d["webhook"]["url"]=="" and d["webhook"]["registered"] is True, d' && chk 0 "a Super Admin works the queue, without the webhook's secret address" || chk 1 "super admin status — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_save as a Super Admin" '{"action":"markup_hub_save","triggerStatuses":["approved"]}'
+ans 'assert d.get("ok") is False and "Architect" in d["error"], d' && chk 0 "…and can't change the settings (Architects only)" || chk 1 "super admin save — got: $(printf '%s' "$LAST" | head -c 200)"
+call "login as an editor (MarkUp)" '{"action":"login","username":"chat-editor@example.com","password":"E2ePass!234"}'
+TOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
+call "markup_hub_queue as an editor" '{"action":"markup_hub_queue"}'
+ans 'assert d.get("ok") is False and "Super Admins and Architects" in d["error"] and "items" not in d, d' && chk 0 "an editor can't see the queue" || chk 1 "editor queue — got: $(printf '%s' "$LAST" | head -c 200)"
+TOK="$ARCH_TOK"
+! grep -q 'mk-e2e-key' "$S.server.log" "$S2.server.log" && [ "$(dbq 'echo (int)$pdo->query("SELECT COUNT(*) FROM markup_kv WHERE v LIKE \"%mk-e2e-key%\"")->fetchColumn() + (int)$pdo->query("SELECT COUNT(*) FROM markup_events WHERE error LIKE \"%mk-e2e-key%\"")->fetchColumn() + (int)$pdo->query("SELECT COUNT(*) FROM secrets WHERE value_enc LIKE \"%mk-e2e-key%\"")->fetchColumn();')" = 0 ] && chk 0 "the MarkUp key is in no log and nowhere but the encrypted secret store" || chk 1 "the MarkUp key leaked somewhere"
+rm -f "$S.mkseed.json" "$S.mkseed2.json" "$S.mkitems.txt" "$S.mkc0.html" "$S.mkc1.html" "$S.mkc2.html" "$S.mklog.json"
+
 TOK=""
 call "blog_sync_poke (public)" '{"action":"blog_sync_poke"}'
 call "blog_sync_poke with push from a non-source (public)" '{"action":"blog_sync_poke","push":1,"source":"https://evil.example"}'
@@ -809,13 +987,16 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 call "form_view (public)" '{"action":"form_view","formId":"e2e-form"}'
 call "unknown action → JSON error" '{"action":"definitely_not_an_action"}'
 call "no session on a session action → 401 JSON" '{"action":"list_users"}'
-kill $SRV $GHSRV $GHLSRV $ANSRV $SMSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV $ANSRV $SMSRV 2>/dev/null
+kill $SRV $GHSRV $GHLSRV $ANSRV $SMSRV $MKASRV $MKCSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV $ANSRV $SMSRV $MKASRV $MKCSRV 2>/dev/null
+if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S2.server.log"; then chk 1 "the MarkUp client site logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S2.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the MarkUp client site ran without PHP warnings"; fi
+if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.mkstub.log"; then chk 1 "the MarkUp stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.mkstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the MarkUp stub ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.server.log"; then chk 1 "php -S log has PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "php -S log shows no PHP warnings/notices/deprecations during the whole run"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghstub.log"; then chk 1 "the GitHub stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GitHub stub ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.ghlstub.log"; then chk 1 "the GoHighLevel stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.ghlstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the GoHighLevel stub ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.anstub.log"; then chk 1 "the Anthropic stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.anstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the Anthropic stub ran without PHP warnings"; fi
 [ "$(grep -c '^# BEGIN Fourge Backups Guard' "$S/data/.htaccess")" = 1 ] && [ "$(grep -c '^# BEGIN Fourge Backups Guard' "$S/data/bak/.htaccess")" = 1 ] && chk 0 "after every sign-in of this run, the backups guard is still there exactly once" || chk 1 "backups guard repeated: $(grep -c 'Fourge Backups Guard' "$S/data/.htaccess")"
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.smtpstub.log"; then chk 1 "the SMTP stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.smtpstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the SMTP stub ran without PHP warnings"; fi
-rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE" "$S.anstub.log" "$S.anroot" "$ANMODE" "$ANCOUNT" "$S.smtpstub.log" "$SMLOG"
+rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE" "$S.anstub.log" "$S.anroot" "$ANMODE" "$ANCOUNT" "$S.smtpstub.log" "$SMLOG" \
+       "$S2" "$S2.server.log" "$S.mkstub.log" "$S.mkroot" "$MKSTATE"
 echo; echo "$([ $fail = 0 ] && echo "all end-to-end dispatcher assertions passed ($pass)" || echo "SUITE FAILED ($fail failed, $pass passed)")"
 exit $([ $fail = 0 ] && echo 0 || echo 1)
