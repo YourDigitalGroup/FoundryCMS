@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.156');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.157');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -2870,6 +2870,38 @@ HT;
         $existing = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
     }
     return fourgeSitePut($htPath, $existing, 'Fourge: server rules') !== false;
+}
+// Earlier copies of pages the CMS keeps: data/bak/ (the copy before each edit —
+// the editor, Find & Replace, SEO packages, the AI auto-fix) and data/rev_*.html
+// (revision snapshots). The CMS reads them only through its own API (read_file),
+// so nobody needs them over the web, and search engines must not find them: a
+// whole page at a second address is duplicate content, and an old copy can show
+// text the live page no longer has. Both are closed to the web — data/bak/ by an
+// .htaccess of its own, the snapshots by a managed block in data/.htaccess (the
+// same marker splice as the other guards, so the rest of that file is kept).
+function fourgeBackupsDenyRules() {
+    return "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>";
+}
+function fourgeSpliceHtaccessFile($htPath, $begin, $end, $rules) {
+    $existing = is_file($htPath) ? (string)file_get_contents($htPath) : '';
+    $block = $begin . "\n" . $rules . "\n" . $end;
+    $s = strpos($existing, $begin);
+    $e = strpos($existing, $end);
+    if ($s !== false && $e !== false && $e >= $s) $out = substr($existing, 0, $s) . $block . substr($existing, $e + strlen($end));
+    else $out = ($existing === '' ? '' : rtrim($existing) . "\n\n") . $block . "\n";
+    if ($out === $existing) return true;
+    return fourgeSitePut($htPath, $out, 'Fourge: server rules') !== false;
+}
+function fourgeWriteBackupsHtaccess() {
+    $data = PUBLIC_HTML . '/data';
+    $bak  = $data . '/bak';
+    if (!is_dir($bak)) @mkdir($bak, 0755, true);
+    if (!is_dir($bak)) return false;
+    $deny = fourgeBackupsDenyRules();
+    $snap = "<FilesMatch \"^rev_.*\\.html?$\">\n  " . str_replace("\n", "\n  ", $deny) . "\n</FilesMatch>";
+    $a = fourgeSpliceHtaccessFile($data . '/.htaccess', '# BEGIN Fourge Backups Guard', '# END Fourge Backups Guard', $snap);
+    $b = fourgeSpliceHtaccessFile($bak . '/.htaccess', '# BEGIN Fourge Backups Guard', '# END Fourge Backups Guard', $deny);
+    return $a && $b;
 }
 // Extensions allowed through a form's File Upload field — common document/
 // image types a lead-gen form realistically needs (resumes, photos, quotes).
@@ -6659,6 +6691,9 @@ function fourgeApiInstallCleanUrls($me) {
     $entriesGuard = false; $uploadsGuard = false;
     try { $entriesGuard = fourgeWriteEntriesHtaccess(); } catch (Throwable $e) { $entriesGuard = false; }
     try { $uploadsGuard = fourgeWriteUploadsHtaccess(); } catch (Throwable $e) { $uploadsGuard = false; }
+    // Earlier copies of pages (data/bak/, data/rev_*.html): closed to the web and to search engines.
+    $backupsGuard = false;
+    try { $backupsGuard = fourgeWriteBackupsHtaccess(); } catch (Throwable $e) { $backupsGuard = false; }
     // A copy of the Fleet Dashboard that came with the repository is not part of the site.
     $fleetCopy = 'absent';
     try { $fleetCopy = fourgeRemoveStrayFleetDashboard(); } catch (Throwable $e) { $fleetCopy = 'error'; }
@@ -6684,7 +6719,7 @@ function fourgeApiInstallCleanUrls($me) {
     echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'websiteAuto' => $websiteAuto, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
         'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync,
-        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'fleetDashboardCopy' => $fleetCopy, 'captchaSecrets' => $captchaSecrets]);
+        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'backupsGuard' => $backupsGuard, 'fleetDashboardCopy' => $fleetCopy, 'captchaSecrets' => $captchaSecrets]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');
@@ -6745,6 +6780,8 @@ function cmsPkgBackup($relPath) {
     if (!is_file($src)) return;
     $dir = PUBLIC_HTML . '/data/bak';
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    // A package can arrive before anyone signs in: close the folder before its first copy lands.
+    if (!is_file($dir . '/.htaccess')) { try { fourgeWriteBackupsHtaccess(); } catch (Throwable $e) {} }
     @copy($src, $dir . '/' . str_replace(['/', '\\'], '__', ltrim($relPath, '/')));
 }
 // ── PUBLIC URL PATHS, PHP SIDE ──────────────────────────────────────────────
