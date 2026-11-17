@@ -7,10 +7,12 @@
 // State (markups, threads, webhook registrations, mode) and a log of every request
 // (method, path, query, body, whether the key was right) live in tests/.cache/markup_stub_state.json.
 // Thread lists answer with summaries (no messages or elements), as a list may, so the
-// hub has to read each thread. Test controls (no auth):
+// hub has to read each thread; like MarkUp's API, a list asked for with a "resolved"
+// filter in the query string is refused (400 "resolved must be a boolean value."). Test controls (no auth):
 //   POST /__reset          — empty state, default mode
 //   POST /__seed  {…}      — merge markups / threads (by id) into the state
-//   POST /__mode  {…}      — merge into the mode: failResolve (n) answers the next n resolves with a 500
+//   POST /__mode  {…}      — merge into the mode: failResolve (n) answers the next n resolves with a 500;
+//                            strictNumbers refuses limit/offset on a thread list as well
 //   GET  /__state          — the whole state
 //   GET  /files/<name>.png — a tiny PNG (attachments and screenshots point here)
 $cache = dirname(__DIR__) . '/.cache'; @mkdir($cache, 0777, true);
@@ -58,11 +60,14 @@ if ($method === 'GET' && preg_match('~^/markups/([^/]+)$~', $p, $m)) {
     out(200, ['data' => $state['markups'][$m[1]]]);
 }
 if ($method === 'GET' && $p === '/threads') {
+    // As MarkUp's API does: its "resolved" filter must be a true boolean, which no query string can carry.
+    if (array_key_exists('resolved', $q)) out(400, ['error' => ['code' => 'BAD_REQUEST', 'message' => 'resolved must be a boolean value.']]);
+    // mode strictNumbers: limit/offset refused the same way (in case MarkUp's API does that too)
+    if (!empty($state['mode']['strictNumbers']) && (array_key_exists('limit', $q) || array_key_exists('offset', $q))) out(400, ['error' => ['code' => 'BAD_REQUEST', 'message' => 'limit must be a number conforming to the specified constraints.']]);
     $list = [];
     foreach ($state['threads'] as $t) {
         if ((string)($t['markupId'] ?? '') !== (string)($q['markupId'] ?? '')) continue;
-        if (($q['resolved'] ?? '') === 'false' && !empty($t['resolved'])) continue;
-        $s = $t; unset($s['messages'], $s['elements'], $s['parents'], $s['markupId']);   // a summary
+        $s = $t; unset($s['messages'], $s['elements'], $s['parents'], $s['markupId']);   // a summary (resolved kept)
         $list[] = $s;
     }
     $off = (int)($q['offset'] ?? 0); $limit = max(1, (int)($q['limit'] ?? 50));

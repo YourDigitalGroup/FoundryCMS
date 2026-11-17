@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.159');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.160');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -8339,7 +8339,8 @@ function fourgeApiMarkupHubKey() {
 // A signed request to a client site (checked there by fourgeMarkupVerify). $base
 // is the site's origin, e.g. https://client.com. A redirect to the same site
 // (http → https, www. ↔ bare) is followed, signed again for the new address.
-// Returns [code, answer|null, error, the origin that answered].
+// Returns [code, answer|null, error, the origin that answered, and — for a
+// redirect to another host — that host's origin, which fourgeMarkupSiteAt checks].
 function fourgeMarkupSiteCall($base, $action, $payload, $timeout = 20) {
     $kp = fourgeMarkupHubKeypair(false);
     if (!$kp) return [0, null, 'The hub has no signing key yet: save the MarkUp settings once.', ''];
@@ -8362,7 +8363,9 @@ function fourgeMarkupSiteCall($base, $action, $payload, $timeout = 20) {
                 $base = strtolower((string)($l['scheme'] ?? 'https')) . '://' . strtolower((string)$l['host']) . (isset($l['port']) ? ':' . (int)$l['port'] : '');
                 continue;
             }
-            return [$code, null, 'The site sends its visitors to another address (' . (is_array($l) ? (string)($l['host'] ?? '') : '') . ').', ''];
+            $moved = (is_array($l) && !empty($l['host']) && in_array(strtolower((string)($l['scheme'] ?? 'https')), ['http', 'https'], true))
+                ? strtolower((string)($l['scheme'] ?? 'https')) . '://' . strtolower((string)$l['host']) . (isset($l['port']) ? ':' . (int)$l['port'] : '') : '';
+            return [$code, null, 'The site sends its visitors to another address (' . (is_array($l) ? (string)($l['host'] ?? '') : '') . ').', '', $moved];
         }
         if ($code === 0) return [0, null, 'No answer from ' . $host . ($err !== '' ? ' (' . $err . ')' : '') . '.', ''];
         $j = json_decode($raw, true);
@@ -8662,16 +8665,31 @@ function fourgeMarkupThreadGone($id) {
     $pdo->prepare("UPDATE markup_items SET status='resolved', updated_at=? WHERE thread_id=? AND status IN ('new','pending','needs_human','no_change','unmapped','failed')")->execute([time(), (string)$id]);
 }
 // Every open thread of a markup, into our copy and (with $enqueue) the queue.
+// The list is asked for without MarkUp's documented "resolved" filter: its API
+// accepts that only as a true boolean, which a query string can't carry (HTTP 400
+// "resolved must be a boolean value"), so resolved threads are skipped here.
+// Paged with limit/offset; should MarkUp refuse those the same way, the list is
+// asked for again without them and followed by MarkUp's own cursorId.
 function fourgeMarkupSyncThreads($markupId, $enqueue) {
     $out = ['error' => '', 'threads' => 0, 'queued' => 0];
-    $offset = 0;
+    $offset = 0; $cursor = ''; $plain = false; $seen = [];
     for ($pg = 0; $pg < 40; $pg++) {
-        list($code, $j, $err) = fourgeMarkupApi('GET', '/threads', ['markupId' => $markupId, 'resolved' => 'false', 'limit' => 50, 'offset' => $offset]);
+        $q = $plain ? (['markupId' => $markupId] + ($cursor !== '' ? ['cursorId' => $cursor] : [])) : ['markupId' => $markupId, 'limit' => 50, 'offset' => $offset];
+        list($code, $j, $err) = fourgeMarkupApi('GET', '/threads', $q);
+        if ($code === 400 && !$plain && preg_match('~\b(limit|offset)\b~i', $err)) { $plain = true; continue; }
         if ($err !== '') { $out['error'] = $err; return $out; }
         $d = fourgeMarkupData($j);
         $list = is_array($d['threads'] ?? null) ? $d['threads'] : [];
+        $fresh = 0;
         foreach ($list as $t) {
-            if (!is_array($t) || empty($t['id'])) continue;
+            if (!is_array($t) || empty($t['id']) || isset($seen[(string)$t['id']])) continue;
+            $seen[(string)$t['id']] = true;
+            $fresh++;
+            // Resolved (or deleted) in MarkUp: nothing to do, except close a change still waiting in the queue.
+            if (!empty($t['resolved']) || !empty($t['deletedAt'])) {
+                if (fourgeMarkupItemByThread((string)$t['id'])) fourgeMarkupThreadGone((string)$t['id']);
+                continue;
+            }
             if (!array_key_exists('messages', $t) || !array_key_exists('elements', $t)) {   // a summary: read the whole thread
                 list($full, $e2) = fourgeMarkupFetchThread((string)$t['id']);
                 if ($e2 !== '') { $out['error'] = $e2; return $out; }
@@ -8681,6 +8699,12 @@ function fourgeMarkupSyncThreads($markupId, $enqueue) {
             $s = fourgeMarkupStoreThread($t, $markupId);
             $out['threads']++;
             if ($enqueue && !$s['resolved'] && fourgeMarkupEnqueue($s, $markupId)) $out['queued']++;
+        }
+        if ($plain) {
+            $next = (string)($d['cursorId'] ?? '');
+            if (!$fresh || $next === '' || $next === $cursor) break;
+            $cursor = $next;
+            continue;
         }
         $offset += count($list);
         $total = (int)($d['total'] ?? 0);
@@ -8796,6 +8820,28 @@ function fourgeMarkupSiteSave($base, $hello, $hostKey) {
                    !empty($hello['enabled']) ? 1 : 0, mb_substr((string)($hello['version'] ?? ''), 0, 20), time()]);
     return fourgeMarkupSiteRow($site);
 }
+// The site at $origin — if it answers as a Fourge site and lists $hostKey among
+// its own addresses. A development link that redirects to the live site once it
+// has gone live (the dev-link rule in .htaccess) is the same site; any other host
+// a site redirects to is not taken on trust.
+function fourgeMarkupSiteAt($origin, $hostKey) {
+    list($code, $j, $err, $answered) = fourgeMarkupSiteCall($origin, 'markup_hello', [], 12);
+    if ($code !== 200 || !is_array($j) || empty($j['fourge'])) return null;
+    $own = array_map('fourgeMarkupHostKey', array_map('strval', (array)($j['hosts'] ?? [])));
+    if (!in_array($hostKey, $own, true)) return null;
+    return fourgeMarkupSiteSave($answered !== '' ? $answered : $origin, $j, $hostKey);
+}
+// A signed call to a known site. When the site's address has moved since (its
+// development link now redirects to the live site), the site is found again there
+// and the call made once more.
+function fourgeMarkupCallSite(&$site, $action, $payload, $timeout = 20) {
+    $r = fourgeMarkupSiteCall($site['base'], $action, $payload, $timeout);
+    if (($r[4] ?? '') !== '') {
+        $moved = fourgeMarkupSiteAt($r[4], fourgeMarkupHostKey((string)@parse_url($site['base'], PHP_URL_HOST)));
+        if ($moved) { $site = $moved; $r = fourgeMarkupSiteCall($site['base'], $action, $payload, $timeout); }
+    }
+    return $r;
+}
 // The Fourge site at a page address: one we know (checked within a day), else ask
 // the address itself with a signed hello (as given, then https, then http).
 function fourgeMarkupSiteFor($url, &$note = '', $fresh = false) {
@@ -8808,8 +8854,10 @@ function fourgeMarkupSiteFor($url, &$note = '', $fresh = false) {
     $tries = array_values(array_unique([(in_array($scheme, ['http', 'https'], true) ? $scheme : 'https') . $origin, 'https' . $origin, 'http' . $origin]));
     $why = '';
     foreach ($tries as $base) {
-        list($code, $j, $err, $answered) = fourgeMarkupSiteCall($base, 'markup_hello', [], 12);
+        $r = fourgeMarkupSiteCall($base, 'markup_hello', [], 12);
+        list($code, $j, $err, $answered) = $r;
         if ($code === 200 && is_array($j) && !empty($j['fourge'])) return fourgeMarkupSiteSave($answered !== '' ? $answered : $base, $j, $hk);
+        if (($r[4] ?? '') !== '' && ($live = fourgeMarkupSiteAt($r[4], $hk))) return $live;   // a dev link that now goes to the live site
         if ($code === 503) $why = $p['host'] . ' runs Fourge but does not trust this hub yet: it needs Fourge 1.14.159 or later (a site that has just updated trusts the hub within 5 minutes).';
         elseif ($code === 401 && stripos($err, 'API token') !== false) $why = $p['host'] . ' runs an older Fourge without MarkUp: it needs Fourge 1.14.159 or later.';
         elseif ($code === 401) $why = $p['host'] . ' refused the hub\'s signature (' . $err . ').';
@@ -9114,7 +9162,7 @@ function fourgeApiMarkupHubPage($me, $body) {
     $site = fourgeMarkupSiteRow((string)($body['site'] ?? ''));
     if (!$site) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'That site is not known to the hub.']); return; }
     $page = (string)($body['page'] ?? '');
-    list($code, $j, $err) = fourgeMarkupSiteCall($site['base'], 'markup_read', ['path' => $page]);
+    list($code, $j, $err) = fourgeMarkupCallSite($site, 'markup_read', ['path' => $page]);
     if ($code !== 200 || !is_array($j) || !isset($j['html'])) {
         fourgeMarkupOut(200, ['ok' => false, 'code' => $code, 'reason' => is_array($j) ? (string)($j['reason'] ?? '') : '',
             'error' => 'Could not read ' . $page . ' from ' . ($site['name'] !== '' ? $site['name'] : $site['site']) . ': ' . ($err !== '' ? $err : 'HTTP ' . $code)]);
@@ -9255,7 +9303,7 @@ function fourgeApiMarkupHubApply($me, $body) {
     $now = time();
     $expect = (string)($body['expect'] ?? '');
     // The page as the site has it now: the copy kept for Revert, and the stale check.
-    list($c1, $j1, $e1) = fourgeMarkupSiteCall($site['base'], 'markup_read', ['path' => $page]);
+    list($c1, $j1, $e1) = fourgeMarkupCallSite($site, 'markup_read', ['path' => $page]);
     if ($c1 !== 200 || !is_array($j1) || !isset($j1['html'])) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'Could not read the page from the site: ' . ($e1 !== '' ? $e1 : 'HTTP ' . $c1)]); return; }
     if ((string)$j1['sha256'] !== $expect) { fourgeMarkupOut(200, ['ok' => false, 'reason' => 'stale', 'error' => 'The page changed in the meantime.']); return; }
     $applied = json_decode((string)$it['applied'], true);
@@ -9267,7 +9315,7 @@ function fourgeApiMarkupHubApply($me, $body) {
             'classification' => $gen['classification'] ?? '', 'block' => $body['block'] ?? '', 'blockBefore' => $body['blockBefore'] ?? '', 'blockAfter' => $body['blockAfter'] ?? '', 'styleUndo' => $body['styleUndo'] ?? []]);
         if (!$final['ops']) { fourgeMarkupOut(400, ['ok' => false, 'error' => 'There is no change to apply.']); return; }
         $html = (string)($body['html'] ?? '');
-        list($c2, $j2, $e2) = fourgeMarkupSiteCall($site['base'], 'markup_write', ['path' => $page, 'html' => $html, 'expect' => $expect, 'by' => $who, 'note' => $final['summary']], 30);
+        list($c2, $j2, $e2) = fourgeMarkupCallSite($site, 'markup_write', ['path' => $page, 'html' => $html, 'expect' => $expect, 'by' => $who, 'note' => $final['summary']], 30);
         if ($c2 === 409) { fourgeMarkupOut(200, ['ok' => false, 'reason' => 'stale', 'error' => 'The page changed in the meantime.']); return; }
         if ($c2 !== 200) {
             $err = 'The site did not take the change: ' . ($e2 !== '' ? $e2 : 'HTTP ' . $c2);
@@ -9289,7 +9337,7 @@ function fourgeApiMarkupHubApply($me, $body) {
     // Revert: the browser's page with the element put back, or (full) the whole page as it was before the change.
     $html = !empty($body['full']) ? (string)($applied['pageBefore'] ?? '') : (string)($body['html'] ?? '');
     if ($html === '') { fourgeMarkupOut(400, ['ok' => false, 'error' => 'There is no earlier copy to put back.']); return; }
-    list($c2, $j2, $e2) = fourgeMarkupSiteCall($site['base'], 'markup_write', ['path' => $page, 'html' => $html, 'expect' => $expect, 'by' => $who, 'note' => 'Revert: ' . (string)($applied['summary'] ?? '')], 30);
+    list($c2, $j2, $e2) = fourgeMarkupCallSite($site, 'markup_write', ['path' => $page, 'html' => $html, 'expect' => $expect, 'by' => $who, 'note' => 'Revert: ' . (string)($applied['summary'] ?? '')], 30);
     if ($c2 === 409) { fourgeMarkupOut(200, ['ok' => false, 'reason' => 'stale', 'error' => 'The page changed in the meantime.']); return; }
     if ($c2 !== 200) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'The site did not take the revert: ' . ($e2 !== '' ? $e2 : 'HTTP ' . $c2)]); return; }
     $applied['revertedAt'] = $now;
@@ -9335,7 +9383,7 @@ function fourgeApiMarkupHubImage($me, $body) {
     }
     if ($bytes === null) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'Too many redirects.']); return; }
     $name = (string)($att['name'] ?? '') !== '' ? (string)$att['name'] : basename((string)parse_url($url, PHP_URL_PATH));
-    list($c2, $j2, $e2) = fourgeMarkupSiteCall($site['base'], 'markup_upload', ['name' => $name, 'data_b64' => base64_encode($bytes)], 60);
+    list($c2, $j2, $e2) = fourgeMarkupCallSite($site, 'markup_upload', ['name' => $name, 'data_b64' => base64_encode($bytes)], 60);
     if ($c2 !== 200 || empty($j2['url'])) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'The site did not take the image: ' . ($e2 !== '' ? $e2 : 'HTTP ' . $c2)]); return; }
     fourgeMarkupItemLog((int)$it['id'], ['what' => 'image', 'url' => (string)$j2['url']], $me);
     fourgeMarkupOut(200, ['ok' => true, 'url' => (string)$j2['url']]);
