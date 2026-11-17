@@ -2918,7 +2918,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.157';
+const CMS_VERSION='1.14.158';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -4949,7 +4949,44 @@ function veFinalizePageHtml(html, pg){
   // config, no manual button: same always-on shape as the ensure*Runtime()
   // calls above, since there's nothing for an operator to set.
   try{ html=generatorInjectIntoHtml(html); }catch(e){}
+  // Stable ids for the content elements (MarkUp reviews find their element by it).
+  try{ html=fourgeStampBlockIds(html); }catch(e){}
   return html;
+}
+// ── STABLE ELEMENT IDS (data-fourge-block) ───────────────────────────────────
+// Pages are plain HTML, so an element has no lasting identity: the editor's
+// data-feid is temporary and stripped on save. A change made from a MarkUp
+// comment is generated against one element and applied later, possibly after
+// other edits, so each content element gets a short permanent id. Added on save
+// where missing, kept once given, and a copy that duplicated one (the editor's
+// duplicate) gets a new one. Lists and widgets the page fills in at runtime
+// (posts, reviews, map, events) are skipped: their content is not in the file.
+const FOURGE_BLOCK_TAGS=new Set(['H1','H2','H3','H4','H5','H6','P','LI','A','BUTTON','BLOCKQUOTE','IMG','FIGURE','FIGCAPTION','SECTION','ARTICLE','ASIDE','HEADER','FOOTER','MAIN','NAV','DIV','UL','OL','TABLE','TD','TH','VIDEO','PICTURE']);
+const FOURGE_BLOCK_SKIP='[data-fourge-posts],[data-fourge-reviews],[data-fourge-map],[data-fourge-events],script,style,template,noscript,svg';
+function fourgeBlockIdNew(seen){
+  let id; do{ id='b'+(Math.random().toString(36).slice(2)+'0000000').slice(0,7); }while(seen.has(id)); seen.add(id); return id;
+}
+// Works on a Document in place (the MarkUp queue uses it on pages it edits); returns how many ids it set.
+function fourgeStampBlockIdsDoc(doc){
+  const body=doc&&doc.body; if(!body) return 0;
+  const seen=new Set(); let n=0;
+  body.querySelectorAll('*').forEach(el=>{
+    if(!FOURGE_BLOCK_TAGS.has(el.tagName)) return;
+    if(el.closest(FOURGE_BLOCK_SKIP)){ if(el.hasAttribute('data-fourge-block')){ el.removeAttribute('data-fourge-block'); n++; } return; }
+    const cur=el.getAttribute('data-fourge-block');
+    if(cur && /^[A-Za-z0-9_-]{2,40}$/.test(cur) && !seen.has(cur)){ seen.add(cur); return; }
+    el.setAttribute('data-fourge-block',fourgeBlockIdNew(seen)); n++;
+  });
+  return n;
+}
+// For page HTML on its way to disk: unchanged (byte for byte) when every element already has its id.
+function fourgeStampBlockIds(html){
+  const src=String(html||'');
+  if(!/<body\b/i.test(src)) return src;
+  const doc=new DOMParser().parseFromString(src,'text/html');
+  if(!fourgeStampBlockIdsDoc(doc)) return src;
+  const dt=/^\s*<!doctype[^>]*>/i.exec(src);
+  return (dt?dt[0].trim():'<!DOCTYPE html>')+'\n'+doc.documentElement.outerHTML;
 }
 // ── GENERATOR META TAG ───────────────────────────────────────────────────────
 function fourgeGeneratorTag(){ return 'Fourge '+CMS_VERSION; }
@@ -13238,6 +13275,7 @@ function renderPlugins(){
     +fleetAddonHtml()
     +ghlAddonHtml()
     +mailAddonHtml()
+    +markupAddonHtml()
     +`<div class="pl-sec-label">Code injections</div>`
     +`<div class="info-b" style="margin-bottom:14px"><strong>Code injections have moved to Analytics → Custom Code.</strong> Paste any snippet there (Functional / Analytics / Marketing, header or body) and <em>Save &amp; Apply to All Pages</em> publishes it to every page inside a managed block — nothing on this panel writes to your pages. Google Analytics, Tag Manager and Ads are set up in the <a href="#" onclick="navTo('analytics');return false" style="color:var(--ember);font-weight:600">Analytics module</a> as well.${active.length?' <span style="color:var(--muted)">('+active.length+' legacy toggle'+(active.length===1?'':'s')+' still saved in data/injections.json — not published.)</span>':''}</div>`
     +presets;
@@ -13323,6 +13361,40 @@ function rcRenderStatus(d){
 }
 // Show the v3 score-threshold control only when v3 is selected.
 function rcToggleV3(v){ const row=document.getElementById('s-rc-threshold-row'); if(row) row.style.display=(v==='v3')?'':'none'; }
+
+// ── MarkUp reviews (this site's side) ───────────────────────────────────────
+// Clients comment on the site in MarkUp.io; the agency's hub turns each comment
+// into a change and, once someone there approves it, writes it to this site's
+// page (with a backup and a revision first). This switch is all a site has: on
+// unless turned off (site.json markup.enabled = false). api.php refuses the
+// hub's reads and writes while it is off.
+function markupAddonHtml(){
+  const on=!(_site&&_site.markup&&_site.markup.enabled===false);
+  const logo='<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#2F3BA2"></rect><path d="M7 16l3-8 2 5 2-3 3 6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+  return `<div class="si-sec pl-addon">
+    <div class="pl-addon-top">
+      <span class="pl-logo">${logo}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pl-n" style="display:flex;align-items:center;gap:8px">MarkUp reviews <span class="pl-badge${on?' on':''}">${on?'On':'Off'}</span></div>
+        <div class="pl-s" style="margin-top:3px">When clients pin comments on this site in MarkUp, the agency turns them into changes and approves each one before it goes live. Every change is backed up first and shows in Revisions, so it can be undone.</div>
+      </div>
+    </div>
+    <div class="pl-addon-body">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="s-markup-on" ${on?'checked':''} style="width:auto;margin:0"> Let approved MarkUp changes update this site</label>
+      <div class="pl-addon-actions"><button class="fd-btn-primary" onclick="saveMarkupSwitch()">Save</button></div>
+    </div>
+  </div>`;
+}
+async function saveMarkupSwitch(){
+  const on=!!document.getElementById('s-markup-on')?.checked;
+  if(!_site.markup) _site.markup={};
+  _site.markup.enabled=on;
+  try{
+    await saveSiteInfo();
+    if(document.getElementById('p-inject')?.classList.contains('on')) renderPlugins();
+    toast(on?'MarkUp changes are on for this site ✓':'MarkUp changes are off for this site','ok');
+  }catch(e){ toast('Save failed: '+e.message,'err'); }
+}
 
 // ── hCaptcha add-on ──────────────────────────────────────────────────────────
 // An alternative to reCAPTCHA above — same site-wide on/off + two-key shape

@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.157');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.158');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -261,7 +261,13 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //    calls (fourge-chat.js), public for the same reason. They answer only while
 //    the chat is switched on, reach a conversation only with the random chat id
 //    chat_start handed out, and are rate-limited per chat, address and site.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe', 'host_probe', 'chat_start', 'chat_send', 'chat_poll'];
+//  • 'markup_hello' / 'markup_read' / 'markup_write' / 'markup_upload' are the
+//    agency's MarkUp hub's calls. Each needs an Ed25519 signature from a hub key
+//    this engine trusts, made for this site's host, under 5 minutes old and never
+//    seen before (fourgeMarkupVerify); without one they answer 401 and do nothing.
+//    They reach only the pages the Pages list shows and an images folder, and a
+//    site can switch them off in Plugins.
+$PUBLIC_ACTIONS  =['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe', 'host_probe', 'chat_start', 'chat_send', 'chat_poll', 'markup_hello', 'markup_read', 'markup_write', 'markup_upload'];   // markup_*: checked by the hub's signature (fourgeMarkupVerify)
 $SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin','chat_bot_status','chat_bot_save','chat_ai_test','chat_ai_test_poll'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
@@ -373,6 +379,10 @@ try {
         case 'upload':      ob_end_clean(); handleUpload();    break;
         case 'delete_file': ob_end_clean(); cmsDeleteFile($body); break;
         case 'send_form':   ob_end_clean(); cmsSendForm($body); break;
+        case 'markup_hello':  ob_end_clean(); fourgeApiMarkupHello($body); break;
+        case 'markup_read':   ob_end_clean(); fourgeApiMarkupRead($body); break;
+        case 'markup_write':  ob_end_clean(); fourgeApiMarkupWrite($body); break;
+        case 'markup_upload': ob_end_clean(); fourgeApiMarkupUpload($body); break;
         case 'check_form_password': ob_end_clean(); fourgeApiCheckFormPassword($body); break;
         case 'form_view':   ob_end_clean(); fourgeApiFormView($body); break;
         case 'hash_form_password': ob_end_clean(); fourgeApiHashFormPassword($body); break;
@@ -7913,6 +7923,184 @@ function fourgeApiSeoPkgAdmin($me, $body) {
     echo json_encode(['ok' => true, 'hasToken' => $has, 'endpoint' => $endpoint,
         'tickEndpoint' => str_replace('/package', '/tick', $endpoint),
         'lastReport' => cmsPkgReadJson('seo-package-report.json', null)]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARKUP REVIEWS — THE CLIENT-SITE SIDE
+// Clients pin comments on a site in MarkUp.io. The agency's hub (one Fourge
+// install holding the MarkUp key, the queue and the approvals) turns each into a
+// change; when someone approves it, the hub reads the page from this site and
+// writes it back here. Nothing is set up per site: every request carries an
+// Ed25519 signature from the hub, checked against the hub public keys this engine
+// ships with (fourgeMarkupHubKeys) or that the server sets in the environment
+// (FOURGE_MARKUP_HUB_KEYS, comma-separated). A public key can only check a
+// signature, never make one, so a site holding it gives nothing away.
+//
+// A request: {action, payload (a JSON string), host, ts, nonce, sig}, signed over
+//   "fourge-markup-v1\n<action>\n<host>\n<ts>\n<nonce>\n<sha256 of payload>"
+// host binds it to this site, ts must be within 5 minutes, and a nonce is only
+// accepted once. A site can switch MarkUp off in Plugins (site.json
+// markup.enabled = false); it is on unless switched off.
+// ─────────────────────────────────────────────────────────────────────────────
+function fourgeMarkupHubKeys() {
+    $keys = [];   // the hub's public key goes here (base64), released to every site with the engine
+    foreach (explode(',', (string)getenv('FOURGE_MARKUP_HUB_KEYS')) as $k) { $k = trim($k); if ($k !== '') $keys[] = $k; }
+    return array_values(array_unique($keys));
+}
+function fourgeMarkupEnabled() {
+    $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
+    return !(is_array($site) && is_array($site['markup'] ?? null) && array_key_exists('enabled', $site['markup']) && !$site['markup']['enabled']);
+}
+function fourgeMarkupHostKey($h) {
+    $h = strtolower(trim((string)$h));
+    $h = preg_replace('~:\d+$~', '', $h);
+    return preg_replace('~^www\.~', '', $h);
+}
+// Check a hub request. Returns the decoded payload array, or [code, message] on failure.
+function fourgeMarkupVerify($body, $action) {
+    if (!function_exists('sodium_crypto_sign_verify_detached')) return [500, 'This server\'s PHP has no sodium extension, so it cannot check the hub\'s signature.'];
+    $keys = fourgeMarkupHubKeys();
+    if (!$keys) return [503, 'This site does not trust a MarkUp hub yet.'];
+    $payload = (string)($body['payload'] ?? '');
+    $host = (string)($body['host'] ?? '');
+    $ts = (int)($body['ts'] ?? 0);
+    $nonce = (string)($body['nonce'] ?? '');
+    $sig = base64_decode((string)($body['sig'] ?? ''), true);
+    if ($sig === false || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES || !preg_match('~^[A-Za-z0-9_-]{16,64}$~', $nonce)) return [401, 'Missing or malformed signature.'];
+    if (abs(time() - $ts) > 300) return [401, 'The request is too old (or the clocks disagree by over 5 minutes).'];
+    if (fourgeMarkupHostKey($host) === '' || fourgeMarkupHostKey($host) !== fourgeMarkupHostKey($_SERVER['HTTP_HOST'] ?? '')) return [401, 'The request was signed for a different site.'];
+    $msg = "fourge-markup-v1\n" . $action . "\n" . $host . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $payload);
+    $ok = false;
+    foreach ($keys as $k) {
+        $pk = base64_decode($k, true);
+        if ($pk !== false && strlen($pk) === SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES && sodium_crypto_sign_verify_detached($sig, $msg, $pk)) { $ok = true; break; }
+    }
+    if (!$ok) return [401, 'The signature does not match a trusted hub.'];
+    try {
+        $pdo = fourgeDb();
+        $pdo->exec("CREATE TABLE IF NOT EXISTS markup_nonces (nonce TEXT PRIMARY KEY, ts INTEGER NOT NULL)");
+        $pdo->prepare("DELETE FROM markup_nonces WHERE ts < ?")->execute([time() - 3600]);
+        $st = $pdo->prepare("INSERT OR IGNORE INTO markup_nonces (nonce, ts) VALUES (?, ?)");
+        $st->execute([$nonce, time()]);
+        if ($st->rowCount() < 1) return [401, 'That request was already used.'];
+    } catch (Throwable $e) { return [500, 'Could not record the request.']; }
+    $p = json_decode($payload, true);
+    return is_array($p) ? $p : [];
+}
+// A page this site serves, as the hub names it: a path from the page scan (the
+// same list Pages shows), never anything else — not admin/, data/, a script, the
+// CMS's own page or a path outside the site. Returns the relative path, or ''.
+function fourgeMarkupPagePath($p) {
+    $p = ltrim(str_replace('\\', '/', trim((string)$p)), '/');
+    if ($p === '' || strpos($p, "\0") !== false || strpos($p, '..') !== false || !preg_match('~\.html?$~i', $p)) return '';
+    $pages = [];
+    scanHtml(PUBLIC_HTML, PUBLIC_HTML, ['preview.html', '404.html', '500.html', 'maintenance.html', 'coming-soon.html', 'offline.html'], $pages);
+    foreach ($pages as $pg) if ((string)$pg['path'] === $p && empty($pg['is_cms'])) return $p;
+    return '';
+}
+function fourgeMarkupPages() {
+    $pages = [];
+    scanHtml(PUBLIC_HTML, PUBLIC_HTML, ['preview.html', '404.html', '500.html', 'maintenance.html', 'coming-soon.html', 'offline.html'], $pages);
+    $meta = cmsPkgReadJson('pages.json', []);
+    $out = [];
+    foreach ($pages as $pg) {
+        if (!empty($pg['is_cms'])) continue;
+        $title = (string)$pg['title'];
+        if (is_array($meta)) foreach ($meta as $rec) if (is_array($rec) && (string)($rec['path'] ?? $rec['file'] ?? '') === (string)$pg['path'] && trim((string)($rec['title'] ?? '')) !== '') { $title = (string)$rec['title']; break; }
+        $out[] = ['path' => (string)$pg['path'], 'title' => $title];
+    }
+    return $out;
+}
+// A revision entry and snapshot, in the same shape the editor's logRevision()
+// writes, so a hub-applied change shows in Revisions and can be viewed or restored.
+function fourgeLogRevisionServer($path, $html, $who, $username) {
+    $revs = cmsPkgReadJson('revisions.json', []);
+    if (!is_array($revs)) $revs = [];
+    $rid = 'rev_' . (int)round(microtime(true) * 1000);
+    $title = '';
+    $meta = cmsPkgReadJson('pages.json', []);
+    if (is_array($meta)) foreach ($meta as $rec) if (is_array($rec) && (string)($rec['path'] ?? $rec['file'] ?? '') === $path && trim((string)($rec['title'] ?? '')) !== '') { $title = (string)$rec['title']; break; }
+    if ($title === '' && preg_match('~<title[^>]*>([^<]+)</title>~i', $html, $m)) $title = trim(html_entity_decode($m[1], ENT_QUOTES, 'UTF-8'));
+    if ($title === '') $title = $path;
+    array_unshift($revs, [
+        'id' => $rid, 'page' => (string)preg_replace('~\.html?$~i', '', basename($path)), 'pageTitle' => $title,
+        'path' => $path, 'user' => (string)$who, 'username' => (string)$username, 'timestamp' => gmdate('c'),
+        'size' => strlen($html),
+        'preview' => mb_substr(trim(preg_replace('~\s+~', ' ', preg_replace('~<[^>]+>~', ' ', $html))), 0, 160),
+    ]);
+    $dropped = array_slice($revs, 100);
+    $revs = array_slice($revs, 0, 100);
+    fourgeSitePut(cmsPkgDataPath('revisions.json'), json_encode($revs, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: revision index');
+    fourgeSitePut(cmsPkgDataPath('rev_' . $rid . '.html'), $html, 'Fourge: revision snapshot ' . $rid);
+    foreach ($dropped as $d) { $f = cmsPkgDataPath('rev_' . (string)($d['id'] ?? '') . '.html'); if (is_array($d) && !empty($d['id']) && is_file($f)) @unlink($f); }
+    return $rid;
+}
+function fourgeMarkupOut($code, $arr) { if ($code !== 200) http_response_code($code); echo json_encode($arr); }
+
+function fourgeApiMarkupHello($body) {
+    $p = fourgeMarkupVerify($body, 'markup_hello');
+    if (isset($p[0]) && is_int($p[0])) { fourgeMarkupOut($p[0], ['ok' => false, 'error' => $p[1]]); return; }
+    $site = cmsPkgReadJson('site.json', []); if (!is_array($site)) $site = [];
+    $hosts = [];
+    foreach (array_merge([(string)($site['website'] ?? ''), (string)($_SERVER['HTTP_HOST'] ?? '')], array_map('strval', (array)($site['devHosts'] ?? []))) as $h) {
+        $h = preg_match('~^https?://~i', $h) ? (string)parse_url($h, PHP_URL_HOST) : $h;
+        $k = fourgeMarkupHostKey($h);
+        if ($k !== '' && preg_match('~^[a-z0-9.\-]+$~', $k)) $hosts[] = $k;
+    }
+    $enabled = fourgeMarkupEnabled();
+    fourgeMarkupOut(200, ['ok' => true, 'fourge' => true, 'version' => FOURGE_API_VERSION, 'enabled' => $enabled,
+        'name' => (string)($site['name'] ?? ''), 'website' => (string)($site['website'] ?? ''), 'hosts' => array_values(array_unique($hosts)),
+        'pages' => $enabled ? fourgeMarkupPages() : []]);
+}
+function fourgeApiMarkupRead($body) {
+    $p = fourgeMarkupVerify($body, 'markup_read');
+    if (isset($p[0]) && is_int($p[0])) { fourgeMarkupOut($p[0], ['ok' => false, 'error' => $p[1]]); return; }
+    if (!fourgeMarkupEnabled()) { fourgeMarkupOut(403, ['ok' => false, 'error' => 'MarkUp changes are switched off on this site.', 'reason' => 'disabled']); return; }
+    $path = fourgeMarkupPagePath($p['path'] ?? '');
+    if ($path === '') { fourgeMarkupOut(404, ['ok' => false, 'error' => 'No such page on this site.', 'reason' => 'no_page']); return; }
+    $html = (string)@file_get_contents(PUBLIC_HTML . '/' . $path);
+    fourgeMarkupOut(200, ['ok' => true, 'path' => $path, 'html' => $html, 'sha256' => hash('sha256', $html)]);
+}
+function fourgeApiMarkupWrite($body) {
+    $p = fourgeMarkupVerify($body, 'markup_write');
+    if (isset($p[0]) && is_int($p[0])) { fourgeMarkupOut($p[0], ['ok' => false, 'error' => $p[1]]); return; }
+    if (!fourgeMarkupEnabled()) { fourgeMarkupOut(403, ['ok' => false, 'error' => 'MarkUp changes are switched off on this site.', 'reason' => 'disabled']); return; }
+    $path = fourgeMarkupPagePath($p['path'] ?? '');
+    if ($path === '') { fourgeMarkupOut(404, ['ok' => false, 'error' => 'No such page on this site.', 'reason' => 'no_page']); return; }
+    $html = (string)($p['html'] ?? '');
+    $abs = PUBLIC_HTML . '/' . $path;
+    $cur = (string)@file_get_contents($abs);
+    // Stale: the page changed since the hub read it. Nothing is written; the hub regenerates or flags it.
+    if (hash('sha256', $cur) !== (string)($p['expect'] ?? '')) { fourgeMarkupOut(409, ['ok' => false, 'error' => 'The page changed since this change was made.', 'reason' => 'stale', 'sha256' => hash('sha256', $cur)]); return; }
+    if ($html === '' || strlen($html) > 8 * 1024 * 1024 || !preg_match('~<(html|body)\b~i', $html)) { fourgeMarkupOut(400, ['ok' => false, 'error' => 'That is not a whole page.', 'reason' => 'bad_html']); return; }
+    // The same guard the editor has (fourgeShrinkAlarm): a page that loses most of itself is refused.
+    if (strlen($cur) > 2000 && strlen($html) < strlen($cur) * 0.2) { fourgeMarkupOut(400, ['ok' => false, 'error' => 'The new page is under a fifth of the old one; refused as a safety check.', 'reason' => 'shrink']); return; }
+    cmsPkgBackup($path);
+    $who = 'MarkUp: ' . mb_substr(trim((string)($p['by'] ?? 'agency')), 0, 80);
+    fourgeLogRevisionServer($path, $html, $who, 'markup');
+    $tmp = $abs . '.tmp-' . bin2hex(random_bytes(4));
+    if (@file_put_contents($tmp, $html) !== strlen($html) || !@rename($tmp, $abs)) { @unlink($tmp); fourgeMarkupOut(500, ['ok' => false, 'error' => 'Could not write the page.', 'reason' => 'write_failed']); return; }
+    fourgeMirrorLater($abs, $html, 'Fourge: MarkUp change' . (trim((string)($p['note'] ?? '')) !== '' ? ' — ' . mb_substr(trim((string)$p['note']), 0, 80) : ''));
+    fourgeMarkupOut(200, ['ok' => true, 'path' => $path, 'sha256' => hash('sha256', $html)]);
+}
+// An image from a client's MarkUp attachment, for an image swap. Images only,
+// checked by their bytes, saved under assets/markup/ with a new name each time
+// (so no browser keeps showing a cached old picture).
+function fourgeApiMarkupUpload($body) {
+    $p = fourgeMarkupVerify($body, 'markup_upload');
+    if (isset($p[0]) && is_int($p[0])) { fourgeMarkupOut($p[0], ['ok' => false, 'error' => $p[1]]); return; }
+    if (!fourgeMarkupEnabled()) { fourgeMarkupOut(403, ['ok' => false, 'error' => 'MarkUp changes are switched off on this site.', 'reason' => 'disabled']); return; }
+    $bytes = base64_decode((string)($p['data_b64'] ?? ''), true);
+    if ($bytes === false || $bytes === '' || strlen($bytes) > 10 * 1024 * 1024) { fourgeMarkupOut(400, ['ok' => false, 'error' => 'No image, or over 10 MB.', 'reason' => 'bad_file']); return; }
+    $info = @getimagesizefromstring($bytes);
+    $ext = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/gif' => 'gif', 'image/webp' => 'webp'][is_array($info) ? (string)($info['mime'] ?? '') : ''] ?? '';
+    if ($ext === '') { fourgeMarkupOut(400, ['ok' => false, 'error' => 'Only PNG, JPEG, GIF or WebP images.', 'reason' => 'bad_type']); return; }
+    $base = trim(preg_replace('~[^a-z0-9]+~', '-', strtolower((string)pathinfo((string)($p['name'] ?? 'image'), PATHINFO_FILENAME))), '-') ?: 'image';
+    $rel = 'assets/markup/' . gmdate('Ymd') . '-' . bin2hex(random_bytes(3)) . '-' . mb_substr($base, 0, 40) . '.' . $ext;
+    $abs = PUBLIC_HTML . '/' . $rel;
+    if (!is_dir(dirname($abs))) @mkdir(dirname($abs), 0755, true);
+    if (fourgeSitePut($abs, $bytes, 'Fourge: MarkUp image') === false) { fourgeMarkupOut(500, ['ok' => false, 'error' => 'Could not save the image.', 'reason' => 'write_failed']); return; }
+    fourgeMarkupOut(200, ['ok' => true, 'url' => '/' . $rel]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
