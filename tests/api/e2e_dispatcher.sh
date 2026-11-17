@@ -57,9 +57,12 @@ ANSRV=$!
 : > "$SMLOG"
 php -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/smtp_stub.php" "$SMPORT" "$SMLOG" > "$S.smtpstub.log" 2>&1 &
 SMSRV=$!
+# a MarkUp hub signing key for this run: the site trusts its public half through FOURGE_MARKUP_HUB_KEYS
+MKKEYS=$(php -r '$kp=sodium_crypto_sign_keypair(); echo base64_encode(sodium_crypto_sign_secretkey($kp))," ",base64_encode(sodium_crypto_sign_publickey($kp));')
+MKSK="${MKKEYS%% *}"; MKPK="${MKKEYS##* }"
 # opcache.revalidate_freq=0: the built-in server caches compiled PHP (opcache.enable_cli does not cover it), and the
 # suite edits config.secret.php mid-run; without it a request within 2 s of an edit still sees the old file.
-FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_ANTHROPIC_API_BASE="http://127.0.0.1:$ANPORT" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_ANTHROPIC_API_BASE="http://127.0.0.1:$ANPORT" FOURGE_MARKUP_HUB_KEYS="$MKPK" FOURGE_PROBE_ALLOW_LOCAL=1 FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHLPORT/__state" && break; sleep 0.2; done
@@ -703,6 +706,99 @@ rm -f "$S/due-page.html" "$S/stuck-page.html" "$S/hidden-page.html" "$S/sitemap.
 cp "$S.sitebak.json" "$S/data/site.json"; rm -f "$S.sitebak.json"
 call "delete_file data/chat.json" '{"action":"delete_file","path":"data/chat.json"}'
 call "write_file data/site.json (restore the original)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$SITE}"
+
+# MarkUp reviews (1.14.158): the agency's hub reads and writes this site's pages with requests it signs, so nothing is
+# set up per site. tests/lib/markup_sign.php plays the hub with the key pair made above (its public half is the server's
+# FOURGE_MARKUP_HUB_KEYS). No session: the hub has none.
+cp "$S/data/site.json" "$S.mkbak.json"
+python3 - "$S" <<'PY'
+import os,sys; S=sys.argv[1]
+body=''.join('<p data-fourge-block="bp%02d">Paragraph %d of the MarkUp test page, with enough words to give the page a real size.</p>\n' % (i,i) for i in range(40))
+open(S+'/mk-page.html','w').write('<!DOCTYPE html>\n<html><head><title>MarkUp Test Page</title></head><body>\n<h1 data-fourge-block="bhead">Welcome</h1>\n'+body+'</body></html>\n')
+os.makedirs(S+'/mk',exist_ok=True)
+open(S+'/mk/inner.html','w').write('<!DOCTYPE html><html><head><title>Inner</title></head><body><p>inner</p></body></html>\n')
+open(S+'/mk-shell.html','w').write('<!DOCTYPE html><html><body><script src="../block-renderer.jsx"></script></body></html>\n')
+PY
+MKHOST="127.0.0.1:$PORT"
+mkreq(){ php "$SRC/tests/lib/markup_sign.php" "${MKKEY:-$MKSK}" "$1" "${MKH:-$MKHOST}" "$2" "${3:-}" "${4:-}"; }   # a signed request: action, payload JSON [, ts, nonce]
+mkcall(){ local b="$1"; shift; local out; out=$(curl -s -w $'\n__STATUS__%{http_code}' -X POST -H 'Content-Type: application/json' --data "$b" "$@" "$BASE"); MKST="${out##*__STATUS__}"; LAST="${out%$'\n'__STATUS__*}"; }
+mkedit(){ printf '%s' "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); exec(sys.argv[1]); print(json.dumps(d))' "$2"; }   # change a signed request after signing
+mkpath(){ python3 -c 'import json,sys; print(json.dumps({"path":sys.argv[1]}))' "$1"; }
+mkwp(){ python3 -c 'import json,sys; print(json.dumps({"path":sys.argv[1],"html":open(sys.argv[2]).read(),"expect":sys.argv[3],"by":"Jane Reviewer","note":"New heading"}))' "$1" "$2" "$3"; }
+mksha(){ sha256sum "$1" | cut -d' ' -f1; }
+mkerr(){ printf '%s' "HTTP $MKST: $(printf '%s' "$LAST" | head -c 240 | tr '\n' ' ')"; }
+mkcall "$(mkreq markup_hello '{}')"
+[ "$MKST" = 200 ] && ans "
+assert d.get('ok') is True and d.get('fourge') is True and d.get('enabled') is True and d.get('version')=='$V', d
+paths=[p['path'] for p in d['pages']]
+assert 'mk-page.html' in paths and 'mk/inner.html' in paths, paths
+assert [p for p in d['pages'] if p['path']=='mk-page.html'][0]['title']=='MarkUp Test Page', d['pages']
+assert 'mk-shell.html' not in paths and 'preview.html' not in paths and not [p for p in paths if p.startswith(('admin/','data/'))], paths
+assert '127.0.0.1' in d['hosts'], d['hosts']" && chk 0 "markup_hello signed by the hub: a Fourge site, MarkUp on, its version, hosts and pages (not the CMS's own page, admin/ or data/)" || chk 1 "markup_hello — $(mkerr)"
+mkcall '{"action":"markup_hello","payload":"{}","host":"127.0.0.1","ts":1,"nonce":"abcdefghijklmnop","sig":""}'
+[ "$MKST" = 401 ] && ans "assert d.get('ok') is False and 'pages' not in d, d" && chk 0 "…unsigned: 401, and nothing about the site" || chk 1 "unsigned markup_hello — $(mkerr)"
+mkcall "$(MKKEY=$(php -r 'echo base64_encode(sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair()));') mkreq markup_hello '{}')"
+[ "$MKST" = 401 ] && ans "assert 'trusted hub' in d.get('error',''), d" && chk 0 "…signed with a key this engine does not trust: 401" || chk 1 "untrusted key — $(mkerr)"
+mkcall "$(mkreq markup_hello '{}' $(( $(date +%s) - 600 )))"
+[ "$MKST" = 401 ] && ans "assert 'too old' in d.get('error',''), d" && chk 0 "…signed ten minutes ago: 401 (a request is good for 5 minutes)" || chk 1 "old request — $(mkerr)"
+mkcall "$(MKH=other-site.example mkreq markup_hello '{}')"
+[ "$MKST" = 401 ] && ans "assert 'different site' in d.get('error',''), d" && chk 0 "…signed for another site: 401, so a request to one client site cannot be replayed at another" || chk 1 "other host — $(mkerr)"
+mkcall "$(MKH=e2e-site.example mkreq markup_hello '{}')" -H "Host: www.e2e-site.example:$PORT"
+[ "$MKST" = 200 ] && ans "assert d.get('ok') is True, d" && chk 0 "…signed for e2e-site.example and received at www.e2e-site.example: the same site, accepted" || chk 1 "www host — $(mkerr)"
+R=$(mkreq markup_read "$(mkpath mk-page.html)")
+mkcall "$(mkedit "$R" 'd["payload"]=json.dumps({"path":"mk/inner.html"})')"
+[ "$MKST" = 401 ] && ans "assert 'html' not in d, d" && chk 0 "…a signed request whose payload was changed afterwards: 401" || chk 1 "changed payload — $(mkerr)"
+mkcall "$(mkedit "$R" 'd["action"]="markup_write"')"
+[ "$MKST" = 401 ] && chk 0 "…a request signed for reading, sent as a write: 401 (the signature covers the action)" || chk 1 "read signature sent as a write — $(mkerr)"
+mkcall "$R"
+[ "$MKST" = 200 ] && ans "assert d.get('ok') is True and d['path']=='mk-page.html' and d['html']==open('$S/mk-page.html').read() and d['sha256']=='$(mksha "$S/mk-page.html")', {k:d.get(k) for k in ('ok','path','sha256')}" && chk 0 "markup_read: the page as it is on disk, with its sha256" || chk 1 "markup_read — $(mkerr)"
+mkcall "$R"
+[ "$MKST" = 401 ] && ans "assert 'already used' in d.get('error',''), d" && chk 0 "…the same signed request sent again: 401 (each one is good once)" || chk 1 "replayed request — $(mkerr)"
+mkcall "$(mkreq markup_read "$(mkpath /mk/inner.html)")"
+[ "$MKST" = 200 ] && ans "assert d['path']=='mk/inner.html' and '<p>inner</p>' in d['html'], d" && chk 0 "…a page in a folder, named with or without the leading /" || chk 1 "markup_read mk/inner.html — $(mkerr)"
+bad=""; for p in admin/index.html admin/api.php data/site.json data/users.json ../mk-page.html mk/../mk-page.html mk-shell.html preview.html nope.html mk; do
+  mkcall "$(mkreq markup_read "$(mkpath "$p")")"
+  { [ "$MKST" = 404 ] && ans "assert d.get('reason')=='no_page' and 'html' not in d, d" 2>/dev/null; } || bad="$bad $p→$MKST"
+done
+[ -z "$bad" ] && chk 0 "markup_read answers 404 for anything that is not a page in the Pages list (admin/, data/, ../, the CMS's own page, preview.html, a missing page, a folder)" || chk 1 "markup_read let through:$bad"
+CUR=$(mksha "$S/mk-page.html"); cp "$S/mk-page.html" "$S.mkold.html"
+sed 's|>Welcome</h1>|>Welcome to the new site</h1>|' "$S.mkold.html" > "$S.mknew.html"; NEWSHA=$(mksha "$S.mknew.html")
+mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mknew.html" "$(printf 'older' | sha256sum | cut -d' ' -f1)")")"
+[ "$MKST" = 409 ] && ans "assert d.get('reason')=='stale' and d.get('sha256')=='$CUR', d" && cmp -s "$S/mk-page.html" "$S.mkold.html" && chk 0 "markup_write made from an older copy of the page: 409 stale with the page's sha256 now, and nothing written" || chk 1 "stale write — $(mkerr)"
+printf 'just some words' > "$S.mkbad.html"
+mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mkbad.html" "$CUR")")"
+[ "$MKST" = 400 ] && ans "assert d.get('reason')=='bad_html', d" && cmp -s "$S/mk-page.html" "$S.mkold.html" && chk 0 "…a write that is not a whole page: 400, nothing written" || chk 1 "bad_html write — $(mkerr)"
+printf '<!DOCTYPE html><html><body><p>gone</p></body></html>' > "$S.mkbad.html"
+mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mkbad.html" "$CUR")")"
+[ "$MKST" = 400 ] && ans "assert d.get('reason')=='shrink', d" && cmp -s "$S/mk-page.html" "$S.mkold.html" && chk 0 "…a write that would leave under a fifth of the page: 400 (the editor's shrink guard), nothing written" || chk 1 "shrink write — $(mkerr)"
+mkcall "$(mkreq markup_write "$(mkwp data/site.json "$S.mknew.html" "$(mksha "$S/data/site.json")")")"
+[ "$MKST" = 404 ] && cmp -s "$S/data/site.json" "$S.mkbak.json" && chk 0 "…a write to data/site.json: 404, nothing written" || chk 1 "write to data/site.json — $(mkerr)"
+mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mknew.html" "$CUR")")"
+[ "$MKST" = 200 ] && ans "assert d.get('ok') is True and d.get('path')=='mk-page.html' and d.get('sha256')=='$NEWSHA', d" && cmp -s "$S/mk-page.html" "$S.mknew.html" && cmp -s "$S/data/bak/mk-page.html" "$S.mkold.html" && chk 0 "markup_write from the page as it is: written, with the copy from before kept in data/bak/" || chk 1 "markup_write — $(mkerr) / bak: $(head -c 80 "$S/data/bak/mk-page.html" 2>&1)"
+python3 - "$S" "$S.mknew.html" <<'PY' && chk 0 "…and listed in Revisions as 'MarkUp: Jane Reviewer', its snapshot there for View and Restore" || chk 1 "MarkUp revision — $(head -c 400 "$S/data/revisions.json" 2>&1 | tr '\n' ' ')"
+import json,sys; S=sys.argv[1]
+r=json.load(open(S+'/data/revisions.json'))[0]
+assert r['path']=='mk-page.html' and r['user']=='MarkUp: Jane Reviewer' and r['username']=='markup' and r['pageTitle']=='MarkUp Test Page' and r['id'].startswith('rev_') and r['size']>2000, r
+assert open(S+'/data/rev_'+r['id']+'.html').read()==open(sys.argv[2]).read()
+PY
+mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mkold.html" "$NEWSHA")")"
+[ "$MKST" = 200 ] && cmp -s "$S/mk-page.html" "$S.mkold.html" && chk 0 "…the hub's Revert (the copy from before, made against the page it wrote) puts the page back" || chk 1 "revert — $(mkerr)"
+PNG=iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==
+mkcall "$(mkreq markup_upload "{\"name\":\"../../New Logo!.png\",\"data_b64\":\"$PNG\"}")"
+MKURL=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("url",""))' 2>/dev/null)
+[ "$MKST" = 200 ] && [[ "$MKURL" =~ ^/assets/markup/[0-9]{8}-[0-9a-f]{6}-new-logo\.png$ ]] && [ "$(base64 -w0 < "$S$MKURL")" = "$PNG" ] && chk 0 "markup_upload: a client's PNG is saved under assets/markup/ with a new, clean name ($MKURL)" || chk 1 "markup_upload PNG — $(mkerr)"
+mkcall "$(mkreq markup_upload "{\"name\":\"logo.svg\",\"data_b64\":\"$(printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' | base64 -w0)\"}")"
+[ "$MKST" = 400 ] && ans "assert d.get('reason')=='bad_type', d" && [ "$(ls "$S/assets/markup" | wc -l)" = 1 ] && chk 0 "…an SVG (it can carry script) or anything else that is not a PNG, JPEG, GIF or WebP: 400, nothing saved" || chk 1 "markup_upload SVG — $(mkerr)"
+siteput "d['markup']={'enabled':False}"
+mkcall "$(mkreq markup_hello '{}')"
+[ "$MKST" = 200 ] && ans "assert d.get('ok') is True and d['enabled'] is False and d['pages']==[], d" && chk 0 "MarkUp switched off in Plugins: hello says so and lists no pages" || chk 1 "hello while off — $(mkerr)"
+bad=""
+mkcall "$(mkreq markup_read "$(mkpath mk-page.html)")"; { [ "$MKST" = 403 ] && ans "assert d.get('reason')=='disabled'"; } || bad="$bad read→$MKST"
+mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mknew.html" "$CUR")")"; { [ "$MKST" = 403 ] && ans "assert d.get('reason')=='disabled'"; } || bad="$bad write→$MKST"
+mkcall "$(mkreq markup_upload "{\"name\":\"a.png\",\"data_b64\":\"$PNG\"}")"; { [ "$MKST" = 403 ] && ans "assert d.get('reason')=='disabled'"; } || bad="$bad upload→$MKST"
+[ -z "$bad" ] && cmp -s "$S/mk-page.html" "$S.mkold.html" && [ "$(ls "$S/assets/markup" | wc -l)" = 1 ] && chk 0 "…and read, write and upload answer 403 (disabled), changing nothing" || chk 1 "MarkUp off:$bad"
+cp "$S.mkbak.json" "$S/data/site.json"
+rm -rf "$S/mk-page.html" "$S/mk" "$S/mk-shell.html" "$S/assets/markup" "$S/data/bak/mk-page.html" "$S.mkold.html" "$S.mknew.html" "$S.mkbad.html" "$S.mkbak.json"
 
 TOK=""
 call "blog_sync_poke (public)" '{"action":"blog_sync_poke"}'
