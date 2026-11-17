@@ -13,6 +13,7 @@ ANPORT="${E2E_ANTHROPIC_PORT:-8936}"; ANMODE="$SRC/tests/.cache/anthropic_stub_m
 SMPORT="${E2E_SMTP_PORT:-8937}"; SMLOG="$SRC/tests/.cache/smtp_stub.jsonl"
 MKAPORT="${E2E_MARKUP_PORT:-8938}"; MKSTATE="$SRC/tests/.cache/markup_stub_state.json"   # the MarkUp API stand-in (tests/lib/markup_stub.php)
 MKCPORT="${E2E_CLIENT_PORT:-8939}"; S2="$SRC/tests/.cache/e2e_client"                    # a second site: a MarkUp client of the hub below
+MKRPORT="${E2E_REDIRECT_PORT:-8940}"                                                     # that site's development link, now redirecting to it (tests/lib/redirect_stub.php)
 export NO_PROXY="127.0.0.1,localhost,.example${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost,.example${no_proxy:+,$no_proxy}"   # the engine's curl must reach the stubs directly
 command -v python3 >/dev/null 2>&1 || { echo "FAIL python3 is required for the dispatcher suite"; exit 1; }
 rm -rf "$S"; mkdir -p "$S"
@@ -69,7 +70,9 @@ MKASRV=$!
 # A client site of the MarkUp hub: its own copy and database, answering as client-e2e.example. It is given no
 # key: it trusts the hub (the main test site, FOURGE_MARKUP_HUB_URL) by fetching the key the hub publishes.
 rm -rf "$S2"; cp -a "$S" "$S2"; rm -f "$S2"/admin/fourge-e2e.db*
-printf '{"name":"Client E2E","website":"http://client-e2e.example:%s","devHosts":["dev.client-e2e.example"]}' "$MKCPORT" > "$S2/data/site.json"
+printf '{"name":"Client E2E","website":"http://client-e2e.example:%s","devHosts":["dev.client-e2e.example","dev2.client-e2e.example"]}' "$MKCPORT" > "$S2/data/site.json"
+REDIRECT_TO="http://client-e2e.example:$MKCPORT" php -S 127.0.0.1:$MKRPORT -t "$S.mkroot" -d display_errors=1 -d error_reporting=32767 -d log_errors=0 "$SRC/tests/lib/redirect_stub.php" > "$S.redirect.log" 2>&1 &
+MKRSRV=$!
 python3 - "$S2/hello-client.html" <<'PY'
 import sys
 body=''.join('<p>Paragraph %d about the client, long enough to give the page a real size.</p>\n' % i for i in range(30))
@@ -81,7 +84,7 @@ MKCSRV=$!
 # suite edits config.secret.php mid-run; without it a request within 2 s of an edit still sees the old file.
 FOURGE_GH_API_BASE="http://127.0.0.1:$GHPORT" FOURGE_GHL_API_BASE="http://127.0.0.1:$GHLPORT" FOURGE_ANTHROPIC_API_BASE="http://127.0.0.1:$ANPORT" FOURGE_MARKUP_HUB_KEYS="$MKPK" \
 FOURGE_MARKUP_HUB_URL="http://127.0.0.1:$PORT" FOURGE_MARKUP_API_BASE="http://127.0.0.1:$MKAPORT/api/v2" FOURGE_PROBE_ALLOW_LOCAL=1 \
-FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1,client-e2e.example:$MKCPORT:127.0.0.1,www.client-e2e.example:$MKCPORT:127.0.0.1,dev.client-e2e.example:$MKCPORT:127.0.0.1,not-fourge.example:$ANPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
+FOURGE_PROBE_RESOLVE="e2e-site.example:$PORT:127.0.0.1,other-site.example:$GHPORT:127.0.0.1,client-e2e.example:$MKCPORT:127.0.0.1,www.client-e2e.example:$MKCPORT:127.0.0.1,dev.client-e2e.example:$MKCPORT:127.0.0.1,not-fourge.example:$ANPORT:127.0.0.1,dev2.client-e2e.example:$MKRPORT:127.0.0.1,old-link.example:$MKRPORT:127.0.0.1" PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:$PORT -t "$S" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S.server.log" 2>&1 &
 SRV=$!
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHPORT/user" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$GHLPORT/__state" && break; sleep 0.2; done
@@ -89,6 +92,7 @@ for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$ANPORT/" && bre
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$PORT/admin/index.html" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$MKAPORT/__state" && break; sleep 0.2; done
 for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$MKCPORT/admin/index.html" && break; sleep 0.2; done
+for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$MKRPORT/" && break; sleep 0.2; done
 pass=0; fail=0
 chk(){ if [ "$1" = 0 ]; then echo "ok   $2"; pass=$((pass+1)); else echo "FAIL $2"; fail=$((fail+1)); fi; }
 TOK=""
@@ -955,6 +959,21 @@ PY
 mkstub /__seed "$(cat "$S.mkseed2.json")"
 call "markup_hub_pull (Pull changes now, one site)" '{"action":"markup_hub_pull","site":"client-e2e.example"}'
 ans 'assert d.get("ok") is True and d.get("done") is True and d["markups"]==1 and d["queued"]>=1 and not d["errors"], d' && [ "$(dbq 'echo $pdo->query("SELECT status FROM markup_items WHERE thread_id=\"th_6\"")->fetchColumn();')" = new ] && [ "$(dbq 'echo $pdo->query("SELECT status FROM markup_items WHERE thread_id=\"th_2\"")->fetchColumn();')" = declined ] && chk 0 "Pull changes now brings in a site's open comments whatever the markup's status; a declined one stays declined" || chk 1 "pull — got: $(printf '%s' "$LAST" | head -c 300)"
+mkstub /__seed '{"threads":[{"id":"th_6","resolved":true}]}'
+call "markup_hub_pull (a comment resolved in MarkUp meanwhile)" '{"action":"markup_hub_pull","site":"client-e2e.example"}'
+ans 'assert d.get("ok") is True and not d["errors"], d' && [ "$(dbq 'echo $pdo->query("SELECT status FROM markup_items WHERE thread_id=\"th_6\"")->fetchColumn();')" = resolved ] && mkstate 'L=[l for l in s["log"] if l["path"]=="/api/v2/threads"]; assert L and not [l for l in L if "resolved" in l["query"]], L[-1]' && chk 0 "threads are listed without MarkUp's resolved filter (its API refuses one in a query string: \"resolved must be a boolean value\"); a comment resolved in MarkUp meanwhile closes its waiting change" || chk 1 "resolved in MarkUp — got: $(printf '%s' "$LAST" | head -c 300) / th_6: $(dbq 'echo $pdo->query("SELECT status FROM markup_items WHERE thread_id=\"th_6\"")->fetchColumn();')"
+mkstub /__mode '{"strictNumbers":true}'
+mkstub /__seed "{\"threads\":[{\"id\":\"th_7\",\"markupId\":\"mk_1\",\"number\":7,\"resolved\":false,\"canonicalUrl\":\"$CL/hello-client\",\"elements\":[{\"path\":\"html > body > h1\"}],\"parents\":[],\"messages\":[{\"id\":\"m_7\",\"message\":\"Bigger heading please\",\"user\":{\"name\":\"Casey Client\"},\"attachments\":[],\"loomVideos\":[]}]}]}"
+call "markup_hub_pull (MarkUp refusing limit/offset as well)" '{"action":"markup_hub_pull","site":"client-e2e.example"}'
+ans 'assert d.get("ok") is True and not d["errors"] and d["threads"]>=1, d' && [ "$(dbq 'echo $pdo->query("SELECT status FROM markup_items WHERE thread_id=\"th_7\"")->fetchColumn();')" = new ] && mkstate 'L=[l for l in s["log"] if l["path"]=="/api/v2/threads"]; assert sorted(L[-1]["query"])==["markupId"], L[-1]' && chk 0 "…and should MarkUp refuse limit/offset the same way, the list is asked for again without them" || chk 1 "plain thread list — got: $(printf '%s' "$LAST" | head -c 300)"
+mkstub /__mode '{"strictNumbers":false}'
+call "markup_hub_sites add (a development link that now redirects to the live site)" "{\"action\":\"markup_hub_sites\",\"add\":\"http://dev2.client-e2e.example:$MKRPORT\"}"
+ans 's=[x for x in d.get("sites",[]) if x["site"]=="client-e2e.example"]; assert d.get("ok") is True and len(d["sites"])==1 and s and s[0]["base"].startswith("http://client-e2e.example:") and "dev2.client-e2e.example" in s[0]["hosts"], d' && chk 0 "a development link that now redirects to the live site is the same site (the live site lists the link as its own): calls go to the live address" || chk 1 "dev link redirect — got: $(printf '%s' "$LAST" | head -c 300)"
+call "markup_hub_sites add (a link that redirects to a site that doesn't claim it)" "{\"action\":\"markup_hub_sites\",\"add\":\"http://old-link.example:$MKRPORT\"}"
+ans 'assert d.get("ok") is False and "another address" in d.get("error","") and len(d["sites"])==1, d' && chk 0 "…a redirect to a site that doesn't list the link as its own is not followed" || chk 1 "foreign redirect — got: $(printf '%s' "$LAST" | head -c 300)"
+dbq '$pdo->prepare("UPDATE markup_sites SET base=? WHERE site=?")->execute(["http://dev2.client-e2e.example:'"$MKRPORT"'","client-e2e.example"]);'
+call "markup_hub_page (the saved address now redirects to the live site)" '{"action":"markup_hub_page","site":"client-e2e.example","page":"hello-client.html"}'
+ans "assert d.get('ok') is True and d['url']=='$CL/hello-client.html', {k:d.get(k) for k in ('ok','url','error')}" && [ "$(dbq 'echo $pdo->query("SELECT base FROM markup_sites WHERE site=\"client-e2e.example\"")->fetchColumn();')" = "$CL" ] && chk 0 "…and a site whose saved address has started redirecting is found again at the live address, and the call goes through" || chk 1 "moved base — got: $(printf '%s' "$LAST" | head -c 300)"
 call "markup_hub_item assign (a page that isn't on the site)" "{\"action\":\"markup_hub_item\",\"id\":$I3,\"op\":\"assign\",\"site\":\"client-e2e.example\",\"page\":\"admin/index.html\"}"
 ans 'assert d.get("ok") is False, d' && chk 0 "Assign refuses a page the site doesn't list" || chk 1 "bad assign — got: $(printf '%s' "$LAST" | head -c 200)"
 call "markup_hub_item assign (remembered for the markup)" "{\"action\":\"markup_hub_item\",\"id\":$I3,\"op\":\"assign\",\"site\":\"client-e2e.example\",\"page\":\"hello-client.html\",\"remember\":true}"
@@ -987,7 +1006,7 @@ printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); asser
 call "form_view (public)" '{"action":"form_view","formId":"e2e-form"}'
 call "unknown action → JSON error" '{"action":"definitely_not_an_action"}'
 call "no session on a session action → 401 JSON" '{"action":"list_users"}'
-kill $SRV $GHSRV $GHLSRV $ANSRV $SMSRV $MKASRV $MKCSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV $ANSRV $SMSRV $MKASRV $MKCSRV 2>/dev/null
+kill $SRV $GHSRV $GHLSRV $ANSRV $SMSRV $MKASRV $MKCSRV $MKRSRV 2>/dev/null; wait $SRV $GHSRV $GHLSRV $ANSRV $SMSRV $MKASRV $MKCSRV $MKRSRV 2>/dev/null
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S2.server.log"; then chk 1 "the MarkUp client site logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S2.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the MarkUp client site ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.mkstub.log"; then chk 1 "the MarkUp stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.mkstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the MarkUp stub ran without PHP warnings"; fi
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.server.log"; then chk 1 "php -S log has PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.server.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "php -S log shows no PHP warnings/notices/deprecations during the whole run"; fi
@@ -997,6 +1016,6 @@ if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.anstub.log"; then
 [ "$(grep -c '^# BEGIN Fourge Backups Guard' "$S/data/.htaccess")" = 1 ] && [ "$(grep -c '^# BEGIN Fourge Backups Guard' "$S/data/bak/.htaccess")" = 1 ] && chk 0 "after every sign-in of this run, the backups guard is still there exactly once" || chk 1 "backups guard repeated: $(grep -c 'Fourge Backups Guard' "$S/data/.htaccess")"
 if grep -qiE "PHP (Warning|Notice|Deprecated|Fatal|Parse)" "$S.smtpstub.log"; then chk 1 "the SMTP stub logged PHP notices/warnings: $(grep -iE 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' "$S.smtpstub.log" | head -3 | cut -c1-200 | tr '\n' ' ')"; else chk 0 "the SMTP stub ran without PHP warnings"; fi
 rm -rf "$S" "$S.server.log" "$S.ghstub.log" "$S.ghroot" "$GHLOG" "$GHSTATE" "$GHMODE" "$S.ghlstub.log" "$S.ghlroot" "$GHLSTATE" "$S.anstub.log" "$S.anroot" "$ANMODE" "$ANCOUNT" "$S.smtpstub.log" "$SMLOG" \
-       "$S2" "$S2.server.log" "$S.mkstub.log" "$S.mkroot" "$MKSTATE"
+       "$S2" "$S2.server.log" "$S.mkstub.log" "$S.mkroot" "$MKSTATE" "$S.redirect.log"
 echo; echo "$([ $fail = 0 ] && echo "all end-to-end dispatcher assertions passed ($pass)" || echo "SUITE FAILED ($fail failed, $pass passed)")"
 exit $([ $fail = 0 ] && echo 0 || echo 1)
