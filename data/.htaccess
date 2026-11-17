@@ -14,3 +14,15 @@
     Deny from all
   </IfModule>
 </FilesMatch>
+
+# BEGIN Fourge Backups Guard
+<FilesMatch "^rev_.*\.html?$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+# END Fourge Backups Guard
