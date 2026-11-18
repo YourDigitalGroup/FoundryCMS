@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.160');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.161');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -379,6 +379,7 @@ try {
         case 'install_clean_urls': ob_end_clean(); fourgeApiInstallCleanUrls($authUser); break;
         case 'repo_fetch':      ob_end_clean(); fourgeApiRepoFetch($authUser, $body); break;
         case 'list_pages':  ob_end_clean(); cmsListPages();    break;
+        case 'page_markers': ob_end_clean(); cmsPageMarkers($body); break;
         case 'list_media':  ob_end_clean(); cmsListMedia();    break;
         case 'read_file':   ob_end_clean(); cmsReadFile($body); break;
         case 'write_file':  ob_end_clean(); cmsWriteFile($body); break;
@@ -441,6 +442,29 @@ function cmsListPages() {
     // postsHtml: whether the generated blog page exists — the Posts tab shows
     // "Publish Blog Page" as the fix when synced posts have nowhere to display.
     echo json_encode(['pages' => $pages, 'root' => $root, 'postsHtml' => is_file($root . '/posts.html')]);
+}
+
+// Which of the site's pages (the ones list_pages lists, not the CMS's own page)
+// carry each of the given strings: up to 12, each up to 200 characters. One
+// request, so the admin finds the pages that lost the site-wide code their
+// settings place on every page (placementsHealSweep) without reading every page
+// itself. Answers {ok, pages: [{path, has: [indexes of the strings found]}]}.
+function cmsPageMarkers($body) {
+    $markers = [];
+    foreach (array_slice(array_values((array)($body['markers'] ?? [])), 0, 12) as $i => $m) {
+        $markers[$i] = (is_string($m) && $m !== '' && strlen($m) <= 200) ? $m : null;   // a bad one keeps its place and matches nothing
+    }
+    $pages = [];
+    scanHtml(PUBLIC_HTML, PUBLIC_HTML, ['preview.html', '404.html', '500.html', 'maintenance.html', 'coming-soon.html', 'offline.html'], $pages);
+    $out = [];
+    foreach ($pages as $pg) {
+        if (!empty($pg['is_cms'])) continue;
+        $html = (string)@file_get_contents(PUBLIC_HTML . '/' . $pg['path']);
+        $has = [];
+        foreach ($markers as $i => $m) if ($m !== null && strpos($html, $m) !== false) $has[] = $i;
+        $out[] = ['path' => (string)$pg['path'], 'has' => $has];
+    }
+    echo json_encode(['ok' => true, 'pages' => $out]);
 }
 
 function scanHtml($root, $dir, $skipFiles, &$pages, $depth = 0) {
@@ -941,20 +965,65 @@ function fourgeSiteJsonSecretsOut($content) {
     if (!is_array($in)) return $content;
     $disk = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
     $out = fourgeCaptchaSecretsOut($in, is_array($disk) ? $disk : null, true, $changed);
-    return $changed ? json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : $content;
+    return $changed ? fourgeSiteJsonEncode($out, (string)$content) : $content;
 }
 // Sign-in self-heal: move a secret an older admin left in site.json. Answers
 // 'none' (nothing there), 'moved', or 'kept' (the secret store refused it).
 function fourgeMoveCaptchaSecrets() {
     $f = PUBLIC_HTML . '/data/site.json';
-    $site = is_file($f) ? json_decode((string)@file_get_contents($f), true) : null;
+    $raw = is_file($f) ? (string)@file_get_contents($f) : '';
+    $site = $raw !== '' ? json_decode($raw, true) : null;
     if (!is_array($site)) return 'none';
     $has = false;
     foreach (['recaptcha', 'hcaptcha'] as $kind) if (is_array($site[$kind] ?? null) && array_key_exists('secret', $site[$kind])) $has = true;
     if (!$has) return 'none';
     $out = fourgeCaptchaSecretsOut($site, null, false, $changed);
     foreach (['recaptcha', 'hcaptcha'] as $kind) if (is_array($out[$kind] ?? null) && array_key_exists('secret', $out[$kind])) return 'kept';
-    return fourgeSitePut($f, json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: captcha secret moved out of the public site.json') !== false ? 'moved' : 'kept';
+    return fourgeSitePut($f, fourgeSiteJsonEncode($out, $raw), 'Fourge: captcha secret moved out of the public site.json') !== false ? 'moved' : 'kept';
+}
+
+// ── site.json KEEPS ITS EMPTY OBJECTS ───────────────────────────────────────
+// PHP decodes a JSON object into an array, and an EMPTY one ({}) leaves
+// json_encode as an empty list ([]). Every server-side rewrite of site.json (the
+// captcha secret move, the Website URL and dev link remembered at sign-in, Blog
+// Sync, a package's business details, the write_file guards) did that to any
+// settings group the admin had created but not filled yet. In the admin a group
+// that arrives as a list drops whatever is saved into it (JSON.stringify writes
+// no named fields of an array): brand colors, the Analytics, Custom Code and
+// chatbot settings, reCAPTCHA. They reached the pages in that session and were
+// gone from the settings at the next sign-in, so the next save took them off the
+// pages again. Every site.json the server writes goes through here: an empty
+// value that was an object in the JSON it came from stays an object, and so do
+// the admin's settings groups, which also repairs a file already written as [].
+function fourgeSiteJsonGroups() {
+    return ['address', 'social', 'brand', 'colors', 'hours', 'typography', 'headingStyles', 'faviconIcons', 'analytics', 'recaptcha', 'hcaptcha',
+            'ghl', 'mailgun', 'github', 'update', 'markup', 'reviews', 'blogSync', 'editorPermissions', 'business'];
+}
+// $data: decoded with assoc=true; $ref: the same JSON decoded WITHOUT assoc (objects stay objects).
+function fourgeJsonKeepObjects($data, $ref) {
+    if ($data === [] && $ref instanceof stdClass) return new stdClass();
+    if (!is_array($data)) return $data;
+    foreach ($data as $k => $v) {
+        if (!is_array($v)) continue;
+        $r = null;
+        if ($ref instanceof stdClass) { $kk = (string)$k; if (property_exists($ref, $kk)) $r = $ref->$kk; }
+        elseif (is_array($ref) && array_key_exists($k, $ref)) $r = $ref[$k];
+        $data[$k] = fourgeJsonKeepObjects($v, $r);
+    }
+    return $data;
+}
+// site.json text for an array decoded from $refJson (null: the file on disk).
+function fourgeSiteJsonEncode($site, $refJson = null) {
+    $flags = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+    if (!is_array($site)) return json_encode($site, $flags);
+    if ($refJson === null) $refJson = (string)@file_get_contents(PUBLIC_HTML . '/data/site.json');
+    $ref = (is_string($refJson) && $refJson !== '') ? json_decode($refJson) : null;
+    $site = fourgeJsonKeepObjects($site, $ref);
+    foreach (fourgeSiteJsonGroups() as $g) if (array_key_exists($g, $site) && $site[$g] === []) $site[$g] = new stdClass();
+    if (isset($site['analytics']) && is_array($site['analytics'])) {
+        foreach (['custom', 'chatbot'] as $g) if (array_key_exists($g, $site['analytics']) && $site['analytics'][$g] === []) $site['analytics'][$g] = new stdClass();
+    }
+    return json_encode($site, $flags);
 }
 function cmsRecaptchaSecret() {
     $site = json_decode((string)@file_get_contents(__DIR__ . '/../data/site.json'), true);
@@ -5018,7 +5087,7 @@ function fourgeBlogSyncMergeSiteBookkeeping($content, $dest) {
     }
     if (!$changed) return $content;
     $incoming['blogSync'] = $bs;
-    $out = json_encode($incoming, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $out = fourgeSiteJsonEncode($incoming, (string)$content);
     if (!is_string($out)) return $content;
     return preg_replace_callback('/^( +)/m', function ($m) { return str_repeat(' ', intdiv(strlen($m[1]), 2)); }, $out);   // the admin's 2-space style
 }
@@ -5708,11 +5777,12 @@ function fourgeRememberDevHost() {
     $host = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? ''))); $host = preg_replace('~:\d+$~', '', $host);
     if ($host === '' || !preg_match('~^[a-z0-9.\-]+$~', $host) || !fourgeIsDevLinkHost($host)) return null;
     $f = PUBLIC_HTML . '/data/site.json';
-    $site = json_decode((string)@file_get_contents($f), true); if (!is_array($site)) $site = [];
+    $raw = (string)@file_get_contents($f);
+    $site = json_decode($raw, true); if (!is_array($site)) $site = [];
     $list = array_values(array_filter(array_map('strval', (array)($site['devHosts'] ?? [])), 'strlen'));
     if (in_array($host, $list, true)) return $host;
     $list[] = $host; $site['devHosts'] = array_slice($list, -5);
-    fourgeSitePut($f, json_encode($site, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: site address');
+    fourgeSitePut($f, fourgeSiteJsonEncode($site, $raw), 'Fourge: site address');
     return $host;
 }
 // Sign-in at the site's real address: when the stored Website URL is empty or a
@@ -5726,13 +5796,14 @@ function fourgeAutoWebsite() {
     $host = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
     if ($host === '' || !preg_match('~^[a-z0-9.\-]+(:\d+)?$~', $host) || fourgeIsNonProdHost($host)) return null;
     $f = PUBLIC_HTML . '/data/site.json';
-    $site = json_decode((string)@file_get_contents($f), true); if (!is_array($site)) $site = [];
+    $raw = (string)@file_get_contents($f);
+    $site = json_decode($raw, true); if (!is_array($site)) $site = [];
     $cur = trim((string)($site['website'] ?? ''));
     if ($cur !== '') { $t = fourgeCanonicalHostTarget($cur); if ($t && !fourgeIsNonProdHost($t['host'])) return null; }
     $new = (fourgeIsHttps() ? 'https' : 'http') . '://' . $host;
     if ($cur === $new) return null;
     $site['website'] = $new;
-    if (fourgeSitePut($f, json_encode($site, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'Fourge: site address') === false) return null;
+    if (fourgeSitePut($f, fourgeSiteJsonEncode($site, $raw), 'Fourge: site address') === false) return null;
     return ['from' => $cur, 'to' => $new];
 }
 // A stale admin copy must not move the Website URL backwards: when the browser
@@ -5748,7 +5819,7 @@ function fourgeSiteJsonKeepWebsite($content) {
     $have = trim((string)($cur['website'] ?? '')); if ($have === '') return $content;
     $ht = fourgeCanonicalHostTarget($have); if (!$ht || fourgeIsNonProdHost($ht['host'])) return $content;
     $in['website'] = $have;
-    return json_encode($in, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    return fourgeSiteJsonEncode($in, (string)$content);
 }
 function fourgeCanonicalHostMarkers() { return ['# BEGIN Fourge Canonical Host — managed by Fourge, do not edit by hand', '# END Fourge Canonical Host']; }
 // The Website URL as a redirect target — scheme + host[:port] — or null when
@@ -6803,7 +6874,8 @@ function cmsPkgWriteJson($name, $data) {
     if ($name === 'site.json' && is_array($data)) { try { $disk = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true); $data = fourgeCaptchaSecretsOut($data, is_array($disk) ? $disk : null, false); } catch (Throwable $e) {} }   // never a captcha secret in the public file
     $dir = PUBLIC_HTML . '/data';
     if (!is_dir($dir)) @mkdir($dir, 0755, true);
-    return fourgeSitePut(cmsPkgDataPath($name), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), 'Fourge: SEO package data') !== false;
+    $bytes = ($name === 'site.json' && is_array($data)) ? fourgeSiteJsonEncode($data, null) : json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);   // site.json keeps its {} (fourgeSiteJsonEncode)
+    return fourgeSitePut(cmsPkgDataPath($name), $bytes, 'Fourge: SEO package data') !== false;
 }
 // One-generation backup of any existing file we are about to overwrite.
 function cmsPkgBackup($relPath) {
@@ -8124,6 +8196,49 @@ function fourgeApiMarkupRead($body) {
     $html = (string)@file_get_contents(PUBLIC_HTML . '/' . $path);
     fourgeMarkupOut(200, ['ok' => true, 'path' => $path, 'html' => $html, 'sha256' => hash('sha256', $html)]);
 }
+// Site-wide code a MarkUp write must never take off a page: the comment-marked
+// blocks the admin's Analytics settings place (GA / GTM, Custom Code, chatbot),
+// the reCAPTCHA v3 tags and the ADAptify loader. The hub builds each new page from
+// the page as it is, so they are normally all there; a full revert puts back the
+// page as it was before a change, which can predate code placed since. Whatever
+// the current page has and the new one lacks is carried over to where the admin
+// puts it. Returns [the page, the names of what was carried over].
+function fourgeKeepSiteCode($cur, $new) {
+    $cur = (string)$cur; $new = (string)$new; $kept = [];
+    $head = [['analytics', '<!-- foundry-analytics:start -->', '<!-- foundry-analytics:end -->'],
+             ['custom-head', '<!-- foundry-custom-head:start -->', '<!-- foundry-custom-head:end -->'],
+             ['chatbot', '<!-- foundry-chatbot:start -->', '<!-- foundry-chatbot:end -->']];
+    $grab = function ($s, $e) use ($cur) {
+        $i = strpos($cur, $s); if ($i === false) return '';
+        $j = strpos($cur, $e, $i); return $j === false ? '' : substr($cur, $i, $j + strlen($e) - $i);
+    };
+    foreach ($head as $n => $b) {
+        if (strpos($new, $b[1]) !== false || ($blk = $grab($b[1], $b[2])) === '') continue;
+        $at = -1;   // after the head blocks that come before it (the admin's order), else right after <head>
+        for ($k = $n - 1; $k >= 0 && $at < 0; $k--) { $e = strpos($new, $head[$k][2]); if ($e !== false) $at = $e + strlen($head[$k][2]); }
+        if ($at < 0 && preg_match('~<head\b[^>]*>~i', $new, $m, PREG_OFFSET_CAPTURE)) $at = $m[0][1] + strlen($m[0][0]);
+        $new = $at < 0 ? $blk . "\n" . $new : substr($new, 0, $at) . "\n" . $blk . substr($new, $at);
+        $kept[] = $b[0];
+    }
+    if (strpos($new, '<!-- foundry-analytics-body:start -->') === false && ($blk = $grab('<!-- foundry-analytics-body:start -->', '<!-- foundry-analytics-body:end -->')) !== ''
+        && preg_match('~<body\b[^>]*>~i', $new, $m, PREG_OFFSET_CAPTURE)) {
+        $at = $m[0][1] + strlen($m[0][0]); $new = substr($new, 0, $at) . "\n" . $blk . substr($new, $at); $kept[] = 'analytics-body';
+    }
+    $beforeEnd = function ($html, $tag, $text) {
+        $i = strripos($html, $tag);
+        return $i === false ? $html . "\n" . $text : substr($html, 0, $i) . $text . substr($html, $i);
+    };
+    if (strpos($new, '<!-- foundry-custom-body:start -->') === false && ($blk = $grab('<!-- foundry-custom-body:start -->', '<!-- foundry-custom-body:end -->')) !== '') {
+        $new = $beforeEnd($new, '</body>', $blk . "\n"); $kept[] = 'custom-body';
+    }
+    if (strpos($new, 'data-fourge-rc') === false && preg_match_all('~<script\b[^>]*\bdata-fourge-rc\b[^>]*>[\s\S]*?</script>~i', $cur, $m) && $m[0]) {
+        $new = $beforeEnd($new, '</head>', implode('', $m[0])); $kept[] = 'recaptcha';
+    }
+    if (!preg_match('~src=["\'][^"\']*adaptify\.js~i', $new) && preg_match('~<script\b[^>]*\bsrc=["\'][^"\']*adaptify\.js[^>]*>\s*</script>~i', $cur, $m)) {
+        $new = $beforeEnd($new, '</body>', $m[0]); $kept[] = 'adaptify';
+    }
+    return [$new, $kept];
+}
 function fourgeApiMarkupWrite($body) {
     $p = fourgeMarkupVerify($body, 'markup_write');
     if (isset($p[0]) && is_int($p[0])) { fourgeMarkupOut($p[0], ['ok' => false, 'error' => $p[1]]); return; }
@@ -8138,13 +8253,14 @@ function fourgeApiMarkupWrite($body) {
     if ($html === '' || strlen($html) > 8 * 1024 * 1024 || !preg_match('~<(html|body)\b~i', $html)) { fourgeMarkupOut(400, ['ok' => false, 'error' => 'That is not a whole page.', 'reason' => 'bad_html']); return; }
     // The same guard the editor has (fourgeShrinkAlarm): a page that loses most of itself is refused.
     if (strlen($cur) > 2000 && strlen($html) < strlen($cur) * 0.2) { fourgeMarkupOut(400, ['ok' => false, 'error' => 'The new page is under a fifth of the old one; refused as a safety check.', 'reason' => 'shrink']); return; }
+    list($html, $kept) = fourgeKeepSiteCode($cur, $html);   // the site's Analytics, chat, reCAPTCHA and ADAptify code stay on the page
     cmsPkgBackup($path);
     $who = 'MarkUp: ' . mb_substr(trim((string)($p['by'] ?? 'agency')), 0, 80);
     fourgeLogRevisionServer($path, $html, $who, 'markup');
     $tmp = $abs . '.tmp-' . bin2hex(random_bytes(4));
     if (@file_put_contents($tmp, $html) !== strlen($html) || !@rename($tmp, $abs)) { @unlink($tmp); fourgeMarkupOut(500, ['ok' => false, 'error' => 'Could not write the page.', 'reason' => 'write_failed']); return; }
     fourgeMirrorLater($abs, $html, 'Fourge: MarkUp change' . (trim((string)($p['note'] ?? '')) !== '' ? ' — ' . mb_substr(trim((string)$p['note']), 0, 80) : ''));
-    fourgeMarkupOut(200, ['ok' => true, 'path' => $path, 'sha256' => hash('sha256', $html)]);
+    fourgeMarkupOut(200, ['ok' => true, 'path' => $path, 'sha256' => hash('sha256', $html), 'kept' => $kept]);
 }
 // An image from a client's MarkUp attachment, for an image swap. Images only,
 // checked by their bytes, saved under assets/markup/ with a new name each time

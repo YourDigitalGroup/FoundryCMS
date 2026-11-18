@@ -296,10 +296,18 @@ canon_site "http://dev.e2e-site.example:$PORT"
 call "canonical_host (force: a dev link as the Website URL)" '{"action":"canonical_host","force":true}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is False and d["reason"]=="nonprod_url", d' && ! grep -q 'Fourge Canonical Host' "$HT" && chk 0 "a development address as the Website URL → refused (nonprod_url), block removed, nothing probed" || chk 1 "canonical_host nonprod — got: $(printf '%s' "$LAST" | head -c 300)"
 canon_site "https://dev.e2e.fourge.com"
+# 1.14.161: the admin's settings groups, empty or already broken into a list by an older server ("colors": [])
+python3 - "$S/data/site.json" <<'PY'
+import json,sys; p=sys.argv[1]; d=json.load(open(p))
+d.update({'analytics':{}, 'brand':{}, 'recaptcha':{}, 'markup':{}, 'colors':[], 'nav':[], 'extra':{'empty':{}, 'list':[]}})
+open(p,'w').write(json.dumps(d,indent=2))
+PY
+groupsok(){ python3 -c "import json,sys; d=json.loads(json.load(sys.stdin)['content']); assert all(d.get(k)=={} for k in ('analytics','brand','recaptcha','markup','colors')) and d.get('nav')==[] and d.get('extra')=={'empty':{},'list':[]}, {k:d.get(k) for k in ('analytics','brand','recaptcha','markup','colors','nav','extra')}"; }
 call "install_clean_urls signed in at the site's real address (Host: e2e-site.example)" '{"action":"install_clean_urls"}' -H "Host: e2e-site.example:$PORT"
 printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); w=d.get('websiteAuto') or {}; c=d.get('canonicalHost') or {}; assert w.get('from')=='https://dev.e2e.fourge.com' and w.get('to')=='http://e2e-site.example:$PORT', d; assert c.get('on') is True and c.get('reason')=='verified' and c.get('host')=='e2e-site.example:$PORT', d" && chk 0 "a sign-in at the real domain replaces a dev-link Website URL with that domain, and the redirect is verified and written in the same call" || chk 1 "websiteAuto — got: $(printf '%s' "$LAST" | head -c 400)"
 call "read_file data/site.json (after the auto-fill)" '{"action":"read_file","path":"data/site.json"}'
 printf '%s' "$LAST" | python3 -c "import json,sys; d=json.loads(json.load(sys.stdin)['content']); assert d.get('website')=='http://e2e-site.example:$PORT' and d.get('name')=='E2E', d" && chk 0 "site.json carries the new Website URL and keeps everything else" || chk 1 "site.json after auto-fill — got: $(printf '%s' "$LAST" | head -c 300)"
+printf '%s' "$LAST" | groupsok && chk 0 "…its empty settings groups stay {} (PHP's json_decode used to write them back as [], where the admin drops what is saved), a group already broken into [] is an object again, and real lists stay lists" || chk 1 "site.json {} after auto-fill — $(printf '%s' "$LAST" | groupsok 2>&1 | tail -1)"
 call "install_clean_urls signed in through a parked domain (Host: parked-e2e.example)" '{"action":"install_clean_urls"}' -H "Host: parked-e2e.example:$PORT"
 printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('websiteAuto') is None and (d.get('canonicalHost') or {}).get('host')=='e2e-site.example:$PORT', d" && chk 0 "a sign-in through another production host leaves a production Website URL alone" || chk 1 "parked sign-in — got: $(printf '%s' "$LAST" | head -c 300)"
 call "install_clean_urls signed in at a dev host (Host: dev.e2e-site.example)" '{"action":"install_clean_urls"}' -H "Host: dev.e2e-site.example:$PORT"
@@ -309,6 +317,7 @@ printf '%s' "$LAST" | python3 -c "import json,sys; d=json.load(sys.stdin); c=d.g
 grep -q 'RewriteCond %{HTTP_HOST} ^(dev\\.e2e-site\\.example)(:\[0-9\]+)?$ \[NC\]' "$HT" && [ "$(grep -c "RewriteRule ^ http://e2e-site.example:$PORT%{REQUEST_URI} \\[R=301,L\\]" "$HT")" = 2 ] && chk 0 "…and the block now forwards that dev link by name, ahead of the generic rule" || chk 1 "dev-link rule missing: $(grep -n 'dev\\.e2e-site' "$HT" | head -2 | tr '\n' ' ')"
 call "read_file data/site.json (devHosts recorded)" '{"action":"read_file","path":"data/site.json"}'
 printf '%s' "$LAST" | python3 -c "import json,sys; d=json.loads(json.load(sys.stdin)['content']); assert d.get('devHosts')==['dev.e2e-site.example'] and d.get('website')=='http://e2e-site.example:$PORT', d" && chk 0 "site.json lists the development link and keeps the Website URL" || chk 1 "site.json devHosts — got: $(printf '%s' "$LAST" | head -c 300)"
+printf '%s' "$LAST" | groupsok && chk 0 "…and the dev link remembered at sign-in leaves the settings groups {} too" || chk 1 "site.json {} after devHosts — $(printf '%s' "$LAST" | groupsok 2>&1 | tail -1)"
 printf '{"name":"E2E","website":"http://e2e-site.example:%s","devHosts":["dev.e2e-site.example"],"devLinkRedirect":false}' "$PORT" > "$S/data/site.json"
 call "canonical_host (force: the dev-link switch turned off)" '{"action":"canonical_host","force":true}'
 printf '%s' "$LAST" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") and d["on"] is True and d["devLinkRedirect"] is False and d["devHosts"]==["dev.e2e-site.example"], d' && ! grep -q 'dev\\.e2e-site' "$HT" && [ "$(grep -c 'RewriteRule ^ http://e2e-site.example' "$HT")" = 1 ] && chk 0 "with the switch off the dev link is left alone: one generic rule, the link not named" || chk 1 "switch off — got: $(printf '%s' "$LAST" | head -c 300) / $(grep -c 'RewriteRule' "$HT") rules"
@@ -681,6 +690,14 @@ call "install_clean_urls (an old site.json a deploy put back)" '{"action":"insta
 ans 'assert d.get("captchaSecrets")=="moved", d' && [ "$(secret_of recaptcha_secret)" = "e2e-rc-legacy" ] && siteok "assert 'secret' not in d['recaptcha']" && chk 0 "…and an old copy put back later is taken out without replacing the stored secret" || chk 1 "stale copy — store: $(secret_of recaptcha_secret)"
 call "install_clean_urls (nothing left to move)" '{"action":"install_clean_urls"}'
 ans 'assert d.get("captchaSecrets")=="none", d' && chk 0 "…after which there is nothing to move (captchaSecrets: none)" || chk 1 "captchaSecrets none — got: $(printf '%s' "$LAST" | head -c 200)"
+# 1.14.161: both rewrites keep the empty settings groups {} — PHP's json_decode used to write them back as [], and the
+# admin drops whatever is saved into a group that is a list (the Analytics, chatbot and reCAPTCHA settings among them)
+siteput "d['analytics']={}; d['brand']={}; d['markup']={}; d['colors']=[]; d['hiddenPages']=[]; d['extra']={'e':{},'l':[]}"
+call "write_file data/site.json with empty settings groups and a captcha secret (the server rewrites it)" "{\"action\":\"write_file\",\"path\":\"data/site.json\",\"content\":$(sitejs "d['recaptcha']['secret']='e2e-rc-groups'")}"
+siteok "assert all(d.get(k)=={} for k in ('analytics','brand','markup','colors')) and d['hiddenPages']==[] and d['extra']=={'e':{},'l':[]} and 'secret' not in d['recaptcha'] and d['recaptcha']['hasSecret'] is True, d" && grep -q '"analytics": {}' "$S/data/site.json" && chk 0 "a site.json the server rewrites on its way to disk (a captcha secret taken out) keeps its empty settings groups {} and repairs one written as []; lists stay lists" || chk 1 "write_file {} — file: $(tr '\n' ' ' < "$S/data/site.json" | head -c 400)"
+siteput "d['recaptcha']['secret']='e2e-rc-groups-2'; d['analytics']={}; d['colors']=[]"
+call "install_clean_urls (a secret still in a site.json with empty groups)" '{"action":"install_clean_urls"}'
+ans 'assert d.get("captchaSecrets")=="moved", d' && siteok "assert d['analytics']=={} and d['brand']=={} and d['colors']=={} and d['hiddenPages']==[] and 'secret' not in d['recaptcha'], d" && chk 0 "…and so does the sign-in's move of a secret left in the file" || chk 1 "sign-in move {} — file: $(tr '\n' ' ' < "$S/data/site.json" | head -c 400)"
 dbq '$pdo->prepare("DELETE FROM secrets WHERE name IN (?,?)")->execute(["recaptcha_secret","hcaptcha_secret"]);'
 cp "$S.sitebak.json" "$S/data/site.json"
 
@@ -808,6 +825,32 @@ assert open(S+'/data/rev_'+r['id']+'.html').read()==open(sys.argv[2]).read()
 PY
 mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mkold.html" "$NEWSHA")")"
 [ "$MKST" = 200 ] && cmp -s "$S/mk-page.html" "$S.mkold.html" && chk 0 "…the hub's Revert (the copy from before, made against the page it wrote) puts the page back" || chk 1 "revert — $(mkerr)"
+# 1.14.161: a MarkUp write never takes the site-wide code off a page. A full Revert puts back the page as it was
+# before a change, which can predate the Analytics, chatbot, reCAPTCHA or ADAptify code placed on it since
+python3 - "$S/mk-page.html" "$S.mkcode.html" <<'PY'
+import sys
+src=open(sys.argv[1]).read()
+head=('<!-- foundry-analytics:start -->\n<script>/*ga e2e*/</script>\n<!-- foundry-analytics:end -->\n'
+      '<!-- foundry-custom-head:start -->\n<!-- Analytics -->\n<script async src="https://www.googletagmanager.com/gtm.js?id=GTM-E2E"></script>\n<!-- foundry-custom-head:end -->\n'
+      '<!-- foundry-chatbot:start -->\n<script src="https://widgets.leadconnectorhq.com/loader.js" data-widget-id="e2e"></script>\n<!-- foundry-chatbot:end -->')
+rc='<script data-fourge-rc="">window.__fourgeRcSiteKey="e2e";</script><script data-fourge-rc="">/*rc loader*/</script>'
+out=(src.replace('<head>','<head>\n'+head,1).replace('</head>',rc+'</head>',1)
+        .replace('<body>','<body>\n<!-- foundry-analytics-body:start --><noscript>gtm e2e</noscript><!-- foundry-analytics-body:end -->',1)
+        .replace('</body>','<!-- foundry-custom-body:start -->\n<script>/*mkt e2e*/</script>\n<!-- foundry-custom-body:end -->\n<script src="/adaptify.js" defer=""></script></body>',1))
+open(sys.argv[1],'w').write(out); open(sys.argv[2],'w').write(out)   # the page as the site has it now, code placed since
+PY
+mkcall "$(mkreq markup_write "$(mkwp mk-page.html "$S.mkold.html" "$(mksha "$S/mk-page.html")")")"   # the hub's full Revert to the copy from before
+[ "$MKST" = 200 ] && ans "assert sorted(d.get('kept') or [])==sorted(['analytics','custom-head','chatbot','analytics-body','custom-body','recaptcha','adaptify']) and d.get('sha256')=='$(mksha "$S.mkcode.html")', d" && cmp -s "$S/mk-page.html" "$S.mkcode.html" && chk 0 "a MarkUp write of a page without the site's code (a full Revert to a copy from before it was placed) keeps it: the Analytics, Custom Code and chatbot blocks, reCAPTCHA and ADAptify stay, each where Apply puts it" || chk 1 "markup_write carry-over — $(mkerr) / $(diff <(tr '>' '\n' < "$S/mk-page.html") <(tr '>' '\n' < "$S.mkcode.html") | head -c 300 | tr '\n' ' ')"
+call "page_markers (which pages carry which strings)" '{"action":"page_markers","markers":["foundry-chatbot:start","data-fourge-rc",5,"<!-- foundry-analytics:start -->","nope-nope-e2e"]}'
+ans "
+pg={p['path']:p['has'] for p in d['pages']}
+assert d.get('ok') is True and pg.get('mk-page.html')==[0,1,3] and pg.get('mk/inner.html')==[], pg
+assert 'mk-shell.html' not in pg and 'preview.html' not in pg and not [p for p in pg if p.startswith(('admin/','data/'))], list(pg)" && chk 0 "page_markers: for each page (the Pages list: not the CMS's own page, preview.html, admin/ or data/) the strings it carries, by their place in the request; one that is not a string keeps its place and matches nothing" || chk 1 "page_markers — got: $(printf '%s' "$LAST" | head -c 300)"
+SAVETOK="$TOK"; TOK=""
+call "page_markers without signing in (expect 401)" '{"action":"page_markers","markers":["x"]}'
+ans "assert 'pages' not in d, d" && chk 0 "…and it answers only a signed-in user or the API token" || chk 1 "page_markers unauthenticated — got: $(printf '%s' "$LAST" | head -c 200)"
+TOK="$SAVETOK"
+cp "$S.mkold.html" "$S/mk-page.html"; rm -f "$S.mkcode.html"
 PNG=iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==
 mkcall "$(mkreq markup_upload "{\"name\":\"../../New Logo!.png\",\"data_b64\":\"$PNG\"}")"
 MKURL=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("url",""))' 2>/dev/null)
