@@ -2993,7 +2993,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.160';
+const CMS_VERSION='1.14.161';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -3960,6 +3960,9 @@ async function initApp(){
   // the page (an update in progress never reaches this line at all — the next
   // initApp(), after reload, is what actually runs it).
   try{ generatorTagSweepOnce().catch(()=>{}); }catch(e){}
+  // Analytics, Custom Code, the chatbot, reCAPTCHA and ADAptify back on any page
+  // that lost them — Admin+, once per browser session (see placementsHealSweep).
+  try{ placementsHealSweep().catch(()=>{}); }catch(e){}
   // Similar idea for the events calendar/single-event runtime, but version-
   // gated rather than a one-time flag, so it re-fires for each release that
   // actually changes that runtime — see eventsRuntimeSweepIfStale().
@@ -5026,6 +5029,10 @@ function veFinalizePageHtml(html, pg){
   // config, no manual button: same always-on shape as the ensure*Runtime()
   // calls above, since there's nothing for an operator to set.
   try{ html=generatorInjectIntoHtml(html); }catch(e){}
+  // The site-wide code the settings place on every page (Analytics, Custom Code,
+  // the chatbot, reCAPTCHA v3): whatever this page is missing goes back on. It
+  // only adds (placementsEnsure), and only with the site's settings loaded.
+  try{ if(_site&&Object.keys(_site).length) html=placementsEnsure(html,placementsWanted(_site)).html; }catch(e){}
   // Stable ids for the content elements (MarkUp reviews find their element by it).
   try{ html=fourgeStampBlockIds(html); }catch(e){}
   return html;
@@ -12419,16 +12426,29 @@ async function urlReplaceApply(){
 //   2. stamps data-rc-v3="KEY" onto every .foundry-form on load, so the
 //      existing submit handler fetches a real token — no need to re-render forms.
 // Idempotent (replaces any prior managed block) and removed when v3 is off.
+// The site key when reCAPTCHA v3 is on in `site`'s settings, else ''.
+function rcV3Key(site){ const rc=(site&&site.recaptcha)||{}; return (rc.enabled&&rc.siteKey&&rc.version==='v3')?String(rc.siteKey):''; }
+// The two managed tags' script text (both carry data-fourge-rc). Also written by
+// placementsEnsure(), which puts them back on a page that lost them.
+function rcBootJs(key){
+  return 'window.__fourgeRcSiteKey='+JSON.stringify(key)+';window.__fourgeRcV3=true;'
+    +'document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll(".foundry-form").forEach(function(f){if(!f.getAttribute("data-rc-v3"))f.setAttribute("data-rc-v3",'+JSON.stringify(key)+');});});';
+}
+function rcLoaderJs(key){
+  return '(function(){var u='+JSON.stringify('https://www.google.com/recaptcha/api.js?render='+encodeURIComponent(key))
+    +',ev=["scroll","pointerdown","touchstart","keydown","mousemove","focusin"],done=0;'
+    +'function go(){if(done)return;done=1;ev.forEach(function(e){removeEventListener(e,go,true);});'
+    +'var s=document.createElement("script");s.src=u;s.async=true;document.head.appendChild(s);}'
+    +'ev.forEach(function(e){addEventListener(e,go,{capture:true,passive:true});});})();';
+}
 function rcInjectIntoHtml(html){
   const doc=new DOMParser().parseFromString(String(html||''),'text/html');
   const head=doc.head||doc.documentElement;
   doc.querySelectorAll('[data-fourge-rc]').forEach(el=>el.remove());
-  const rc=(_site&&_site.recaptcha)||{};
-  if(rc.enabled && rc.siteKey && rc.version==='v3'){
-    const key=String(rc.siteKey);
+  const key=rcV3Key(_site);
+  if(key){
     const boot=doc.createElement('script'); boot.setAttribute('data-fourge-rc','');
-    boot.textContent='window.__fourgeRcSiteKey='+JSON.stringify(key)+';window.__fourgeRcV3=true;'
-      +'document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll(".foundry-form").forEach(function(f){if(!f.getAttribute("data-rc-v3"))f.setAttribute("data-rc-v3",'+JSON.stringify(key)+');});});';
+    boot.textContent=rcBootJs(key);
     head.appendChild(boot);
     // Load Google's v3 script for the badge — but only if the page doesn't
     // already carry one (a placed form injects its own), to avoid a double load.
@@ -12438,11 +12458,7 @@ function rcInjectIntoHtml(html){
     // unverified, the same as when Google can't be reached (cmsVerifyRecaptcha).
     if(!doc.querySelector('script[src*="recaptcha/api.js"]')){
       const s=doc.createElement('script'); s.setAttribute('data-fourge-rc','');
-      s.textContent='(function(){var u='+JSON.stringify('https://www.google.com/recaptcha/api.js?render='+encodeURIComponent(key))
-        +',ev=["scroll","pointerdown","touchstart","keydown","mousemove","focusin"],done=0;'
-        +'function go(){if(done)return;done=1;ev.forEach(function(e){removeEventListener(e,go,true);});'
-        +'var s=document.createElement("script");s.src=u;s.async=true;document.head.appendChild(s);}'
-        +'ev.forEach(function(e){addEventListener(e,go,{capture:true,passive:true});});})();';
+      s.textContent=rcLoaderJs(key);
       head.appendChild(s);
     }
   }
@@ -12470,8 +12486,31 @@ async function rcApplyAll(silent){
 // the captcha secrets never go in it: they live in the server's secret store
 // (set_secret recaptcha_secret / hcaptcha_secret). A copy an older version left
 // in memory is not written back; the server moves any it still finds on disk.
+// The settings groups are objects. A server that rewrote site.json with PHP's
+// json_decode used to turn an empty one ({}) into a list ([]) (fixed there too,
+// fourgeSiteJsonEncode), and whatever the admin then saved into that list was
+// dropped here, since JSON.stringify writes no named fields of an array: brand
+// colors, the Analytics, Custom Code and chatbot settings, reCAPTCHA reached the
+// pages in that session and were gone from the settings at the next sign-in. A
+// list carrying named fields, or an empty list where a group belongs, is written
+// as the object it is.
+const SITE_GROUPS=['address','social','brand','colors','hours','typography','headingStyles','faviconIcons','analytics','recaptcha','hcaptcha','ghl','mailgun','github','update','markup','reviews','blogSync','editorPermissions','business'];
+function siteJsonGroupValue(holder,k,v){
+  if(!Array.isArray(v)) return v;
+  const named=Object.keys(v).filter(x=>!/^\d+$/.test(x));
+  const group=(holder===_site&&SITE_GROUPS.includes(k))||k==='custom'||k==='chatbot';   // the last two: Analytics' own groups
+  if(v.length===0&&(named.length||group)){
+    const o={};
+    named.forEach(x=>{ if(!(x==='secret'&&holder===_site&&(k==='recaptcha'||k==='hcaptcha'))) o[x]=v[x]; });   // the captcha secrets never go in the public file
+    return o;
+  }
+  return v;
+}
 function siteJsonText(){
-  return JSON.stringify(_site,function(k,v){ return (k==='secret'&&_site&&(this===_site.recaptcha||this===_site.hcaptcha))?undefined:v; },2);
+  return JSON.stringify(_site,function(k,v){
+    if(k==='secret'&&_site&&(this===_site.recaptcha||this===_site.hcaptcha)) return undefined;
+    return siteJsonGroupValue(this,k,v);
+  },2);
 }
 async function saveSiteInfo(){
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
@@ -12558,6 +12597,8 @@ function initAnalytics(){
   const cbM=document.querySelector('input[name="cb-mode"][value="'+(gaChatbotMode()||'none')+'"]'); if(cbM) cbM.checked=true;
   cbModeChanged();
   gaChatbotRenderState();
+  const gst=document.getElementById('ga-inject-status');
+  if(gst&&a.offPages&&!gst.textContent) gst.textContent='Removed from all pages; your settings are kept. Save & Apply puts the code back on every page.';
   // Default report month = previous month
   const mEl=document.getElementById('ga-rep-month');
   if(mEl&&!mEl.value){ const d=new Date(); d.setMonth(d.getMonth()-1); mEl.value=d.toISOString().slice(0,7); }
@@ -12734,6 +12775,12 @@ async function gaRemoveAll(){
   a.ga4='';a.gtm='';a.ads='';a.custom={};a.chatbot={embed:'',testing:false};   // blank everything so the walk strips all managed blocks
   const r=await gaWalkPages(false);
   a.ga4=saved.ga4;a.gtm=saved.gtm;a.ads=saved.ads;a.custom=saved.custom;a.chatbot=saved.chatbot; // restore config — only files were stripped
+  // Off the pages by choice, the settings kept: remembered, so the code is not
+  // put back on its own (placementsWanted) until the next Save & Apply.
+  if(r){
+    a.offPages=true;
+    try{ await gaPersistSite(); }catch(e){ toast('Removed from the pages, but this could not be saved ('+e.message+'): the next Admin sign-in would put the code back. Try Remove again.','err'); }
+  }
   return r;
 }
 // True when any custom header/body field has content.
@@ -13102,6 +13149,8 @@ async function gaWalkPages(inject){
   if(!url||!token){ toast('Configure Server API in Settings first','err'); return; }
   const ids=Object.keys(_pages||{});
   if(!ids.length){ toast('No pages found — import via Site Foundry first','err'); return; }
+  // Applying again undoes "Remove from All Pages" (see gaRemoveAll).
+  if(inject&&a.offPages){ delete a.offPages; try{ await gaPersistSite(); }catch(e){} }
   const statusEl=document.getElementById('ga-inject-status');
   let done=0,failed=0;
   for(const id of ids){
@@ -13119,6 +13168,127 @@ async function gaWalkPages(inject){
   const msg=(inject?'Tracking applied to ':'Tracking removed from ')+done+' page(s)'+(failed?', '+failed+' failed':'');
   if(statusEl) statusEl.textContent=msg;
   toast(msg,failed?'err':'ok');
+  return {done,failed};
+}
+
+// ── SITE-WIDE CODE STAYS ON EVERY PAGE ──────────────────────────────────────
+// Analytics (GA4 / GTM / Ads), Custom Code, the chatbot, reCAPTCHA v3 and the
+// ADAptify loader are written into every page by their settings, once, when
+// those are saved. A page that lost them later (an older copy put back: a
+// revision restore, a backup, a re-upload or deploy of the site's files, a
+// MarkUp revert; or a page replaced by hand) had nothing that noticed, so the
+// site's chat and reCAPTCHA simply stopped appearing on it. placementsEnsure()
+// puts back what the settings place on every page and the page is missing. It
+// only ADDS: a block already on the page stays exactly as it is, and nothing is
+// ever taken off (switching something off is still done in its own panel). It
+// runs on every page save, on a revision restore, and over the whole site when
+// an Admin signs in (placementsHealSweep).
+const PLACE_LABELS={ga:'Google Analytics / Tag Manager',gaBody:'Google Analytics / Tag Manager',ccHead:'Custom Code',ccBody:'Custom Code',cb:'the chatbot',rc:'reCAPTCHA',ada:'ADAptify'};
+const PLACE_ADA_TAG='<scr'+'ipt src="/adaptify.js" defer=""></'+'scr'+'ipt>';
+function placementMarker(k){ return ({ga:GA_HEAD_START,gaBody:GA_BODY_START,ccHead:CC_HEAD_START,ccBody:CC_BODY_START,cb:CB_HEAD_START,rc:'data-fourge-rc',ada:'adaptify.js'})[k]; }
+// What `site`'s settings (default: the loaded ones) place on every page:
+// {ga, gaBody, ccHead, ccBody, cb: the block's text, rc: the v3 site key}. It
+// never creates a settings group, so a site that has none gets nothing.
+function placementsWanted(site){
+  site=site||_site;
+  const want={};
+  if(!site||typeof site!=='object') return want;
+  const loaded=_site;
+  try{
+    _site=site;   // the block builders read _site; swapped back before anything else can run
+    const a=site.analytics;
+    if(a&&typeof a==='object'&&!a.offPages){   // offPages: taken off every page with "Remove from All Pages", settings kept
+      if(a.ga4||a.gtm||a.ads) want.ga=gaBuildHeadSnippet();
+      if(a.gtm) want.gaBody=gaBuildBodySnippet();
+      if(a.custom&&typeof a.custom==='object'){ const h=gaBuildCustomHead(), b=gaBuildCustomBody(); if(h) want.ccHead=h; if(b) want.ccBody=b; }
+      if(a.chatbot&&typeof a.chatbot==='object'){ const c=gaBuildChatbot(); if(c) want.cb=c; }
+    }
+    const key=rcV3Key(site); if(key) want.rc=key;
+  }finally{ _site=loaded; }
+  return want;
+}
+// Put back into `html` what of `want` (placementsWanted, plus ada:true when the
+// site has ADAptify installed) the page lacks, where Apply puts it.
+// Returns {html, added: [the keys added]}.
+function placementsEnsure(html, want){
+  html=String(html||''); const added=[];
+  if(!want||!/<(head|body)\b/i.test(html)) return {html, added};   // not a whole page
+  const has=k=>k==='ada'?/src=["'][^"']*adaptify\.js/i.test(html):html.indexOf(placementMarker(k))!==-1;
+  // Head blocks in gaApplySnippets' order: after the ones before it, else right after <head>.
+  const HEAD=[['ga',GA_HEAD_END],['ccHead',CC_HEAD_END],['cb',CB_HEAD_END]];
+  HEAD.forEach(([k],n)=>{
+    if(!want[k]||has(k)) return;
+    let at=-1;
+    for(let i=n-1;i>=0&&at<0;i--){ const e=html.indexOf(HEAD[i][1]); if(e!==-1) at=e+HEAD[i][1].length; }
+    if(at<0){ const m=/<head\b[^>]*>/i.exec(html); if(m) at=m.index+m[0].length; }
+    html=at<0?(want[k]+'\n'+html):(html.slice(0,at)+'\n'+want[k]+html.slice(at));
+    added.push(k);
+  });
+  if(want.gaBody&&!has('gaBody')){
+    const m=/<body\b[^>]*>/i.exec(html);
+    if(m){ const at=m.index+m[0].length; html=html.slice(0,at)+'\n'+want.gaBody+html.slice(at); added.push('gaBody'); }
+  }
+  const beforeBodyEnd=text=>{ const i=html.toLowerCase().lastIndexOf('</body>'); html=i<0?(html+'\n'+text):(html.slice(0,i)+text+html.slice(i)); };
+  if(want.ccBody&&!has('ccBody')){ beforeBodyEnd(want.ccBody+'\n'); added.push('ccBody'); }
+  if(want.rc&&!has('rc')){
+    // the same two tags rcInjectIntoHtml writes, at the end of <head>
+    const so='<scr'+'ipt data-fourge-rc="">', sc='</'+'scr'+'ipt>';
+    let tags=so+rcBootJs(want.rc)+sc;
+    if(!/<script\b[^>]*\bsrc\s*=\s*["'][^"']*recaptcha\/api\.js/i.test(html)) tags+=so+rcLoaderJs(want.rc)+sc;
+    const i=html.toLowerCase().indexOf('</head>');
+    if(i>=0) html=html.slice(0,i)+tags+html.slice(i);
+    else{ const m=/<head\b[^>]*>/i.exec(html); html=m?(html.slice(0,m.index+m[0].length)+tags+html.slice(m.index+m[0].length)):(tags+html); }
+    added.push('rc');
+  }
+  if(want.ada&&!has('ada')){ beforeBodyEnd(PLACE_ADA_TAG); added.push('ada'); }
+  return {html, added};
+}
+// An Admin's sign-in (once per browser session) puts the site-wide code back on
+// every page that lost it: one request finds those pages (page_markers), and only
+// they are read and written. The settings come from site.json as the server has
+// it. ADAptify counts as installed when at least one page carries its loader and
+// its settings have it on. Returns {fixed, pages:[{path, added}]}, or null.
+async function placementsHealSweep(opts){
+  opts=opts||{};
+  if(!canCallApi()) return null;
+  if(!opts.force){
+    if(accessLevel(getSessionUser())<2) return null;
+    try{ if(sessionStorage.getItem('fourge_place_ok')==='1') return null; }catch(e){}
+  }
+  let site=null;
+  try{ const d=await apiCall('read_file',{path:F_SITE}); site=JSON.parse(d.content||'null'); }catch(e){ return null; }
+  if(!site||typeof site!=='object'||Array.isArray(site)) return null;
+  const want=placementsWanted(site);
+  let adaOn=false;
+  try{ const d=await apiCall('read_file',{path:'data/adaptify.json'}); const j=JSON.parse(d.content||'null'); adaOn=!!(j&&typeof j==='object'&&j.enabled!==false); }catch(e){}
+  const done=()=>{ try{ sessionStorage.setItem('fourge_place_ok','1'); }catch(e){} };
+  const keys=Object.keys(want).concat('ada');
+  if(keys.length===1&&!adaOn){ done(); return {fixed:0,pages:[]}; }
+  let scan=null;
+  try{ scan=await apiCall('page_markers',{markers:keys.map(placementMarker)}); }catch(e){ return null; }   // a server without page_markers yet: next sign-in
+  const pages=(scan&&Array.isArray(scan.pages))?scan.pages:[];
+  const adaAt=keys.length-1;
+  if(adaOn&&pages.some(p=>(p.has||[]).includes(adaAt))) want.ada=true;
+  const fixed=[], what=new Set();
+  for(const p of pages){
+    const has=p.has||[];
+    if(!p.path||!veIsSafePath(p.path)||!keys.some((k,i)=>want[k]&&!has.includes(i))) continue;
+    try{
+      const d=await apiCall('read_file',{path:p.path});
+      const html=d.content||''; if(!html) continue;
+      const r=placementsEnsure(html,want);
+      if(!r.added.length||r.html===html) continue;
+      await apiCall('write_file',{path:p.path,content:r.html});
+      fixed.push({path:p.path,added:r.added});
+      r.added.forEach(k=>what.add(PLACE_LABELS[k]));
+    }catch(e){ console.warn('Site-wide code: could not put it back on '+p.path+':',e.message); }
+  }
+  done();
+  if(fixed.length){
+    console.info('Fourge: the site-wide code was put back on',fixed);
+    if(!opts.silent) toast('Put '+[...what].join(', ')+' back on '+fixed.length+' page'+(fixed.length===1?'':'s')+' that had lost '+(fixed.length===1?'it':'them')+' ✓','ok');
+  }
+  return {fixed:fixed.length,pages:fixed};
 }
 
 // ── GA DATA API HELPERS ───────────────────────────────────────────
@@ -20203,7 +20373,11 @@ async function restoreRevision(revId, path, pageId){
     const revPath = 'data/rev_'+revId+'.html';
     const d = await apiCall('read_file',{path:revPath});
     if(!d || !d.content) throw new Error('Snapshot file is missing ('+revPath+') — it may have been pruned.');
-    await apiCall('write_file',{path:path,content:d.content});
+    // A snapshot can predate code the settings have placed on every page since
+    // (Analytics, the chatbot, reCAPTCHA): restoring the page's content keeps it.
+    let html=d.content;
+    try{ if(_site&&Object.keys(_site).length) html=placementsEnsure(html,placementsWanted(_site)).html; }catch(e){}
+    await apiCall('write_file',{path:path,content:html});
     if(typeof _veHtml!=='undefined'){ delete _veHtml[pageId]; delete _veOrigHtml[pageId]; }  // drop editor cache for this page
     toast('Page restored ✓ — reload the editor to see the change','ok');
   }catch(e){
