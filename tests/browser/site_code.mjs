@@ -179,6 +179,37 @@ r = await p.evaluate(async () => {
 });
 chk(r.res === null && r.calls === 0, 'without an Admin signed in the sweep does not run');
 
+// ── "Remove from All Pages" takes the code off by choice, settings kept: nothing puts it back until Save & Apply ──
+r = await p.evaluate(async ({ SITE, PAGE }) => {
+  _site = JSON.parse(JSON.stringify(SITE));
+  const full = rcInjectIntoHtml(gaApplySnippets(PAGE));
+  window.__files = { 'data/site.json': JSON.stringify(SITE), 'p1.html': full };
+  _pages = { p1: { path: 'p1.html', file: 'p1.html', title: 'P1' } };
+  window.__writes = []; window.__toasts = [];
+  await gaRemoveAll();
+  const stripped = window.__files['p1.html'];
+  const site1 = JSON.parse(window.__files['data/site.json']);
+  const st = document.getElementById('ga-inject-status');
+  let note = '';
+  try { if (st) st.textContent = ''; initAnalytics(); note = st ? st.textContent : ''; } catch (e) { note = 'ERR ' + e.message; }
+  const want = Object.keys(placementsWanted()).join();
+  const sweep = await placementsHealSweep({ force: true, silent: true });
+  const afterSweep = window.__files['p1.html'];
+  const saved = veFinalizePageHtml(stripped, null);
+  await gaInjectAll();
+  const back = window.__files['p1.html'];
+  const site2 = JSON.parse(window.__files['data/site.json']);
+  const blocks = h => [GA_HEAD_START, CC_HEAD_START, CB_HEAD_START].map(m => h.includes(m));
+  return {
+    stripped: blocks(stripped), kept: site1.analytics.ga4 === 'G-E2ETEST1' && site1.analytics.offPages === true, note, want,
+    sweep: sweep && sweep.fixed === 0 && afterSweep === stripped, saved: blocks(saved), back: blocks(back), cleared: !('offPages' in site2.analytics),
+  };
+}, { SITE, PAGE });
+chk(!r.stripped.some(Boolean) && r.kept && /Removed from all pages/.test(r.note),
+  '"Remove from All Pages" takes the Analytics, Custom Code and chatbot code off every page, keeps the settings and remembers the choice (offPages), and Analytics says so — "' + r.note + '"');
+chk(r.want === 'rc' && r.sweep && !r.saved.some(Boolean), '…so neither an Admin\'s sign-in nor a page save puts it back (reCAPTCHA, which has its own switch, still counts) — wanted: ' + r.want);
+chk(r.back.every(Boolean) && r.cleared, '…until Save & Apply, which puts it back on every page and forgets the choice');
+
 // ── a page save and a revision restore put back what that page lost ──
 r = await p.evaluate(({ SITE, PAGE }) => {
   _site = JSON.parse(JSON.stringify(SITE));

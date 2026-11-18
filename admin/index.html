@@ -12597,6 +12597,8 @@ function initAnalytics(){
   const cbM=document.querySelector('input[name="cb-mode"][value="'+(gaChatbotMode()||'none')+'"]'); if(cbM) cbM.checked=true;
   cbModeChanged();
   gaChatbotRenderState();
+  const gst=document.getElementById('ga-inject-status');
+  if(gst&&a.offPages&&!gst.textContent) gst.textContent='Removed from all pages; your settings are kept. Save & Apply puts the code back on every page.';
   // Default report month = previous month
   const mEl=document.getElementById('ga-rep-month');
   if(mEl&&!mEl.value){ const d=new Date(); d.setMonth(d.getMonth()-1); mEl.value=d.toISOString().slice(0,7); }
@@ -12773,6 +12775,12 @@ async function gaRemoveAll(){
   a.ga4='';a.gtm='';a.ads='';a.custom={};a.chatbot={embed:'',testing:false};   // blank everything so the walk strips all managed blocks
   const r=await gaWalkPages(false);
   a.ga4=saved.ga4;a.gtm=saved.gtm;a.ads=saved.ads;a.custom=saved.custom;a.chatbot=saved.chatbot; // restore config — only files were stripped
+  // Off the pages by choice, the settings kept: remembered, so the code is not
+  // put back on its own (placementsWanted) until the next Save & Apply.
+  if(r){
+    a.offPages=true;
+    try{ await gaPersistSite(); }catch(e){ toast('Removed from the pages, but this could not be saved ('+e.message+'): the next Admin sign-in would put the code back. Try Remove again.','err'); }
+  }
   return r;
 }
 // True when any custom header/body field has content.
@@ -13141,6 +13149,8 @@ async function gaWalkPages(inject){
   if(!url||!token){ toast('Configure Server API in Settings first','err'); return; }
   const ids=Object.keys(_pages||{});
   if(!ids.length){ toast('No pages found — import via Site Foundry first','err'); return; }
+  // Applying again undoes "Remove from All Pages" (see gaRemoveAll).
+  if(inject&&a.offPages){ delete a.offPages; try{ await gaPersistSite(); }catch(e){} }
   const statusEl=document.getElementById('ga-inject-status');
   let done=0,failed=0;
   for(const id of ids){
@@ -13158,6 +13168,7 @@ async function gaWalkPages(inject){
   const msg=(inject?'Tracking applied to ':'Tracking removed from ')+done+' page(s)'+(failed?', '+failed+' failed':'');
   if(statusEl) statusEl.textContent=msg;
   toast(msg,failed?'err':'ok');
+  return {done,failed};
 }
 
 // ── SITE-WIDE CODE STAYS ON EVERY PAGE ──────────────────────────────────────
@@ -13186,7 +13197,7 @@ function placementsWanted(site){
   try{
     _site=site;   // the block builders read _site; swapped back before anything else can run
     const a=site.analytics;
-    if(a&&typeof a==='object'){
+    if(a&&typeof a==='object'&&!a.offPages){   // offPages: taken off every page with "Remove from All Pages", settings kept
       if(a.ga4||a.gtm||a.ads) want.ga=gaBuildHeadSnippet();
       if(a.gtm) want.gaBody=gaBuildBodySnippet();
       if(a.custom&&typeof a.custom==='object'){ const h=gaBuildCustomHead(), b=gaBuildCustomBody(); if(h) want.ccHead=h; if(b) want.ccBody=b; }
