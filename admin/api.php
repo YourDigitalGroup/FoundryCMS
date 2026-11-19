@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.161');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.162');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -6384,6 +6384,74 @@ function fourgeHasQaContent($html) {
     }
     return false;
 }
+// ── PAGE FIXES NEVER REACH INTO CODE ────────────────────────────────────────
+// The AI auto-fix rewrites pages with regular expressions: titles and meta tags,
+// alt text, internal links, the FAQ schema. Run over the whole file, the alt-text
+// pass also matched markup that only exists inside code: an <img> in a script's
+// string (the events and blog runtimes build their cards that way) got an
+// alt="…" with raw quotes, which ended that string and stopped the whole script
+// (rallyforgood.com's events: "Unexpected identifier", every event stuck on
+// Loading…). While a fix runs, what is inside <script>, <style>, <template>,
+// <textarea> and <noscript> elements, and HTML comments, is hidden from it and
+// put back byte for byte afterwards.
+function fourgeMaskCode($html) {
+    $saved = []; $tag = "\x01fm" . bin2hex(random_bytes(4)) . '-';
+    $out = preg_replace_callback('~<!--[\s\S]*?-->|(<(script|style|template|textarea|noscript)\b[^>]*>)([\s\S]*?)(</\2\s*>)~i', function ($m) use (&$saved, $tag) {
+        $k = $tag . count($saved) . "\x01";
+        if (($m[1] ?? '') === '') { $saved[$k] = $m[0]; return $k; }   // a comment: all of it
+        $saved[$k] = $m[3];                                             // an element: what is inside it
+        return $m[1] . $k . $m[4];
+    }, (string)$html);
+    return $out === null ? null : ['html' => $out, 'saved' => $saved];
+}
+// The page with its hidden parts back; null when a fix copied one (nothing is written then).
+function fourgeUnmaskCode($html, $mask) {
+    if (!is_string($html) || !is_array($mask)) return null;
+    foreach ($mask['saved'] as $k => $v) if (substr_count($html, $k) > 1) return null;
+    return strtr($html, $mask['saved']);
+}
+// $fn(markup) with the page's code hidden; the page unchanged when anything goes wrong.
+function fourgeOnMarkup($html, callable $fn) {
+    $mask = fourgeMaskCode($html); if ($mask === null) return (string)$html;
+    $out = fourgeUnmaskCode($fn($mask['html']), $mask);
+    return $out === null ? (string)$html : $out;
+}
+// Undo what the alt-text pass did inside code before 1.14.162: in a script it
+// turned "<img class=\"x\" …" into "<img alt="…" class=\"x\" …". Inside <script>
+// elements only, an alt="…" right after <img is taken out when the tag goes on
+// with an attribute written with an escaped quote (something only code writes)
+// or the string ends right after it, which gives back the code exactly as it
+// was. Returns [the page, how many were taken out].
+function fourgeRepairScriptAlts($html) {
+    $html = (string)$html;
+    if (strpos($html, '<img alt="') === false) return [$html, 0];
+    $n = 0;
+    $out = preg_replace_callback('~(<script\b[^>]*>)([\s\S]*?)(</script\s*>)~i', function ($m) use (&$n) {
+        if (strpos($m[2], '<img alt="') === false) return $m[0];
+        $c = 0;
+        $fixed = preg_replace('~<img alt="[^"\\\\<>\r\n]{0,400}"(?=\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*\\\\["\']|")~', '<img', $m[2], -1, $c);
+        if ($fixed === null || $c === 0) return $m[0];
+        $n += $c;
+        return $m[1] . $fixed . $m[3];
+    }, $html);
+    return $out === null ? [$html, 0] : [$out, $n];
+}
+// Sign-in self-heal: that repair over every page the Pages list shows. Returns the paths put right.
+function fourgeRepairScriptAltsAll() {
+    $pages = [];
+    scanHtml(PUBLIC_HTML, PUBLIC_HTML, ['preview.html', '404.html', '500.html', 'maintenance.html', 'coming-soon.html', 'offline.html'], $pages);
+    $fixed = [];
+    foreach ($pages as $pg) {
+        if (!empty($pg['is_cms'])) continue;
+        $abs = PUBLIC_HTML . '/' . $pg['path'];
+        $html = (string)@file_get_contents($abs);
+        if (strpos($html, '<img alt="') === false) continue;
+        list($out, $n) = fourgeRepairScriptAlts($html);
+        // No backup here: data/bak/ still holds the copy from before the alt-text pass wrote the page.
+        if ($n > 0 && $out !== $html && fourgeSitePut($abs, $out, 'Fourge: script repaired (alt text the AI auto-fix had put inside code)') !== false) $fixed[] = (string)$pg['path'];
+    }
+    return $fixed;
+}
 // A minimal, standalone FAQPage stamp — deliberately NOT folded into
 // cmsPkgStampSeo's extraJsonld, which is reserved for schema a package
 // delivered verbatim. Marked with its own attribute so it can be told apart
@@ -6509,7 +6577,8 @@ function fourgeAiAutofix($opts = []) {
             // exactly this: title, description, canonical, robots, OG, Twitter.
             cmsPkgBackup($file);
             $canon = cmsPkgPageUrl($baseUrl, $file);
-            fourgeSitePut($abs, cmsPkgStampSeo($html, $cur, $canon, !empty($rec['draft'])), 'Fourge: AI auto-fix');
+            $draft = !empty($rec['draft']);
+            fourgeSitePut($abs, fourgeOnMarkup($html, function ($h) use ($cur, $canon, $draft) { return cmsPkgStampSeo($h, $cur, $canon, $draft); }), 'Fourge: AI auto-fix');
         }
         $rep['metas'][] = ['page' => (string)($rec['title'] ?? $pid), 'wrote' => implode(' + ', $wrote),
                            'was' => ($needT && ($cur['title'] ?? '') !== '' ? 'weak/missing' : 'missing')];
@@ -6536,7 +6605,9 @@ function fourgeAiAutofix($opts = []) {
         // \S match the CLOSING QUOTE, so alt="" reads as "already described" and
         // every empty alt on the site gets silently skipped.
         $rx = '~<img\b(?![^>]*\balt\s*=\s*"\s*[^"\s])(?![^>]*\balt\s*=\s*\x27\s*[^\x27\s])[^>]*>~i';
-        if (!preg_match_all($rx, $html, $mm) || !$mm[0]) { $altDone[$pid] = $sig; continue; }
+        // Only the page's own images: an <img> inside a script, a style, a template or a comment is code or a note, not an image (fourgeMaskCode).
+        $view = fourgeMaskCode($html);
+        if ($view === null || !preg_match_all($rx, $view['html'], $mm) || !$mm[0]) { $altDone[$pid] = $sig; continue; }
         $tags = array_slice($mm[0], 0, 12);
         $names = [];
         foreach ($tags as $t) { preg_match('~\bsrc\s*=\s*["\x27]([^"\x27]+)["\x27]~i', $t, $m); $names[] = basename($m[1] ?? 'image'); }
@@ -6561,7 +6632,8 @@ function fourgeAiAutofix($opts = []) {
                 return preg_replace('~\balt\s*=\s*("\s*"|\x27\s*\x27)~i', 'alt="' . htmlspecialchars($alt, ENT_QUOTES, 'UTF-8') . '"', $m[0], 1);
             }
             return preg_replace('~^<img\b~i', '<img alt="' . htmlspecialchars($alt, ENT_QUOTES, 'UTF-8') . '"', $m[0], 1);
-        }, $html);
+        }, $view['html']);
+        $next = fourgeUnmaskCode($next, $view);
         if ($next !== null && $next !== $html && $filled > 0) {
             if (!$dry) { cmsPkgBackup($file); fourgeSitePut($abs, $next, 'Fourge: AI auto-fix'); $altDone[$pid] = md5($next); }
             $rep['alts'][] = ['page' => (string)($rec['title'] ?? $pid), 'images' => $filled];
@@ -6594,11 +6666,16 @@ function fourgeAiAutofix($opts = []) {
                 if (!is_file($dabs)) continue;
                 $dhtml = (string)@file_get_contents($dabs);
                 // Only inside <main> — a keyword in the shared nav or footer
-                // would link every page to the same target.
-                if (!preg_match('~(<main\b[^>]*>)([\s\S]*?)(</main>)~i', $dhtml, $mm)) continue;
-                $newInner = fourgeAiLinkKeyword($mm[2], $t['kw'], $t['url']);
-                if ($newInner === null) continue;
-                $next = str_replace($mm[0], $mm[1] . $newInner . $mm[3], $dhtml);
+                // would link every page to the same target — and never in code (fourgeOnMarkup).
+                $hit = false;
+                $next = fourgeOnMarkup($dhtml, function ($h) use ($t, &$hit) {
+                    if (!preg_match('~(<main\b[^>]*>)([\s\S]*?)(</main>)~i', $h, $mm)) return $h;
+                    $newInner = fourgeAiLinkKeyword($mm[2], $t['kw'], $t['url']);
+                    if ($newInner === null) return $h;
+                    $hit = true;
+                    return str_replace($mm[0], $mm[1] . $newInner . $mm[3], $h);
+                });
+                if (!$hit || $next === $dhtml) continue;
                 if (!$dry) { cmsPkgBackup($dfile); fourgeSitePut($dabs, $next, 'Fourge: AI auto-fix'); }
                 $rep['links'][] = ['from' => (string)($drec['title'] ?? $did), 'to' => $t['title'], 'keyword' => $t['kw']];
                 $linked++;
@@ -6663,7 +6740,7 @@ function fourgeAiAutofix($opts = []) {
             // schema graph FROM this same aeoFAQs data) cleanly replaces it
             // instead of ending up with two FAQPage blocks.
             cmsPkgBackup($file);
-            fourgeSitePut($abs, fourgeAeoStampFaq($html, $faqs), 'Fourge: AI auto-fix');
+            fourgeSitePut($abs, fourgeOnMarkup($html, function ($h) use ($faqs) { return fourgeAeoStampFaq($h, $faqs); }), 'Fourge: AI auto-fix');
         }
         $rep['aeo'][] = ['page' => (string)($rec['title'] ?? $pid), 'faqs' => count($faqs)];
         $aeoDone++;
@@ -6799,6 +6876,9 @@ function fourgeApiInstallCleanUrls($me) {
     // A captcha secret an older admin saved into the public site.json moves to the secret store.
     $captchaSecrets = 'none';
     try { $captchaSecrets = fourgeMoveCaptchaSecrets(); } catch (Throwable $e) { $captchaSecrets = 'error'; }
+    // Scripts the AI auto-fix's alt-text pass broke before 1.14.162 (an alt="…" put inside code) are put right — before today's run.
+    $scriptAlts = [];
+    try { $scriptAlts = fourgeRepairScriptAltsAll(); } catch (Throwable $e) { $scriptAlts = []; }
     // The four safe security headers, and an llms.txt if the site has none.
     $hdr = false; $llms = false;
     try { $hdr    = fourgeWriteDefaultHeaders();   } catch (Throwable $e) { $hdr = false; }
@@ -6821,7 +6901,8 @@ function fourgeApiInstallCleanUrls($me) {
     echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'websiteAuto' => $websiteAuto, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
         'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync, 'markupWebhook' => $markupHook,
-        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'backupsGuard' => $backupsGuard, 'fleetDashboardCopy' => $fleetCopy, 'captchaSecrets' => $captchaSecrets]);
+        'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'backupsGuard' => $backupsGuard, 'fleetDashboardCopy' => $fleetCopy, 'captchaSecrets' => $captchaSecrets,
+        'scriptsRepaired' => $scriptAlts]);
 }
 function fourgeApiSetPagePassword($me, $body) {
     $path = (string)($body['path'] ?? '');

@@ -584,6 +584,25 @@ call "ai_autofix (preview)" '{"action":"ai_autofix","dry":true,"metaCap":50,"alt
 ans 'assert d.get("ok") is True and "totals" in d, d; assert {"page":"Pavers","wrote":"title","was":"weak/missing"} in d["metas"], d["metas"]' && [ "$(cat "$ANCOUNT")" -gt "$SEEN" ] && [ ! -e "$S/data/ai_autofix.json" ] && chk 0 "the AI auto-fix runs again: its preview asks the AI about the page with a weak title (Pavers) and writes nothing" || chk 1 "ai_autofix preview — got: $(printf '%s' "$LAST" | head -c 400)"
 call "ai_autofix (run)" '{"action":"ai_autofix","metaCap":0,"altCap":0,"linkCap":0,"faqCap":0}'
 ans 'assert d.get("ok") is True and d.get("dry_run") is False, d' && python3 -c "import json; s=json.load(open('$S/data/ai_autofix.json')); assert s.get('last_run'), s" && chk 0 "…and a run saves its state (data/ai_autofix.json)" || chk 1 "ai_autofix run — got: $(printf '%s' "$LAST" | head -c 300)"
+# 1.14.162: the alt-text pass describes the page's own images only. Run over the whole file it also "fixed" an <img>
+# built in code: on rallyforgood.com it put alt="…" with raw quotes into the events runtime's template, which stopped
+# the script and left every event on Loading…
+python3 - "$S" <<'PY'
+import json,sys; S=sys.argv[1]
+rt='    +(ev.featured?"<img class=\\"fev-s-img\\" src=\\""+esc(ev.featured)+"\\" alt=\\""+esc(dec(ev.title))+"\\">":"")'
+page=('<!DOCTYPE html>\n<html><head><title>Alt Check</title></head><body>\n<main><h1>Alt check</h1>\n<img src="assets/team-photo.jpg">\n'
+      '<!-- <img src="assets/old-banner.jpg"> -->\n<template><img src="assets/card-image.jpg"></template>\n</main>\n'
+      '<script id="fourge-events-js">\nfunction paint(ev){ return ""\n'+rt+'\n; }\n</script>\n</body></html>\n')
+for f in ('/alt-check.html', '.altcheck.html'): open(S+f,'w').write(page)
+pg=json.load(open(S+'/data/pages.json')); pg['alt-check']={'title':'Alt Check','file':'alt-check.html','path':'alt-check.html'}; json.dump(pg,open(S+'/data/pages.json','w'))
+PY
+call "ai_autofix (alt text: a page whose events runtime builds an <img> in code)" '{"action":"ai_autofix","metaCap":0,"altCap":20,"linkCap":0,"faqCap":0}'
+python3 - "$S/alt-check.html" "$S.altcheck.html" <<'PY' && chk 0 "the alt-text pass describes the page's own image (Team photo) and leaves the <img> in the events runtime's code, in a comment and in a template exactly as they were" || chk 1 "alt text inside code — page: $(tr '\n' ' ' < "$S/alt-check.html" | head -c 600)"
+import sys
+got=open(sys.argv[1]).read(); was=open(sys.argv[2]).read()
+assert got==was.replace('<img src="assets/team-photo.jpg">','<img alt="Team photo" src="assets/team-photo.jpg">',1), got
+PY
+rm -f "$S/alt-check.html" "$S.altcheck.html" "$S/data/bak/alt-check.html"
 for f in pages.json seo.json posts.json; do if [ -f "$S.pkgbak.$f" ]; then mv "$S.pkgbak.$f" "$S/data/$f"; else rm -f "$S/data/$f"; fi; done
 rm -f "$S/brick-supply-testville-in.html" "$S/pavers-testville.html" "$S"/retaining-walls-and-more-*.html "$S/data/seo-package-report.json" "$S/data/ai_autofix.json" "$S.pkg.json"
 
@@ -698,6 +717,21 @@ siteok "assert all(d.get(k)=={} for k in ('analytics','brand','markup','colors')
 siteput "d['recaptcha']['secret']='e2e-rc-groups-2'; d['analytics']={}; d['colors']=[]"
 call "install_clean_urls (a secret still in a site.json with empty groups)" '{"action":"install_clean_urls"}'
 ans 'assert d.get("captchaSecrets")=="moved", d' && siteok "assert d['analytics']=={} and d['brand']=={} and d['colors']=={} and d['hiddenPages']==[] and 'secret' not in d['recaptcha'], d" && chk 0 "…and so does the sign-in's move of a secret left in the file" || chk 1 "sign-in move {} — file: $(tr '\n' ' ' < "$S/data/site.json" | head -c 400)"
+# 1.14.162: a page the alt-text pass broke before this release is put right at sign-in: the alt="…" it put inside a
+# script comes out again and nothing else on the page changes (the page's own image, an alt written in code on purpose)
+python3 - "$S" <<'PY'
+import sys; S=sys.argv[1]
+ok='    +(ev.featured?"<img class=\\"fev-s-img\\" src=\\""+esc(ev.featured)+"\\" alt=\\""+esc(dec(ev.title))+"\\">":"")'
+bad=ok.replace('<img class=','<img alt="Rally for Good event gathering with community participants and volunteers outdoors" class=',1)
+page=lambda rt:('<!DOCTYPE html>\n<html><head><title>Broken Events</title></head><body>\n<main><img alt="A real photo" src="assets/a.jpg"></main>\n'
+                '<script id="fourge-events-js">\nfunction paint(ev){ return ""\n'+rt+'\n; }\nvar logo=\'<img alt="Logo" src="logo.png">\';\n</script>\n</body></html>\n')
+open(S+'/broken-events.html','w').write(page(bad)); open(S+'.events-ok.html','w').write(page(ok))
+PY
+call "install_clean_urls (a page whose events runtime the alt-text pass broke)" '{"action":"install_clean_urls"}'
+ans "assert d.get('scriptsRepaired')==['broken-events.html'], d.get('scriptsRepaired')" && cmp -s "$S/broken-events.html" "$S.events-ok.html" && chk 0 "the sign-in self-heal takes the alt=\"…\" the alt-text pass put inside the events runtime back out (scriptsRepaired), giving back the page exactly as it was" || chk 1 "script repair — got: $(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("scriptsRepaired"))' 2>/dev/null) / $(diff "$S/broken-events.html" "$S.events-ok.html" | head -c 300)"
+call "install_clean_urls (again: nothing left to repair)" '{"action":"install_clean_urls"}'
+ans "assert d.get('scriptsRepaired')==[], d.get('scriptsRepaired')" && chk 0 "…and the next sign-in finds nothing left to repair" || chk 1 "second repair — got: $(printf '%s' "$LAST" | head -c 200)"
+rm -f "$S/broken-events.html" "$S.events-ok.html"
 dbq '$pdo->prepare("DELETE FROM secrets WHERE name IN (?,?)")->execute(["recaptcha_secret","hcaptcha_secret"]);'
 cp "$S.sitebak.json" "$S/data/site.json"
 
