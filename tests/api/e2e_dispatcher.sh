@@ -1068,10 +1068,73 @@ IMGURL=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.
 [[ "$IMGURL" =~ ^/assets/markup/[0-9]{8}-[0-9a-f]{6}-new-logo\.png$ ]] && [ -s "$S2$IMGURL" ] && chk 0 "an image the client attached is copied onto the client site (assets/markup/) for an image swap" || chk 1 "attachment — got: $(printf '%s' "$LAST" | head -c 300)"
 call "markup_hub_image (an address that isn't an attachment)" "{\"action\":\"markup_hub_image\",\"id\":$I1,\"url\":\"http://127.0.0.1:$MKAPORT/files/shot.png\"}"
 ans 'assert d.get("ok") is False and "attached to this comment" in d["error"], d' && chk 0 "…any other address is refused: only this comment's own attachments are fetched" || chk 1 "non-attachment — got: $(printf '%s' "$LAST" | head -c 200)"
+# The daily to-do email (1.14.164): settings, Email the to-do list, the cron job's tick, the sign-in fallback.
+dkv(){ dbq "echo (string)\$pdo->query(\"SELECT v FROM markup_kv WHERE k='$1'\")->fetchColumn();"; }
+dmail(){ python3 - "$SMLOG" "$1" <<'PY'
+import json,sys,email
+from email import policy
+M=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+def parts(x):
+    m=email.message_from_string(x['data'], policy=policy.default)
+    h=m.get_body(preferencelist=('html',)); t=m.get_body(preferencelist=('plain',))
+    return str(m['Subject'] or ''), (h.get_content() if h else ''), (t.get_content() if t else '')
+exec(sys.argv[2])
+PY
+}
+# the hub's mail goes through the stand-in relay for these checks (set up the way the form email checks above do it)
+cat > "$S/send.php" <<PHPX
+<?php
+\$CONFIG = ['smtp_host' => '127.0.0.1', 'smtp_port' => $SMPORT, 'smtp_secure' => 'none', 'smtp_username' => 'e2e-relay', 'smtp_password' => 'e2e-relay-pass', 'from_email' => 'markup@e2e-site.example', 'from_name' => 'MarkUp hub', 'to_email' => 'owner@e2e-site.example'];
+PHPX
+[ -z "$(dkv digest_last)" ] && [ -z "$(dkv digest_tz)" ] && chk 0 "no daily email went out during the run so far: the agency's time zone isn't known yet (the server's own would put 8:45 at any hour)" || chk 1 "digest before its time zone: last=$(dkv digest_last) tz=$(dkv digest_tz)"
+call "markup_hub_status (the daily email, as installed)" '{"action":"markup_hub_status"}'
+ans "g=d['digest']; assert g['on'] is True and g['tzSet'] is False and g['toSet'] is False and g['to']==[] and g['toCount']==2 and g['time']=='08:45' and g['sentToday'] is False and g['cronUrl'].startswith('http://127.0.0.1:$PORT/admin/api.php?action=markup_digest_tick&key='), {k:g[k] for k in ('on','tzSet','toSet','toCount','time')}" && chk 0 "the daily email comes switched on, at 8:45, to the agency's Architects (counted, never listed to a browser), with a cron address for the Architect" || chk 1 "digest status — on/tz/time: $(printf '%s' "$LAST" | python3 -c 'import json,sys; g=json.load(sys.stdin).get("digest",{}); print({k:g.get(k) for k in ("on","tzSet","toSet","toCount","time")})' 2>/dev/null)"
+CRONURL=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"]["cronUrl"])' 2>/dev/null)
+call "markup_hub_digest tz (the first browser to open MarkUp)" '{"action":"markup_hub_digest","op":"tz","tz":"America/Chicago"}'
+ans 'assert d.get("ok") is True and d["tz"]=="America/Chicago" and d["tzSet"] is True, d' && chk 0 "the first browser to open MarkUp gives the hub the agency's time zone" || chk 1 "digest tz — got: $(printf '%s' "$LAST" | head -c 200)"
+call "markup_hub_digest tz (a second browser)" '{"action":"markup_hub_digest","op":"tz","tz":"Europe/Paris"}'
+ans 'assert d["tz"]=="America/Chicago", d' && chk 0 "…once: another browser doesn't change it (an Architect does, in Settings)" || chk 1 "digest tz twice — got: $(printf '%s' "$LAST" | head -c 200)"
+call "markup_hub_save digest (an address that isn't one)" '{"action":"markup_hub_save","digest":{"to":"ops@e2e-agency.example, not-an-address"}}'
+ans 'assert d.get("ok") is False and d["error"]=="Not an email address: not-an-address.", d' && chk 0 "Settings refuse an address that isn't one, and say which" || chk 1 "digest bad address — got: $(printf '%s' "$LAST" | head -c 200)"
+call "markup_hub_save digest (a time that isn't one)" '{"action":"markup_hub_save","digest":{"time":"8:45pm"}}'
+ans 'assert d.get("ok") is False and "08:45" in d["error"], d' && call "markup_hub_save digest (an unknown time zone)" '{"action":"markup_hub_save","digest":{"tz":"Mars/Olympus"}}' && ans 'assert d.get("ok") is False and "Unknown time zone" in d["error"], d' && chk 0 "…and a time or a time zone that isn't one" || chk 1 "digest bad time/tz — got: $(printf '%s' "$LAST" | head -c 200)"
+call "markup_hub_save digest" '{"action":"markup_hub_save","digest":{"on":true,"to":"ops@e2e-agency.example; Lead@E2E-Agency.example, ops@E2E-agency.example","time":"00:00","tz":"UTC"}}'
+ans 'g=d["digest"]; assert d.get("ok") is True and "Daily email saved." in d["message"] and g["to"]==["ops@e2e-agency.example","Lead@E2E-Agency.example"] and g["toSet"] is True and g["time"]=="00:00" and g["tz"]=="UTC", g' && chk 0 "an Architect saves who gets it (each address once), when and in which time zone" || chk 1 "digest save — got: $(printf '%s' "$LAST" | head -c 300)"
+: > "$SMLOG"
+call "markup_hub_digest send (Email the to-do list)" '{"action":"markup_hub_digest","op":"send"}'
+ans 'assert d.get("ok") is True and d["sent"]==["ops@e2e-agency.example","Lead@E2E-Agency.example"] and d["total"]>=1 and d["sites"]>=1, d' && dmail '
+assert len(M)==2 and [x["rcpt"] for x in M]==[["ops@e2e-agency.example"],["Lead@E2E-Agency.example"]], [x["rcpt"] for x in M]
+s,h,t=parts(M[0])
+import re
+assert re.match(r"^MarkUp: \d+ comments? waiting on \d+ sites?$", s), s
+assert "Client E2E" in h and "/admin/#markup" in h and "Open MarkUp in Fourge" in h and "every day after 12:00 AM (UTC)" in h, h[:600]
+assert "Client E2E" in t and "Open MarkUp in Fourge: " in t, t[:400]' && [ -z "$(dkv digest_last)" ] && chk 0 "Email the to-do list sends it at once to each recipient: the sites with comments waiting, a link that opens MarkUp — and it isn't counted as the day's email" || chk 1 "digest send — got: $(printf '%s' "$LAST" | head -c 300) / relay: $(head -c 400 "$SMLOG")"
+call "markup_hub_digest send (again, at once)" '{"action":"markup_hub_digest","op":"send"}'
+ans 'assert d.get("ok") is False and "a moment ago" in d["error"], d' && [ "$(grep -c '' "$SMLOG")" = 2 ] && chk 0 "…twice in a row, the second waits (no burst of emails from a double click)" || chk 1 "digest send twice — got: $(printf '%s' "$LAST" | head -c 200)"
+dcode(){ curl -s -o "$S.dtick.json" -w '%{http_code}' "$1"; }
+[ "$(dcode "http://127.0.0.1:$PORT/admin/api.php?action=markup_digest_tick&key=wrong-key-wrong-key")" = 404 ] && [ "$(dcode "http://127.0.0.1:$PORT/admin/api.php?action=markup_digest_tick")" = 404 ] && [ "$(dcode "http://127.0.0.1:$MKCPORT/admin/api.php?action=markup_digest_tick&key=${CRONURL##*key=}")" = 404 ] && chk 0 "the cron address answers only with the hub's key, and only on the hub" || chk 1 "digest tick without the key — $(head -c 200 "$S.dtick.json")"
+: > "$SMLOG"
+[ "$(dcode "$CRONURL")" = 200 ] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d=={"ok":True,"sent":True,"sentToday":True}, d' "$S.dtick.json" && dmail 'assert len(M)==2, len(M)' && [ "$(dkv digest_last)" = "$(date -u +%Y-%m-%d)" ] && [ "$(dkv digest_last_via)" = cron ] && chk 0 "the cron job's tick, once due (after the time, in the agency's zone), sends the day's email" || chk 1 "digest tick — $(head -c 200 "$S.dtick.json") / relay lines: $(grep -c '' "$SMLOG")"
+: > "$SMLOG"
+[ "$(dcode "$CRONURL")" = 200 ] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sent"] is False and d["sentToday"] is True, d' "$S.dtick.json" && [ ! -s "$SMLOG" ] && call "install_clean_urls (a sign-in after today's went)" '{"action":"install_clean_urls"}' && ans 'assert d.get("markupDigest") is False, d.get("markupDigest")' && [ ! -s "$SMLOG" ] && chk 0 "…once a day: the next tick, or a sign-in, sends nothing more" || chk 1 "digest twice in a day — $(head -c 200 "$S.dtick.json") / relay lines: $(grep -c '' "$SMLOG")"
+dbq '$pdo->prepare("UPDATE markup_kv SET v=? WHERE k=?")->execute(["2000-01-01","digest_last"]);'
+: > "$SMLOG"
+call "install_clean_urls (a sign-in, no cron job yet today)" '{"action":"install_clean_urls"}'
+ans 'assert d.get("markupDigest") is True, d.get("markupDigest")' && dmail 'assert len(M)==2, len(M)' && [ "$(dkv digest_last_via)" = sign-in ] && call "markup_hub_status (after the daily email)" '{"action":"markup_hub_status"}' && ans 'g=d["digest"]; assert g["sentToday"] is True and g["lastVia"]=="sign-in" and g["lastNote"].startswith("Sent to ops@e2e-agency.example, Lead@E2E-Agency.example: MarkUp: ") and g["error"]=="" and g["cronAt"]>0, g' && chk 0 "without a cron job, the first thing to reach the hub after the time sends it (here a sign-in), and the settings show what went, when and how" || chk 1 "digest via sign-in — got: $(printf '%s' "$LAST" | head -c 400)"
+dbq '$pdo->prepare("UPDATE markup_kv SET v=? WHERE k=?")->execute(["2000-01-01","digest_last"]);'
+call "markup_hub_save digest (one address the relay refuses)" '{"action":"markup_hub_save","digest":{"to":"refused@e2e-agency.example, ops@e2e-agency.example"}}'
+: > "$SMLOG"
+[ "$(dcode "$CRONURL")" = 200 ] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sent"] is True, d' "$S.dtick.json" && dmail 'assert [x["rcpt"] for x in M]==[["ops@e2e-agency.example"]], M' && dkv digest_error | grep -q 'Not delivered to refused@e2e-agency.example' && chk 0 "an address the mail server refuses doesn't stop the others; the settings say which one didn't get it" || chk 1 "digest partial — err=$(dkv digest_error) / relay: $(head -c 300 "$SMLOG")"
+call "markup_hub_save digest (switched off)" '{"action":"markup_hub_save","digest":{"on":false,"newKey":true}}'
+dbq '$pdo->prepare("UPDATE markup_kv SET v=? WHERE k=?")->execute(["2000-01-01","digest_last"]);'
+NEWCRON=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"]["cronUrl"])' 2>/dev/null)
+: > "$SMLOG"
+[ "$(dcode "$CRONURL")" = 404 ] && [ -n "$NEWCRON" ] && [ "$NEWCRON" != "$CRONURL" ] && [ "$(dcode "$NEWCRON")" = 200 ] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["sent"] is False, d' "$S.dtick.json" && [ ! -s "$SMLOG" ] && chk 0 "switched off, nothing goes; a new cron address retires the old one" || chk 1 "digest off / new key — $(head -c 200 "$S.dtick.json")"
+rm -f "$S/send.php"
 call "login as the Super Admin (MarkUp)" '{"action":"login","username":"editor44i","password":"E2ePass!234"}'
 TOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)
 call "markup_hub_status as a Super Admin" '{"action":"markup_hub_status"}'
-ans 'assert d.get("ok") is True and d["canSetup"] is False and d["webhook"]["url"]=="" and d["webhook"]["registered"] is True, d' && chk 0 "a Super Admin works the queue, without the webhook's secret address" || chk 1 "super admin status — got: $(printf '%s' "$LAST" | head -c 300)"
+ans 'assert d.get("ok") is True and d["canSetup"] is False and d["webhook"]["url"]=="" and d["webhook"]["registered"] is True and d["digest"]["cronUrl"]=="", d' && chk 0 "a Super Admin works the queue, without the webhook's or the cron job's secret address" || chk 1 "super admin status — got: $(printf '%s' "$LAST" | head -c 300)"
 call "markup_hub_save as a Super Admin" '{"action":"markup_hub_save","triggerStatuses":["approved"]}'
 ans 'assert d.get("ok") is False and "Architect" in d["error"], d' && chk 0 "…and can't change the settings (Architects only)" || chk 1 "super admin save — got: $(printf '%s' "$LAST" | head -c 200)"
 call "login as an editor (MarkUp)" '{"action":"login","username":"chat-editor@example.com","password":"E2ePass!234"}'
@@ -1080,7 +1143,7 @@ call "markup_hub_queue as an editor" '{"action":"markup_hub_queue"}'
 ans 'assert d.get("ok") is False and "Super Admins and Architects" in d["error"] and "items" not in d, d' && chk 0 "an editor can't see the queue" || chk 1 "editor queue — got: $(printf '%s' "$LAST" | head -c 200)"
 TOK="$ARCH_TOK"
 ! grep -q 'mk-e2e-key' "$S.server.log" "$S2.server.log" && [ "$(dbq 'echo (int)$pdo->query("SELECT COUNT(*) FROM markup_kv WHERE v LIKE \"%mk-e2e-key%\"")->fetchColumn() + (int)$pdo->query("SELECT COUNT(*) FROM markup_events WHERE error LIKE \"%mk-e2e-key%\"")->fetchColumn() + (int)$pdo->query("SELECT COUNT(*) FROM secrets WHERE value_enc LIKE \"%mk-e2e-key%\"")->fetchColumn();')" = 0 ] && chk 0 "the MarkUp key is in no log and nowhere but the encrypted secret store" || chk 1 "the MarkUp key leaked somewhere"
-rm -f "$S.mkseed.json" "$S.mkseed2.json" "$S.mkitems.txt" "$S.mkc0.html" "$S.mkc1.html" "$S.mkc2.html" "$S.mklog.json"
+rm -f "$S.mkseed.json" "$S.mkseed2.json" "$S.mkitems.txt" "$S.mkc0.html" "$S.mkc1.html" "$S.mkc2.html" "$S.mklog.json" "$S.dtick.json"
 
 TOK=""
 call "blog_sync_poke (public)" '{"action":"blog_sync_poke"}'

@@ -296,4 +296,153 @@ const nav = await p.evaluate(async () => {
 chk(nav.hub.shown && nav.hub.badge === '3', 'on the hub, a Super Admin gets the MarkUp menu item with the count waiting on a person — ' + JSON.stringify(nav.hub));
 chk(nav.other && nav.admin.hidden && nav.admin.asked === 0, 'on any other site, or for an Admin, there is no MarkUp menu item (an Admin\'s browser doesn\'t even ask)');
 
+// ── 9. galleries (1.14.164): one photo of several, the link to its full size, a pin on the photo viewer — and never
+//      a change that deletes the gallery (before, a swap rewrote the gallery with "html", and the cleaner dropped
+//      every <button>: on a live site all six photos of a project gallery went) ──
+const GAL = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Projects</title></head><body>
+<main data-fourge-block="gmain001">
+<section id="gallery" class="gallery" data-fourge-block="gsec0001">
+<div class="container gallery-grid" data-fourge-block="ggrid001">
+<button type="button" class="gallery-item" data-fourge-block="gbtn0001"><img class="gallery-img" src="assets/project-kpot.jpg" alt="K-Pot Korean BBQ" data-fourge-block="gimg0001"></button>
+<button type="button" class="gallery-item" data-fourge-block="gbtn0002"><img class="gallery-img" src="assets/project-alma.jpg" alt="Alma High School" data-fourge-block="gimg0002"></button>
+<button type="button" class="gallery-item" data-fourge-block="gbtn0003"><img class="gallery-img" src="assets/project-mountainburg.jpg" alt="Mountainburg Public Schools" data-fourge-block="gimg0003"></button>
+</div>
+</section>
+<section data-fourge-block="gsec0002"><div class="lb-grid" data-fourge-block="glbg0001">
+<a href="assets/full/creekmore.jpg" data-lightbox="g" data-full="assets/thumb/creekmore.jpg" data-fourge-block="ga000001"><img src="assets/thumb/creekmore.jpg" alt="Creekmore Park" data-fourge-block="gimg0004"></a>
+<a href="assets/full/harbor.jpg" data-lightbox="g" data-fourge-block="ga000002"><img src="assets/thumb/harbor.jpg" alt="Harbor House" data-fourge-block="gimg0005"></a>
+</div></section>
+<p data-fourge-block="gp000001"><a href="tel:+14797828940" class="btn-call" data-fourge-block="ga000003"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3"></path></svg> Call (479) 782-8940</a></p>
+</main>
+<div class="lightbox" role="dialog" aria-label="Project photo viewer" hidden data-fourge-block="glb00001">
+<img src="assets/project-mountainburg.jpg" alt="Mountainburg Public Schools" class="lb-img" data-fourge-block="glbimg01">
+<button type="button" class="lb-btn lb-prev" aria-label="Previous photo" data-fourge-block="glbprev1"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button>
+</div>
+</body></html>`;
+const gal = await p.evaluate((GAL) => {
+  const doc = mkParse(GAL), grid = doc.querySelector('.gallery-grid');
+  const tgt = sel => mkTarget(doc.querySelector(sel)).getAttribute('data-fourge-block');
+  const v = (o, b) => { const x = mkValidate(JSON.stringify(o), b); return x.ok ? x.value : x.error; };
+  const sw = { classification: 'image_swap', summary: 'Swap the Alma photo', device: 'all', confidence: 0.9 };
+  const swapped = (() => { const d = mkParse(GAL), g = d.querySelector('.gallery-grid'); mkApplyOps(d, g, [{ field: 'src', value: '/assets/markup/new-alma.jpg', target: 'assets/project-alma.jpg' }], 'all'); return { imgs: [...g.querySelectorAll('img')].map(i => i.getAttribute('src')), buttons: g.querySelectorAll('button').length }; })();
+  const lightboxLink = (() => { const d = mkParse(GAL), a = d.querySelector('[data-fourge-block="ga000001"]'); mkApplyOps(d, a, [{ field: 'src', value: '/assets/markup/new-creek.jpg' }], 'all'); return a.outerHTML; })();
+  const icon = (() => { const d = mkParse(GAL), a = d.querySelector('.btn-call'); const r = mkValidate(JSON.stringify({ classification: 'text_edit', summary: 'x', device: 'all', ops: [{ field: 'text', value: 'Call us now' }], confidence: 0.9 }), a); if (!r.ok) return r.error; mkApplyOps(d, a, r.value.ops, 'all'); return a.innerHTML; })();
+  const keepSvg = (() => { const d = mkParse(GAL), pEl = d.querySelector('[data-fourge-block="gp000001"]'); const html = pEl.innerHTML.replace('Call (479) 782-8940', 'Call today'); const r = mkValidate(JSON.stringify({ classification: 'text_edit', summary: 'x', device: 'all', ops: [{ field: 'html', value: html }], confidence: 0.9 }), pEl); return r.ok ? r.value.ops[0].value : r.error; })();
+  return {
+    tBtn: tgt('[data-fourge-block="gimg0002"]'), tLink: tgt('[data-fourge-block="gimg0004"]'), tIcon: tgt('.btn-call svg'),
+    noTarget: v({ ...sw, ops: [{ field: 'src', value: 'https://cdn.example/new.jpg' }] }, grid),
+    badTarget: v({ ...sw, ops: [{ field: 'src', value: 'https://cdn.example/new.jpg', target: 'assets/nope.jpg' }] }, grid),
+    byPos: v({ ...sw, ops: [{ field: 'src', value: 'https://cdn.example/new.jpg', target: '2' }] }, grid),
+    bySrc: v({ ...sw, ops: [{ field: 'alt', value: 'Alma High School gym', target: 'assets/project-alma.jpg' }] }, grid),
+    htmlSwap: v({ ...sw, ops: [{ field: 'html', value: grid.innerHTML.replace('project-alma.jpg', 'new.jpg') }] }, grid),
+    wipe: v({ ...sw, classification: 'structural', ops: [{ field: 'html', value: '\n\n\n' }] }, grid),
+    textOnGrid: (() => { const d = mkParse(GAL), g = d.querySelector('.gallery-grid'); const x = mkValidate(JSON.stringify({ ...sw, classification: 'text_edit', ops: [{ field: 'text', value: 'Our projects' }] }), g); if (!x.ok) return x.error; mkApplyOps(d, g, x.value.ops, 'all'); return g.querySelectorAll('button > img').length; })(),
+    keptButtons: (() => { const x = mkValidate(JSON.stringify({ ...sw, classification: 'structural', ops: [{ field: 'html', value: grid.innerHTML.replace('alt="Alma High School"', 'alt="Alma High"') }] }), grid); return x.ok ? (x.value.ops[0].value.match(/<button /g) || []).length : x.error; })(),
+    newButton: mkSanitizeHtml('<button onclick="x()" type="submit" data-full="javascript:alert(1)" data-caption="Gym">Hi</button>'),
+    swapped, lightboxLink, icon, keepSvg,
+  };
+}, GAL);
+chk(gal.tBtn === 'gbtn0002' && gal.tLink === 'ga000001' && gal.tIcon === 'ga000003', 'a photo inside a button or link that holds only it is changed together with it (a gallery tile, a link to the full size); an icon inside a link stays the link — ' + [gal.tBtn, gal.tLink, gal.tIcon].join(','));
+chk(/src needs "target": this element holds 3 images; name one by its src: 1\. assets\/project-kpot\.jpg/.test(gal.noTarget) && /"target" "assets\/nope\.jpg" is not one of the element's images/.test(gal.badTarget),
+  'in a gallery, an image change must say which photo (by its src), and one that names no photo of the gallery is refused — ' + gal.noTarget.slice(0, 120));
+chk(gal.byPos.ops && gal.byPos.ops[0].target === 'assets/project-alma.jpg' && gal.bySrc.ops && gal.bySrc.ops[0].target === 'assets/project-alma.jpg', '…named by its src, or by its place (2 = the second photo, kept as its src)');
+chk(/an image swap changes the image with "src"/.test(gal.htmlSwap), 'an image swap can\'t rewrite the gallery with html — ' + gal.htmlSwap);
+chk(/would delete 3 images, 3 buttons from the element/.test(gal.wipe) && gal.textOnGrid === 3, 'an html change that would empty the gallery is refused, and a text change keeps its photos (text never takes images, buttons or icons with it) — ' + gal.wipe.slice(0, 90) + ' / ' + gal.textOnGrid);
+chk(gal.keptButtons === 3 && gal.newButton === '<button type="button" data-caption="Gym">Hi</button>', 'buttons are content now: rewritten markup keeps them (without handlers, never a submit, no script address) — ' + gal.newButton);
+chk(JSON.stringify(gal.swapped.imgs) === JSON.stringify(['assets/project-kpot.jpg', '/assets/markup/new-alma.jpg', 'assets/project-mountainburg.jpg']) && gal.swapped.buttons === 3, 'a swap with a target changes that one photo and nothing else — ' + JSON.stringify(gal.swapped));
+chk(/^<a href="\/assets\/markup\/new-creek\.jpg" data-lightbox="g" data-full="\/assets\/markup\/new-creek\.jpg" data-fourge-block="ga000001"><img src="\/assets\/markup\/new-creek\.jpg"/.test(gal.lightboxLink), 'the link to the full-size picture (what a lightbox opens) and a data attribute holding the old file follow the swapped photo — ' + gal.lightboxLink);
+chk(/^<svg class="ico"[^>]*><path d="M22 16\.92v3"><\/path><\/svg> Call us now$/.test(gal.icon), 'a text change keeps the link\'s icon, with its space — ' + gal.icon);
+chk(/<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16\.92v3"><\/path><\/svg> Call today<\/a>/.test(gal.keepSvg) && /href="tel:\+14797828940"/.test(gal.keepSvg), 'an html change that keeps the site\'s own icon exactly as it was keeps it (icons can\'t be written new) — ' + gal.keepSvg.slice(0, 160));
+
+// a comment pinned on the photo viewer: it shows whichever photo was clicked, so the change goes to the gallery
+await p.evaluate(({ GAL }) => { window.__page = { html: GAL, sha: 'b'.repeat(64) }; }, { GAL });
+const VIEWER = await p.evaluate(() => window.__thread({ url: 'https://client.example/projects', elements: [{ path: 'div.lightbox > img.lb-img' }],
+  messages: [{ id: 'm', text: 'Can you swap this photo for the attached one?', author: 'Casey', attachments: [{ url: 'https://cdn.example/new-mtb.jpg', mimeType: 'image/jpeg', name: 'new-mtb.jpg' }], loom: [] }] }));
+g = await gen(await p.evaluate(t => ({ ...window.__newItem(30, t), page: 'projects.html' }), VIEWER), [{ classification: 'image_swap', summary: 'Swap the Mountainburg photo', device: 'all', ops: [{ field: 'src', value: 'https://cdn.example/new-mtb.jpg', target: 'assets/project-mountainburg.jpg' }], confidence: 0.85 }]);
+const vtxt = (g.ai[0] && g.ai[0].messages[0].content.filter(c => c.type === 'text').map(c => c.text).join('\n')) || '';
+chk(g.save && g.save.status === 'pending' && g.save.gen.block === 'ggrid001' && /photo viewer/.test(g.save.gen.note) && g.save.gen.methodConfidence <= 0.6
+  && /Images in this element \(3\), each named by its src/.test(vtxt) && /3\. assets\/project-mountainburg\.jpg/.test(vtxt) && /pinned on the photo viewer/.test(vtxt),
+  'a comment pinned on the hidden photo viewer goes to the gallery that holds the photo, and Claude gets the gallery\'s photos to name one — ' + JSON.stringify(g.save && { block: g.save.gen.block, note: g.save.gen.note }).slice(0, 200));
+chk(g.save && /new-mtb\.jpg/.test(g.save.gen.blockAfter) && (g.save.gen.blockAfter.match(/<button /g) || []).length === 3 && g.save.gen.ops[0].target === 'assets/project-mountainburg.jpg',
+  '…and the change swaps that photo in the gallery, every other photo kept');
+
+// a waiting change made before 1.14.164 that would empty the gallery: flagged, not approvable, refused at approval
+const legacy = await p.evaluate(({ GAL }) => {
+  const doc = mkParse(GAL), grid = doc.querySelector('.gallery-grid'), before = grid.outerHTML;
+  return { id: 31, threadId: 'th31', site: 'client.example', page: 'projects.html', status: 'pending', thread: window.__thread({}),
+    gen: { classification: 'image_swap', summary: 'Swap the Alma photo', device: 'all', ops: [{ field: 'html', value: '\n\n\n' }], block: 'ggrid001', locator: mkLocator(grid), blockBefore: before, blockAfter: before.replace(/<button[\s\S]*?<\/button>/g, ''), pageSha: 'b'.repeat(64) } };
+}, { GAL });
+const lg = await p.evaluate((item) => {
+  _mk.status = { ok: true, isHub: true, hasKey: true, canSetup: true, counts: {}, webhook: { registered: true }, events: {} };
+  window.__items = [item]; _mk.items = window.__items; _mk.filter = 'pending'; _mk.showSettings = false; _mk.editing = {}; _mk.selected = new Set();
+  mkRender();
+  const card = document.getElementById('mk-card-' + item.id);
+  mkSelectAll(true);
+  return { warn: card ? ((card.querySelector('.mk-err') || {}).textContent || '') : '', approve: card ? !!card.querySelector('button[onclick="mkApprove(' + item.id + ')"]') : null, box: card ? !!card.querySelector('input[type=checkbox]') : null, selected: _mk.selected.size };
+}, legacy);
+chk(/would delete 3 images, 3 buttons from the page, so it can't be approved\. Regenerate it/.test(lg.warn) && lg.approve === false && lg.box === false && lg.selected === 0,
+  'a waiting change that would empty the gallery (made before this release) says so, with no Approve, and Select all leaves it out — ' + lg.warn.slice(0, 120));
+a = await approve(legacy, { html: GAL, sha: 'b'.repeat(64) });
+chk(!a.apply && a.toasts.some(t => /would delete 3 images, 3 buttons from the page, so nothing was changed/.test(t)), 'approving it anyway is refused before anything is sent to the site — ' + a.toasts.join(' | '));
+const ew = await p.evaluate((item) => {
+  const it = { ...item, gen: { ...item.gen, ops: [{ field: 'alt', value: 'x', target: 'assets/project-alma.jpg' }], blockAfter: item.gen.blockBefore } };
+  window.__items = [it]; _mk.items = window.__items; _mk.editing = {}; mkRender();
+  mkEditToggle(it.id);
+  const opts = () => [...document.querySelectorAll('#mk-card-' + it.id + ' select[aria-label="Which image"]')].map(s => s.value);
+  const first = opts();
+  mkEditSet(it.id, 0, 'field', 'text'); const none = opts();
+  mkEditSet(it.id, 0, 'field', 'src'); const back = { sel: opts(), target: _mk.editing[it.id].ops[0].target };
+  _mk.editing = {};
+  return { first, none, back };
+}, legacy);
+chk(JSON.stringify(ew.first) === JSON.stringify(['assets/project-alma.jpg']) && ew.none.length === 0 && ew.back.target === 'assets/project-kpot.jpg' && ew.back.sel[0] === 'assets/project-kpot.jpg',
+  'Edit: an image field in a gallery has a Which image picker (on the change\'s photo; the first photo for a new one), other fields don\'t — ' + JSON.stringify(ew));
+
+// ── 10. the daily to-do email: the panel's button, the settings, the time zone ──
+const dg = await p.evaluate(async () => {
+  localStorage.setItem('cd_user', JSON.stringify({ username: 'arch@example.com', role: 'superadmin', architect: true }));
+  const now = Math.floor(Date.now() / 1000);
+  const digest = { on: true, to: ['a@agency.example', 'b@agency.example'], toSet: true, time: '08:45', tz: 'America/Chicago', tzSet: true, sentToday: false,
+    lastNote: 'Sent to a@agency.example: MarkUp: 2 comments waiting on 1 site.', lastAt: now - 72000, lastVia: 'cron', error: '', cronAt: now - 300,
+    cronUrl: 'https://fourge.com/admin/api.php?action=markup_digest_tick&key=KEY123' };
+  _mk.status = { ok: true, isHub: true, hasKey: true, canSetup: true, hub: 'https://fourge.com', workspace: { name: 'Agency WS' }, webhook: { registered: true }, events: {}, counts: {}, triggerStatuses: [], statusesSeen: [], publicKey: 'PK', digest };
+  _mk.items = []; _mk.showSettings = true; mkRender();
+  const root = document.getElementById('mk-root');
+  const line = (root.querySelector('.mk-line') || {}).textContent || '';
+  const val = id => (document.getElementById(id) || {}).value;
+  const sec = { to: val('mk-dg-to'), time: val('mk-dg-time'), tz: val('mk-dg-tz'), cron: (document.getElementById('mk-dg-cron') || {}).textContent || '', last: /set off by the cron job/.test(root.textContent), button: (document.getElementById('mk-digest-now') || {}).textContent };
+  const orig = window.apiCall, calls = [];
+  window.__toasts = [];
+  window.apiCall = async (action, body = {}) => {
+    if (action === 'markup_hub_digest') { calls.push({ action, body }); return body.op === 'tz' ? { ok: true } : { ok: true, sent: ['a@agency.example', 'b@agency.example'], failed: {}, subject: 'MarkUp: 2 comments waiting on 1 site', total: 2, sites: 1 }; }
+    if (action === 'markup_hub_save') { calls.push({ action, body }); return { ..._mk.status, ok: true, message: 'Daily email saved.' }; }
+    if (action === 'markup_hub_queue') return { ok: true, items: [], sites: [], status: _mk.status };
+    return orig(action, body);
+  };
+  document.getElementById('mk-digest-now').click();
+  await new Promise(r => setTimeout(r, 60));
+  const send = (calls.find(c => c.action === 'markup_hub_digest') || {}).body;
+  const toast = window.__toasts.map(t => t.m).join(' | ');
+  document.getElementById('mk-dg-to').value = 'c@agency.example';
+  document.getElementById('mk-dg-time').value = '09:15';
+  mkDigestSave();
+  await new Promise(r => setTimeout(r, 60));
+  const save = (calls.find(c => c.action === 'markup_hub_save') || {}).body;
+  calls.length = 0;
+  mkDigestTzOnce({ digest: { tzSet: false } });
+  mkDigestTzOnce({ digest: { tzSet: true } });
+  await new Promise(r => setTimeout(r, 20));
+  const tz = calls.map(c => c.body);
+  window.apiCall = orig;
+  _mk.showSettings = false;
+  return { line, sec, send, toast, save, tz };
+});
+chk(/The to-do email goes to 2 people every day after 8:45 AM \(America\/Chicago\)\./.test(dg.line), 'the status line says who gets the daily email and when — ' + dg.line.slice(-120));
+chk(dg.sec.to === 'a@agency.example, b@agency.example' && dg.sec.time === '08:45' && dg.sec.tz === 'America/Chicago' && dg.sec.last
+  && dg.sec.cron === 'curl -fsS "https://fourge.com/admin/api.php?action=markup_digest_tick&key=KEY123" > /dev/null', 'Settings → Daily email: who, when, the time zone, the last one sent, and the cron command for 8:45 sharp — ' + JSON.stringify(dg.sec));
+chk(dg.sec.button === 'Email the to-do list' && dg.send && dg.send.op === 'send' && /Sent to a@agency\.example, b@agency\.example — MarkUp: 2 comments waiting on 1 site/.test(dg.toast), 'Email the to-do list sends it now and says to whom — ' + dg.toast);
+chk(dg.save && JSON.stringify(dg.save.digest) === JSON.stringify({ on: true, to: 'c@agency.example', time: '09:15', tz: 'America/Chicago' }), 'Save daily email sends who, when and the time zone — ' + JSON.stringify(dg.save));
+chk(dg.tz.length === 1 && dg.tz[0].op === 'tz' && typeof dg.tz[0].tz === 'string' && dg.tz[0].tz.length > 2, 'the hub learns the agency\'s time zone from the first browser that opens it, once — ' + JSON.stringify(dg.tz));
+
 await done('markup_hub');

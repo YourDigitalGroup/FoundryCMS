@@ -382,6 +382,13 @@ input:checked+.tog-sl{background:var(--ember)}input:checked+.tog-sl:before{trans
 .mk-ops{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}
 .mk-ops td{padding:5px 6px;border-top:1px solid var(--border);vertical-align:top}
 .mk-ops td:first-child{color:var(--muted);white-space:nowrap;width:1%}
+.mk-ops .mk-tgt{font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.ev-links{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.ev-link-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) auto;gap:6px;align-items:center}
+.ev-link-row input{margin:0;min-width:0}
+.ev-link-x{font-size:17px;line-height:1}
+@media (max-width:520px){.ev-link-row{grid-template-columns:minmax(0,1fr) auto}.ev-link-row .ev-link-label{grid-column:1/-1}}
+.mk-edit-row select[aria-label="Which image"]{max-width:200px}
 .mk-ops td:last-child{overflow-wrap:anywhere;font-family:var(--font-mono);font-size:11.5px;color:var(--text)}
 .mk-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .mk-actions .fd-btn-primary,.mk-actions .fd-btn-secondary{padding:7px 12px;font-size:12.5px}
@@ -2993,7 +3000,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.163';
+const CMS_VERSION='1.14.164';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -7992,7 +7999,7 @@ const EVENT_FIELDS = [
   {id:'ev-end',   type:'date', label:'End Date', group:'dates', hint:'Leave blank for a one-day event.'},
   {id:'ev-start-time', type:'time', label:'Start Time', group:'times', oninput:'evUpdateRecurrencePreview()', hint:'Leave blank for an all-day event.'},
   {id:'ev-end-time',   type:'time', label:'End Time', group:'times'},
-  {id:'ev-url',   type:'url', label:'External URL', sub:'(tickets, RSVP, more info)', placeholder:'https://…'},
+  {id:'ev-links', type:'links', label:'Links', sub:'(tickets, RSVP, more info — as many as you need)'},
 ];
 function eventFieldInputHtml(f){
   const oninput=f.oninput?(' oninput="'+f.oninput+'"'):'';
@@ -8001,6 +8008,9 @@ function eventFieldInputHtml(f){
   const sub=f.sub?(' <span style="font-weight:400;color:var(--muted)">'+esc(f.sub)+'</span>'):'';
   const label='<label>'+esc(f.label)+(f.required?' *':'')+sub+'</label>';
   if(f.type==='textarea') return '<div class="fg">'+label+'<textarea id="'+f.id+'" rows="'+(f.rows||3)+'"'+ph+'></textarea></div>';
+  if(f.type==='links') return '<div class="fg">'+label+'<div id="'+f.id+'" class="ev-links"></div>'
+    +'<button type="button" class="btn btn-o btn-sm" onclick="evLinkAdd()">+ Add a link</button>'
+    +'<small>Each link is a button on the event page, in this order. The label is the button\'s text; left blank, it reads “More Info”.</small></div>';
   return '<div class="fg">'+label+'<input type="'+f.type+'" id="'+f.id+'"'+ph+oninput+'>'+hint+'</div>';
 }
 // Consecutive fields sharing the same group key render side-by-side in one
@@ -8025,6 +8035,53 @@ function ensureEventFieldsRendered(){
   const wrap=document.getElementById('ev-fields-simple');
   if(wrap) wrap.innerHTML=eventFieldsHtml(EVENT_FIELDS);
 }
+// ── An event's links: any number, each a label and an address. Older events have
+// one address in `url` and no label; they open as one link with an empty label.
+// `url` is still written (the first link's address) for anything that reads it.
+function eventLinks(ev){
+  if(ev&&Array.isArray(ev.links)&&ev.links.length) return ev.links.filter(l=>l&&String(l.url||'').trim()).map(l=>({label:String(l.label||''), url:String(l.url||'')}));
+  return ev&&ev.url?[{label:'', url:String(ev.url)}]:[];
+}
+function evLinkRowHtml(l){
+  return '<div class="ev-link-row"><input type="text" class="ev-link-label" aria-label="Button label" placeholder="More Info" value="'+esc(l.label||'')+'">'
+    +'<input type="url" class="ev-link-url" aria-label="Link address" placeholder="https://…" value="'+esc(l.url||'')+'">'
+    +'<button type="button" class="ib ev-link-x" aria-label="Remove this link" title="Remove this link" onclick="evLinkRemove(this)">×</button></div>';
+}
+function evLinksSet(list){
+  const box=document.getElementById('ev-links'); if(!box) return;
+  const rows=(list&&list.length)?list:[{label:'', url:''}];   // one empty row to fill in, as the single field was
+  box.innerHTML=rows.map(evLinkRowHtml).join('');
+}
+function evLinkAdd(){
+  const box=document.getElementById('ev-links'); if(!box) return;
+  box.insertAdjacentHTML('beforeend', evLinkRowHtml({label:'', url:''}));
+  const urls=box.querySelectorAll('.ev-link-url'); if(urls.length) urls[urls.length-1].focus();
+}
+function evLinkRemove(btn){
+  const row=btn.closest('.ev-link-row'), box=document.getElementById('ev-links'); if(!row||!box) return;
+  if(box.querySelectorAll('.ev-link-row').length>1) row.remove();
+  else row.querySelectorAll('input').forEach(i=>{ i.value=''; });   // the last row empties instead of going away
+}
+// An address as typed, made into a working link: "www.example.com" gets https://.
+function evLinkUrl(u){
+  u=String(u||'').trim();
+  if(!u) return '';
+  if(/^(https?:\/\/|mailto:|tel:|\/|#)/i.test(u)) return u;
+  if(/^[a-z][a-z0-9+.-]*:/i.test(u)) return '';   // javascript: and other schemes are not a link to an event page
+  return 'https://'+u.replace(/^\/+/, '');
+}
+// The rows as saved: the ones with an address, in order. Throws when an address can't be a link.
+function evLinksGet(){
+  const out=[];
+  document.querySelectorAll('#ev-links .ev-link-row').forEach(r=>{
+    const raw=(r.querySelector('.ev-link-url')||{}).value||'', label=((r.querySelector('.ev-link-label')||{}).value||'').trim();
+    if(!raw.trim()) return;
+    const url=evLinkUrl(raw);
+    if(!url) throw new Error('“'+raw.trim()+'” isn\'t a web address');
+    out.push({label, url});
+  });
+  return out;
+}
 function openNewEvent(){
   ensureEventFieldsRendered();
   _curEditEvent=null;
@@ -8035,7 +8092,7 @@ function openNewEvent(){
   document.getElementById('ev-end').value='';
   document.getElementById('ev-start-time').value='';
   document.getElementById('ev-end-time').value='';
-  document.getElementById('ev-url').value='';
+  evLinksSet([]);
   document.getElementById('ev-recurring').classList.remove('on');
   document.getElementById('ev-recurrence').value='weekly';
   evToggleRecurrence();
@@ -8054,7 +8111,7 @@ function editEvent(id){
   document.getElementById('ev-end').value=ev.end||'';
   document.getElementById('ev-start-time').value=ev.startTime||'';
   document.getElementById('ev-end-time').value=ev.endTime||'';
-  document.getElementById('ev-url').value=ev.url||'';
+  evLinksSet(eventLinks(ev));
   document.getElementById('ev-recurring').classList.toggle('on',!!ev.recurring);
   document.getElementById('ev-recurrence').value=ev.recurrence||'weekly';
   evToggleRecurrence();
@@ -8068,7 +8125,7 @@ function duplicateEvent(id){
   document.getElementById('ev-modal-title').textContent='New Event (from “'+esc(decodeHtml(src.title||''))+'”)';
   document.getElementById('ev-title').value=decodeHtml(src.title||'');
   document.getElementById('ev-desc').value=decodeHtml(src.description||'');
-  document.getElementById('ev-url').value=src.url||'';
+  evLinksSet(eventLinks(src));
   // Time-of-day usually repeats along with the event, unlike the date — the
   // one thing "Duplicate" exists to make the operator pick fresh.
   document.getElementById('ev-start-time').value=src.startTime||'';
@@ -8092,6 +8149,8 @@ async function saveEvent(){
   // multi-day event ending earlier in the day than it started (e.g. Fri 6pm
   // to Sun 2pm) is completely normal.
   if(end===start && startTime && endTime && endTime<startTime){ toast('End time is before the start time','err'); return; }
+  let links;
+  try{ links=evLinksGet(); }catch(e){ toast(e.message,'err'); return; }
   const existing=_curEditEvent!=null?_events.find(e=>e.id===_curEditEvent):null;
   const id=existing?existing.id:uid();
   let slug=slugify(title);
@@ -8102,7 +8161,8 @@ async function saveEvent(){
     id, title, slug,
     description:get('ev-desc'),
     start, end, startTime, endTime,
-    url:get('ev-url'),
+    url:links.length?links[0].url:'',   // the first link, for anything that reads the single address
+    links,
     featured:document.getElementById('ev-featured-wrap')?.dataset.url||'',
     recurring:recurringOn,
     recurrence:recurringOn?(document.getElementById('ev-recurrence')?.value||'weekly'):''
@@ -8229,6 +8289,9 @@ function eventsRuntimeCss(){
     +'.fev-s-desc p{margin:0 0 16px}'
     +'.fev-cta{display:inline-block;background:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));color:#fff;padding:12px 26px;border-radius:8px;font-weight:600;text-decoration:none}'
     +'.fev-cta:hover{opacity:.9;text-decoration:none}'
+    // several links: the first is the main button, the others outlined beside it
+    +'.fev-links{display:flex;flex-wrap:wrap;gap:10px}'
+    +'.fev-cta.fev-cta-alt{background:transparent;color:var(--brand-color-primary,var(--brand-primary,var(--ember,#C8531E)));box-shadow:inset 0 0 0 2px currentColor}'
     +'@media(max-width:640px){.fev-cell{min-height:60px;font-size:10.5px;padding:4px}.fev-pill{font-size:9.5px;padding:1px 4px}.fev-single h1{font-size:27px}}'
     +'</style>';
 }
@@ -8255,6 +8318,8 @@ function eventsRuntimeAssets(){
     +'  if(rec==="yearly")return"Yearly on "+md+at;\n'
     +'  return"Every "+wd+at;\n'
     +'}\n'
+    // An event's links (any number, each with its button label); an older event has one address in url.
+    +'function links(ev){var ok=function(u){return u&&!/^\\s*(javascript|data|vbscript):/i.test(u);};var l=Array.isArray(ev.links)?ev.links.filter(function(x){return x&&ok(x.url);}):[];if(!l.length&&ok(ev.url))l=[{label:"",url:ev.url}];return l;}\n'
     +'function pad(n){return n<10?"0"+n:""+n;}\n'
     +'function dstr(y,m,d){return y+"-"+pad(m+1)+"-"+pad(d);}\n'
     +'function paintSingle(root,events){\n'
@@ -8269,13 +8334,14 @@ function eventsRuntimeAssets(){
     // real <a href> copied straight out of a Facebook post — rendered as
     // visible "<a href=...>" text instead of an actual link.
     +'  var desc=(ev.description||"").split(/\\n{2,}/).filter(function(pp){return pp.trim();}).map(function(pp){return "<p>"+pp.replace(/\\n/g,"<br>")+"</p>";}).join("");\n'
+    +'  var lk=links(ev);\n'
     +'  root.innerHTML="<article class=\\"fev-single\\">"\n'
     +'    +"<a class=\\"fev-back\\" href=\\"events.html\\">\\u2190 All events</a>"\n'
     +'    +(ev.featured?"<img class=\\"fev-s-img\\" src=\\""+esc(ev.featured)+"\\" alt=\\""+esc(dec(ev.title))+"\\">":"")\n'
     +'    +"<div class=\\"fev-s-date\\">"+esc(frange(ev.start,ev.end)+(trange(ev.startTime,ev.endTime)?" \\u00b7 "+trange(ev.startTime,ev.endTime):""))+(ev.recurring?"<span class=\\"fev-badge\\">"+esc(recLabel(ev.recurrence||"weekly",ev.start,ev.startTime))+"</span>":"")+"</div>"\n'
     +'    +"<h1>"+esc(dec(ev.title))+"</h1>"\n'
     +'    +(desc?"<div class=\\"fev-s-desc\\">"+desc+"</div>":"")\n'
-    +'    +(ev.url?"<a class=\\"fev-cta\\" href=\\""+esc(ev.url)+"\\" target=\\"_blank\\" rel=\\"noopener\\">More Info</a>":"")\n'
+    +'    +(lk.length?"<div class=\\"fev-links\\">"+lk.map(function(l,i){return "<a class=\\"fev-cta"+(i?" fev-cta-alt":"")+"\\" href=\\""+esc(l.url)+"\\" target=\\"_blank\\" rel=\\"noopener\\">"+esc(l.label||"More Info")+"</a>";}).join("")+"</div>":"")\n'
     +'    +"</article>";\n'
     // Event schema — only fields Fourge actually collects. No location, no
     // eventStatus/eventAttendanceMode: Fourge never asserts a fact it has no
@@ -8288,7 +8354,7 @@ function eventsRuntimeAssets(){
     // <a href>), so structured data still reads as clean text either way.
     +'  if(ev.description)ld.description=dec(ev.description).replace(/<[^>]+>/g,"").trim();\n'
     +'  if(ev.featured)ld.image=ev.featured;\n'
-    +'  if(ev.url)ld.url=ev.url;\n'
+    +'  if(lk.length)ld.url=lk[0].url;\n'
     +'  var s=document.createElement("script");s.type="application/ld+json";s.textContent=JSON.stringify(ld);document.head.appendChild(s);\n'
     +'}\n'
     +'function paintArchive(root,events){\n'
@@ -8366,7 +8432,7 @@ function ensureEventsRuntime(html){
 // sweep once — and comparing against CMS_VERSION directly would re-run the
 // full read/write pass on every login forever, since that bumps on every
 // release, not just ones that touch this runtime.
-const EVENTS_RUNTIME_SWEEP_VERSION='1.14.112';
+const EVENTS_RUNTIME_SWEEP_VERSION='1.14.164';   // 1.14.164: an event's several links
 // Version-gated backfill so a change to the events runtime above reaches
 // events.html/event.html on a site that already has them, without waiting
 // for either page to be opened and re-saved. Same self-triggered shape as
@@ -13678,10 +13744,11 @@ async function mkNavCheck(){
     if(accessLevel(getSessionUser())>=3 && canCallApi()){
       const s=await apiCall('markup_hub_status');
       show=!!(s&&s.ok&&s.isHub);
-      if(show){ _mk.status=s; mkNavBadge(); }
+      if(show){ _mk.status=s; mkNavBadge(); mkDigestTzOnce(s); }
     }
   }catch(e){}
   ni.style.display=show?'':'none';
+  if(show&&/^#markup\b/i.test(location.hash||'')) navTo('markup');   // the daily email's "Open MarkUp in Fourge"
 }
 function mkNavBadge(){
   const b=document.getElementById('ni-markup-count'); if(!b) return;
@@ -13736,6 +13803,7 @@ function mkRender(err){
     h+='<div class="mk-tools"><select id="mk-pull-site" aria-label="Which site to pull"><option value="">All sites</option>'
       +_mk.sites.map(x=>'<option value="'+esc(x.site)+'">'+esc(x.name||x.site)+'</option>').join('')+'</select>'
       +'<button class="fd-btn-primary" id="mk-pull" onclick="mkPull()"'+(_mk.busy?' disabled':'')+'>'+(_mk.busy?'Pulling…':'Pull changes now')+'</button>'
+      +'<button class="fd-btn-secondary" id="mk-digest-now" onclick="mkDigestSend()"'+(_mk.digestBusy?' disabled':'')+' title="Email the list of sites with comments waiting, now, to the people who get the daily email">'+(_mk.digestBusy?'Sending…':'Email the to-do list')+'</button>'
       +(arch?'<button class="fd-btn-secondary" onclick="mkToggleSettings()">Settings</button>':'')+'</div>';
   }
   h+='</div>';
@@ -13769,7 +13837,65 @@ function mkStatusLine(s){
   if(ev.pending) bits.push(ev.pending+' MarkUp event'+(ev.pending===1?'':'s')+' still to read.');
   if(ev.failed) bits.push('<span style="color:var(--red)">'+ev.failed+' event'+(ev.failed===1?'':'s')+' could not be read'+(s.lastError?': '+esc(s.lastError):'')+'.</span>');
   bits.push(_mk.sites.length+' client site'+(_mk.sites.length===1?'':'s')+' known.');
+  const dg=s.digest;
+  if(dg){
+    const n=dg.toSet?(dg.to||[]).length:(dg.toCount||0);
+    if(dg.on&&n) bits.push('The to-do email goes to '+(dg.toSet?n+' '+(n===1?'person':'people'):'the agency\'s Architects')+' every day after '+esc(mkTime12(dg.time))+(dg.tzSet?' ('+esc(dg.tz)+')':'')+(dg.sentToday?'; today\'s is done':'')+'.');
+    else bits.push('The daily to-do email is off.');
+    if(dg.error) bits.push('<span style="color:var(--red)">Daily email: '+esc(dg.error)+'</span>');
+  }
   return bits.join(' ');
+}
+// ── the daily to-do email ──
+const MK_DIGEST_VIA={cron:'the cron job', webhook:'a MarkUp event', panel:'this panel opening', 'sign-in':'a sign-in', scheduler:'a scheduled ping'};
+function mkTime12(t){ const m=/^(\d{1,2}):(\d{2})$/.exec(String(t||'')); if(!m) return String(t||''); let h=+m[1]; const ap=h>=12?'PM':'AM'; h=h%12||12; return h+':'+m[2]+' '+ap; }
+function mkTzSelect(cur){
+  let zones=[]; try{ zones=Intl.supportedValuesOf('timeZone'); }catch(e){}
+  if(!zones.length) return '<input type="text" id="mk-dg-tz" value="'+esc(cur||'')+'" placeholder="America/Chicago">';
+  if(cur&&!zones.includes(cur)) zones=[cur,...zones];
+  return '<select id="mk-dg-tz">'+zones.map(z=>'<option value="'+esc(z)+'"'+(z===cur?' selected':'')+'>'+esc(z.replace(/_/g,' '))+'</option>').join('')+'</select>';
+}
+function mkDigestHtml(s){
+  const dg=s.digest||{};
+  const at=mkTime12(dg.time||'08:45');
+  return '<h3>Daily email</h3><div class="desc" style="margin-bottom:8px">Every day after this time the hub emails the client sites with comments waiting on someone: changes ready to approve, comments that need a person, and ones it couldn\'t match to a site. Nothing waiting: no email. <b>Email the to-do list</b>, above, sends it right away.</div>'
+    +'<label class="mk-chk"><input type="checkbox" id="mk-dg-on"'+(dg.on!==false?' checked':'')+'> Send the daily email</label>'
+    +'<div class="fg"><label for="mk-dg-to">Send it to</label><input type="text" id="mk-dg-to" value="'+esc((dg.to||[]).join(', '))+'" placeholder="'+(dg.toSet?'name@agency.com, other@agency.com':'The agency\'s Architects')+'"><small>Up to ten addresses, separated by commas.'+(dg.toSet?'':' Until you save some, it goes to the agency\'s Architects.')+'</small></div>'
+    +'<div class="fr"><div class="fg"><label for="mk-dg-time">Time</label><input type="time" id="mk-dg-time" value="'+esc(dg.time||'08:45')+'"></div>'
+    +'<div class="fg"><label for="mk-dg-tz">Time zone</label>'+mkTzSelect(dg.tz)+'</div></div>'
+    +'<div class="mk-actions" style="margin:2px 0 8px"><button class="fd-btn-primary" onclick="mkDigestSave()">Save daily email</button><button class="fd-btn-secondary" onclick="mkDigestSend()">Send it now</button></div>'
+    +(dg.lastNote?'<div class="mk-muted">Last daily email: '+esc(dg.lastNote)+(dg.lastAt?' ('+esc(mkAgo(dg.lastAt))+(dg.lastVia?', set off by '+esc(MK_DIGEST_VIA[dg.lastVia]||dg.lastVia):'')+')':'')+'</div>':'')
+    +(dg.error?'<div class="mk-err">'+esc(dg.error)+'</div>':'')
+    +'<div class="desc" style="margin:8px 0 4px">For it to go out at '+esc(at)+' sharp, add a cron job on this server running this command every 15 minutes (in cPanel: Cron Jobs → Common Settings → Once Per Fifteen Minutes). Without one, it goes out with the first thing that reaches the hub after '+esc(at)+': a MarkUp comment, a sign-in, or this panel opening.'
+    +(dg.cronAt?' The cron job last called '+esc(mkAgo(dg.cronAt))+'.':'')+'</div>'
+    +(dg.cronUrl?'<code id="mk-dg-cron">curl -fsS "'+esc(dg.cronUrl)+'" &gt; /dev/null</code><button class="fd-btn-secondary" onclick="mkDigestNewKey()">New cron address</button>':'');
+}
+async function mkDigestSend(){
+  if(_mk.digestBusy) return;
+  _mk.digestBusy=true; mkRender();
+  try{
+    const r=await apiCall('markup_hub_digest',{op:'send'});
+    if(!r||!r.ok) throw new Error((r&&r.error)||'The email was not sent.');
+    const failed=Object.keys(r.failed||{});
+    toast('Sent to '+(r.sent||[]).join(', ')+' — '+r.subject+(failed.length?' (not delivered to '+failed.join(', ')+')':''),'ok');
+  }catch(e){ toast(e.message,'err'); }
+  _mk.digestBusy=false; mkRender();
+}
+function mkDigestSave(){
+  const g=id=>document.getElementById(id);
+  const d={on:!!(g('mk-dg-on')&&g('mk-dg-on').checked), to:(g('mk-dg-to')&&g('mk-dg-to').value)||'', time:(g('mk-dg-time')&&g('mk-dg-time').value)||'08:45'};
+  const tz=(g('mk-dg-tz')&&g('mk-dg-tz').value)||''; if(tz) d.tz=tz;
+  mkSettingsSave({digest:d});
+}
+async function mkDigestNewKey(){
+  if(!(await uiConfirm('Make a new address for the cron job? The old one stops working, so the cron job needs the new command.','New address','New cron address'))) return;
+  mkSettingsSave({digest:{newKey:true}});
+}
+// The agency's time zone, from the first person to open the hub's admin, until an Architect sets one.
+function mkDigestTzOnce(s){
+  if(!s||!s.digest||s.digest.tzSet) return;
+  let tz=''; try{ tz=Intl.DateTimeFormat().resolvedOptions().timeZone||''; }catch(e){}
+  if(tz) apiCall('markup_hub_digest',{op:'tz', tz}).catch(()=>{});
 }
 function mkFilter(k){ _mk.filter=k; mkRender(); }
 function mkGroups(list){
@@ -13825,14 +13951,22 @@ function mkOpsHtml(ops){
     let v=String(o.value==null?'':o.value);
     const sw=(o.field==='color'||o.field==='bgColor')&&v?'<span style="display:inline-block;width:11px;height:11px;border-radius:2px;border:1px solid var(--border);background:'+esc(v)+';vertical-align:middle;margin-right:6px"></span>':'';
     if(v.length>400) v=v.slice(0,400)+'…';
-    return '<tr><td>'+esc(MK_FIELDS[o.field]||o.field)+'</td><td>'+sw+esc(v===''?'(cleared)':v)+'</td></tr>';
+    return '<tr><td>'+esc(MK_FIELDS[o.field]||o.field)+(o.target?'<div class="mk-tgt" title="'+esc(o.target)+'">of '+esc(mkShortSrc(o.target))+'</div>':'')+'</td><td>'+sw+esc(v===''?'(cleared)':v)+'</td></tr>';
   }).join('')+'</table>';
+}
+// A waiting change that would take things out of the page (one made before 1.14.164 could rewrite a gallery
+// and lose its photos): what it would delete, else [].
+function mkDestructive(it){
+  const g=it&&it.gen;
+  if(!g||it.status!=='pending'||!g.blockBefore||!g.blockAfter) return [];
+  return mkLossOfHtml(g.blockBefore, g.blockAfter, g.classification!=='structural'&&!(g.ops||[]).some(o=>o.field==='imgHref'));
 }
 function mkCard(it){
   const g=it.gen||{};
   const busy=_mk.cardBusy[it.id];
+  const loss=mkDestructive(it);
   let h='<div class="mk-card'+(busy?' busy':'')+'" id="mk-card-'+it.id+'"><div class="mk-top">';
-  if(it.status==='pending') h+='<input type="checkbox" aria-label="Select for approval"'+(_mk.selected.has(it.id)?' checked':'')+' onchange="mkSelect('+it.id+',this.checked)">';
+  if(it.status==='pending'&&!loss.length) h+='<input type="checkbox" aria-label="Select for approval"'+(_mk.selected.has(it.id)?' checked':'')+' onchange="mkSelect('+it.id+',this.checked)">';
   h+='<span class="mk-b st-'+esc(it.status)+'">'+esc(busy||MK_STATUS[it.status]||it.status)+'</span>';
   if(g.classification) h+='<span class="mk-b">'+esc(MK_CLASSES[g.classification]||g.classification)+'</span>';
   if(g.device&&g.device!=='all') h+='<span class="mk-b">'+esc(g.device)+' only</span>';
@@ -13842,6 +13976,7 @@ function mkCard(it){
   if(g.summary) h+='<div class="mk-sum">'+esc(g.summary)+'</div>';
   if(g.method) h+='<div class="mk-meta">Element found by '+esc(MK_METHOD[g.method]||g.method)+(g.method!=='none'?' (confidence '+Math.round((g.methodConfidence||0)*100)+'%)':'')+(g.classification?' · AI confidence '+Math.round((g.confidence||0)*100)+'%':'')+'</div>';
   if(it.note) h+='<div class="'+(it.status==='failed'?'mk-err':'mk-note')+'">'+esc(it.note)+'</div>';
+  if(loss.length) h+='<div class="mk-err">This change would delete '+esc(loss.join(', '))+' from the page, so it can\'t be approved. Regenerate it: Fourge now changes one photo of a gallery on its own.</div>';
   if(it.status==='unmapped') h+=mkAssignHtml(it);
   const a=it.applied;
   if(a&&(it.status==='applied'||it.status==='reverted')){
@@ -13864,7 +13999,7 @@ function mkActionsHtml(it){
   const g=it.gen||{}, id=it.id, b=[];
   const hasBlock=!!(g.blockBefore);
   if(['pending','needs_human','no_change','failed'].includes(it.status)){
-    if(it.status==='pending'&&!_mk.editing[id]) b.push('<button class="fd-btn-primary" onclick="mkApprove('+id+')">Approve</button>');
+    if(it.status==='pending'&&!_mk.editing[id]&&!mkDestructive(it).length) b.push('<button class="fd-btn-primary" onclick="mkApprove('+id+')">Approve</button>');
     if(hasBlock) b.push('<button class="fd-btn-secondary" onclick="mkEditToggle('+id+')">'+(_mk.editing[id]?'Cancel edit':(g.ops&&g.ops.length?'Edit, then approve':'Write the change'))+'</button>');
     if(hasBlock&&((g.ops&&g.ops.length)||_mk.editing[id])) b.push('<button class="fd-btn-secondary" onclick="mkPreview('+id+')">Before / after</button>');
     b.push('<button class="fd-btn-secondary" onclick="mkItemOp('+id+',\'regenerate\')">Regenerate</button>');
@@ -13880,7 +14015,7 @@ function mkActionsHtml(it){
 function mkBusy(id, label){ if(label) _mk.cardBusy[id]=label; else delete _mk.cardBusy[id]; const el=document.getElementById('mk-card-'+id); const it=mkItem(id); if(el&&it) el.outerHTML=mkCard(it); }
 function mkRenderCard(id){ const el=document.getElementById('mk-card-'+id); const it=mkItem(id); if(el&&it) el.outerHTML=mkCard(it); }
 function mkSelect(id,on){ if(on) _mk.selected.add(id); else _mk.selected.delete(id); mkRender(); }
-function mkSelectAll(on){ _mk.items.filter(i=>i.status==='pending').forEach(i=>{ if(on) _mk.selected.add(i.id); else _mk.selected.delete(i.id); }); mkRender(); }
+function mkSelectAll(on){ _mk.items.filter(i=>i.status==='pending'&&!mkDestructive(i).length).forEach(i=>{ if(on) _mk.selected.add(i.id); else _mk.selected.delete(i.id); }); mkRender(); }
 
 // ── settings (Architect) ──
 function mkToggleSettings(){ _mk.showSettings=!_mk.showSettings; mkRender(); }
@@ -13909,6 +14044,7 @@ function mkSettingsHtml(s, first){
       +(Array.isArray(s.signing)&&!s.signing.length?'<div class="mk-err">This server\'s PHP has neither the sodium nor the openssl extension, so the hub can\'t sign its changes and no client site will accept them. Ask the host to turn either one on (in cPanel: Select PHP Version → Extensions).</div>':'')
       +'<div class="desc" style="margin-bottom:4px">Client sites check the hub\'s signature on every change with these public keys, each with whichever its server\'s PHP supports. They fetch them from '+esc(String(s.hub||'').replace(/^https?:\/\//,''))+' by themselves; nothing is set up on them.</div>'
       +(keys||'<code>(made when MarkUp is connected)</code>');
+    h+=mkDigestHtml(s);
   }
   return h+'</div>';
 }
@@ -13975,7 +14111,35 @@ function mkTextMatches(doc, text, within){
   return c.filter(el=>!c.some(o=>o!==el&&el.contains(o)));
 }
 // The element that gets the change: the nearest one with a data-fourge-block id, else the nearest content element.
-function mkTarget(el){ return (el.closest&&el.closest('[data-fourge-block]'))||(el.closest&&el.closest(MK_TAG_SEL))||el; }
+// A photo inside a link or button holding only it (a gallery tile, a link to the full-size picture a lightbox
+// opens) gets the wrapper: the link changes with the photo, and the before/after shows both.
+function mkTarget(el){
+  let t=(el.closest&&el.closest('[data-fourge-block]'))||(el.closest&&el.closest(MK_TAG_SEL))||el;
+  if(t.tagName==='IMG'||t.tagName==='PICTURE'){
+    const w=t.parentElement&&t.parentElement.closest('a,button');
+    if(w&&w.hasAttribute('data-fourge-block')&&mkImgsOf(w).length===1) t=w;
+  }
+  return t;
+}
+// The images an element holds (itself, if it is one), outside the widgets the page draws at runtime.
+function mkImgsOf(block){
+  if(!block) return [];
+  if(block.tagName==='IMG') return [block];
+  return [...block.querySelectorAll('img')].filter(i=>!i.closest(FOURGE_BLOCK_SKIP));
+}
+// Hidden on the page until a script shows it: a lightbox, a modal, a closed dialog.
+function mkHidden(el){ return !!(el&&el.closest&&el.closest('[hidden],[aria-hidden="true"],dialog:not([open]),[style*="display:none"],[style*="display: none"]')); }
+// A comment pinned on a photo viewer (a lightbox shows whichever gallery photo was clicked; its own image is
+// only a placeholder) belongs to the gallery: the visible element holding that photo and the others beside it.
+function mkGalleryFor(doc, viewer){
+  const vi=mkImgsOf(viewer)[0], src=vi&&vi.getAttribute('src'); if(!src) return null;
+  const same=[...doc.querySelectorAll('img')].filter(i=>i.getAttribute('src')===src&&!mkHidden(i)&&!i.closest(FOURGE_BLOCK_SKIP));
+  if(!same.length) return null;
+  for(let n=same[0].parentElement; n&&n!==doc.body; n=n.parentElement){
+    if(mkImgsOf(n).filter(i=>!mkHidden(i)).length>=2) return mkTarget(n);
+  }
+  return mkTarget(same[0]);
+}
 // 1. the pinned element's path (checked against the selected text), then its ancestors';
 // 2. the selected text alone; 3. nobody can tell: a person, with the screenshot.
 function mkResolve(doc, th){
@@ -14040,6 +14204,8 @@ function mkSystem(){
     +'Rules:\n'
     +'- Read the whole thread in order. Later replies can change or cancel the request; the newest instruction wins.\n'
     +'- ops change ONLY the element given. Allowed fields (CSS unless noted): "text" (plain text that replaces the element\'s text), "html" (replaces the element\'s inner HTML; keep its links and markup), "size" (font-size), "weight" (font-weight), "color", "bgColor" (background color), "align" (text-align), "lineHeight", "padding", "margin", "radius" (border-radius), "width", "height"; for an image: "src" (image URL), "alt", "imgHref" (where the image links; "" removes the link).\n'
+    +'- When the element holds more than one image (a gallery, a row of logos), every image op ("src", "alt", "imgHref") also needs "target": the src of the one image to change, exactly as listed under "Images in this element" — for example {"field":"src","value":"https://…/new.jpg","target":"assets/old.jpg"}. Use MarkUp\'s screenshot and the client\'s words to tell which one.\n'
+    +'- Change an image only with "src", "alt" and "imgHref". Never rewrite an image, a gallery or the buttons and links around its photos with "html" or "text": a change that would delete anything the client didn\'t ask to remove (images, buttons, icons, links) is refused.\n'
     +'- question_or_vague and not_a_change: "ops" is []. structural: ops only if the html field of this one element can do it, else [].\n'
     +'- device: "mobile" or "tablet" only when the client asked for that screen size alone (for example "on my phone this heading is too big"), and then only style fields. Otherwise "all". Text and image changes always apply to every screen size.\n'
     +'- Keep everything the client didn\'t ask to change. Never invent facts (phone numbers, prices, names, links): if the change needs information the thread doesn\'t give, use question_or_vague.\n'
@@ -14062,11 +14228,14 @@ function mkContext(it, th, block, pg, res){
     +((m.loom||[]).length?'\n   Video: '+m.loom.map(v=>v.url).join(', '):'')).join('\n\n');
   const styles=mkStylesOf(block.ownerDocument, block);
   const parent=block.parentElement;
+  const imgs=mkImgList(block);
   const text=[
     'Page: '+(th.url||pg.url)+' (site: '+(site.name||it.site)+')',
     'The client was looking at the '+dev+' layout'+(vp.w?' ('+vp.w+'×'+(vp.h||'?')+' viewport)':'')+'.',
     th.highlight?'The client selected this text: "'+String(th.highlight).slice(0,600)+'"':'',
+    res.note?'How it was found: '+res.note:'',
     'The element to change (found by '+(MK_METHOD[res.method]||res.method)+'):\n'+block.outerHTML.slice(0,6000),
+    imgs.length>1?'Images in this element ('+imgs.length+'), each named by its src for "target":\n'+imgs.slice(0,80).join('\n'):'',
     styles?'Its styles: '+styles:'',
     parent&&parent.tagName!=='BODY'?'Around it (context only, don\'t change):\n'+parent.outerHTML.slice(0,2500):'',
     'The comment thread, oldest first:\n\n'+(msgs||'(no messages)'),
@@ -14102,31 +14271,77 @@ function mkParseAnswer(raw){
   if(a>=0&&b>a){ try{ return JSON.parse(s.slice(a,b+1)); }catch(e){} }
   return null;
 }
-function mkImgOf(block){
-  if(!block) return null;
-  if(block.tagName==='IMG') return block;
-  const imgs=block.querySelectorAll('img');
-  return imgs.length===1?imgs[0]:null;
+// The image an op changes: the element's only one, or — in an element holding several (a gallery) — the one
+// whose src is the op's target (or its position, 1 = the first).
+function mkImgOf(block, target){
+  const imgs=mkImgsOf(block);
+  const t=target==null?'':String(target).trim();
+  if(t===''||imgs.length===1) return imgs.length===1?imgs[0]:null;
+  if(/^\d{1,3}$/.test(t)) return imgs[parseInt(t,10)-1]||null;
+  const m=imgs.filter(i=>(i.getAttribute('src')||'')===t);
+  return m.length===1?m[0]:null;
 }
-const MK_DROP_TAGS='script,style,iframe,frame,frameset,object,embed,link,meta,base,form,input,button,textarea,select,option,svg,math,template,noscript,applet,audio,video,canvas,dialog';
-const MK_KEEP_ATTRS=new Set(['href','target','rel','src','srcset','sizes','alt','title','class','width','height','loading','style','datetime','colspan','rowspan','type','media','data-fourge-block']);
-// What an "html" op may hold: content markup. Scripts, frames, forms, event handlers and script links are taken out.
-function mkSanitizeHtml(html){
+function mkImgList(block){ return mkImgsOf(block).map((im,i)=>(i+1)+'. '+(im.getAttribute('src')||'(no src)')+(im.getAttribute('alt')?' (alt "'+im.getAttribute('alt').slice(0,80)+'")':'')); }
+// Buttons are content (a gallery's photos are often <button>s a lightbox opens): kept, minus their handlers.
+const MK_DROP_TAGS='script,style,iframe,frame,frameset,object,embed,link,meta,base,form,input,textarea,select,option,svg,math,template,noscript,applet,audio,video,canvas,dialog';
+const MK_KEEP_ATTRS=new Set(['href','target','rel','src','srcset','sizes','alt','title','class','width','height','loading','style','datetime','colspan','rowspan','type','media','data-fourge-block','id','role','aria-label','aria-hidden','aria-describedby','aria-labelledby']);
+// The elements an "html" op reproduced exactly as the element already holds them (ids and spacing aside):
+// the site's own markup, live already, so kept as it is — its icons, embeds and forms included.
+function mkKeptOriginals(root, keepFrom){
+  const kept=new Set();
+  if(!keepFrom||!keepFrom.querySelectorAll) return kept;
+  const own=new Set(); keepFrom.querySelectorAll('*').forEach(el=>{ const h=el.outerHTML; if(h.length<40000) own.add(mkStripIds(h)); });
+  if(!own.size) return kept;
+  const walk=n=>[...n.children].forEach(el=>{ if(own.has(mkStripIds(el.outerHTML))) kept.add(el); else walk(el); });
+  walk(root);
+  return kept;
+}
+function mkInKept(el, kept){ for(let n=el; n; n=n.parentElement) if(kept.has(n)) return true; return false; }
+// What an "html" op may hold: content markup. Scripts, frames, forms, event handlers and script links are taken
+// out of anything new; what it reproduced of the element as it was (keepFrom) stays exactly as it was.
+function mkSanitizeHtml(html, keepFrom){
   const t=document.createElement('template'); t.innerHTML=String(html||'');
-  t.content.querySelectorAll(MK_DROP_TAGS).forEach(el=>el.remove());
+  const kept=mkKeptOriginals(t.content, keepFrom);
+  t.content.querySelectorAll(MK_DROP_TAGS).forEach(el=>{ if(!mkInKept(el,kept)) el.remove(); });
   t.content.querySelectorAll('*').forEach(el=>{
+    if(mkInKept(el,kept)) return;
     [...el.attributes].forEach(a=>{
       const n=a.name.toLowerCase(), v=a.value;
+      if(/^data-[a-z0-9_.-]+$/.test(n)){ if(/^\s*(javascript|data|vbscript):/i.test(v)) el.removeAttribute(a.name); return; }   // a lightbox's data-full, data-caption…
       if(!MK_KEEP_ATTRS.has(n)) el.removeAttribute(a.name);
       else if((n==='href'||n==='src')&&!/^(https?:|mailto:|tel:|\/|#|\.{0,2}\/?[\w-])/i.test(v.trim())) el.removeAttribute(a.name);
       else if((n==='href'||n==='src'||n==='srcset')&&/^\s*(javascript|data|vbscript):/i.test(v)) el.removeAttribute(a.name);
       else if(n==='style'&&/url\s*\(|expression\s*\(|javascript:/i.test(v)) el.removeAttribute(a.name);
+      else if(n==='type'&&el.tagName==='BUTTON'&&!/^(button|reset)$/i.test(v)) el.setAttribute('type','button');   // never a form submit
     });
   });
   return t.innerHTML;
 }
-function mkOpError(f, v, block){
-  const img=mkImgOf(block);
+// The part of an "html" op that is new: what it reproduced of the element as it was, taken out.
+function mkHtmlNewPart(html, keepFrom){
+  const t=document.createElement('template'); t.innerHTML=String(html||'');
+  mkKeptOriginals(t.content, keepFrom).forEach(el=>el.remove());
+  return t.innerHTML;
+}
+// What a change takes out of an element: ["6 images", "6 buttons"]. Links count only when asked to.
+const MK_LOSS=[['img','image','images'],['picture','picture','pictures'],['video','video','videos'],['audio','audio player','audio players'],['iframe','embedded frame','embedded frames'],
+  ['button','button','buttons'],['svg','icon','icons'],['input,select,textarea','form field','form fields'],['form','form','forms'],['canvas','canvas','canvases'],['object,embed','embed','embeds'],['script','script','scripts'],['a','link','links']];
+function mkLoss(before, after, countLinks){
+  const n=(root, sel)=>root?(root.querySelectorAll(sel).length+(root.matches&&root.matches(sel)?1:0)):0;
+  const out=[];
+  MK_LOSS.forEach(([sel,one,many])=>{ if(sel==='a'&&!countLinks) return; const d=n(before,sel)-n(after,sel); if(d>0) out.push(d+' '+(d===1?one:many)); });
+  return out;
+}
+function mkLossOfHtml(beforeHtml, afterHtml, countLinks){
+  const a=document.createElement('template'), b=document.createElement('template');
+  a.innerHTML=String(beforeHtml||''); b.innerHTML=String(afterHtml||'');
+  const ea=a.content.firstElementChild, eb=b.content.firstElementChild;
+  return (ea&&eb)?mkLoss(ea, eb, countLinks):[];
+}
+const MK_IMG_FIELDS=new Set(['src','alt','imgHref']);
+function mkShortSrc(s){ const p=String(s||'').split(/[?#]/)[0].split('/').filter(Boolean).pop(); return p||String(s||''); }
+function mkOpError(f, v, block, target){
+  const img=mkImgOf(block, target);
   if(MK_CSS[f]){
     if(v.length>120||/[;{}<>]|url\s*\(|expression\s*\(|javascript:/i.test(v)) return f+' must be a plain CSS value';
     if(v!==''&&typeof CSS!=='undefined'&&CSS.supports&&!CSS.supports(MK_CSS[f], v)) return '"'+v+'" is not a valid '+MK_CSS[f];
@@ -14135,10 +14350,15 @@ function mkOpError(f, v, block){
   if(f==='text'||f==='html'){
     if(/^(IMG|PICTURE|VIDEO)$/.test(block.tagName)) return f+' can\'t change an image element';
     if(v.length>(f==='html'?20000:5000)) return f+' is too long';
-    if(f==='html'&&/<\s*(script|iframe|object|embed|style|link|meta|base|form)\b|\son[a-z]+\s*=|javascript:/i.test(v)) return 'html may not hold scripts, frames, forms or event handlers';
+    // checked on what is new: the element's own markup it reproduces exactly is already live
+    if(f==='html'&&/<\s*(script|iframe|object|embed|style|link|meta|base|form)\b|\son[a-z]+\s*=|javascript:/i.test(mkHtmlNewPart(v, block))) return 'html may not hold scripts, frames, forms or event handlers';
     return '';
   }
-  if(!img) return f+' needs an image element';
+  if(!img){
+    const n=mkImgsOf(block).length, t=target==null?'':String(target).trim();
+    if(n>1) return (t?'"target" '+JSON.stringify(t)+' is not one of the element\'s images':f+' needs "target": this element holds '+n+' images')+'; name one by its src: '+mkImgList(block).slice(0,12).join('; ');
+    return f+' needs an image element';
+  }
   if(f==='alt') return v.length>300?'alt is too long':'';
   if(f==='src') return /^(https?:\/\/|\/)[^\s"'<>]+$/i.test(v)?'':'src must be an http(s) address or a path on the site';
   if(f==='imgHref') return (v===''||/^(https?:\/\/|\/|#|mailto:|tel:)[^\s"'<>]*$/i.test(v))?'':'imgHref must be a link address';
@@ -14160,16 +14380,22 @@ function mkValidate(raw, block){
   if(o.ops.length>12) return bad('too many ops');
   if((cls==='question_or_vague'||cls==='not_a_change')&&o.ops.length) return bad(cls+' must have no ops');
   if(['text_edit','style','image_swap'].includes(cls)&&!o.ops.length) return bad(cls+' needs at least one op');
-  const ops=[];
+  const ops=[], several=mkImgsOf(block).length>1;
   for(const op of o.ops){
     if(!op||typeof op!=='object') return bad('every op must be an object');
     const f=String(op.field||''), v=op.value==null?'':String(op.value);
     if(!MK_FIELDS[f]) return bad('unknown field "'+f+'"');
-    const e=mkOpError(f, v, block);
+    const tg=(MK_IMG_FIELDS.has(f)&&op.target!=null)?String(op.target).trim():'';
+    const e=mkOpError(f, v, block, tg);
     if(e) return bad(e);
-    ops.push({field:f, value:f==='html'?mkSanitizeHtml(v):(f==='text'?v:v.trim())});
+    const one={field:f, value:f==='html'?mkSanitizeHtml(v, block):(f==='text'?v:v.trim())};
+    if(tg&&several) one.target=/^\d{1,3}$/.test(tg)?(mkImgOf(block, tg).getAttribute('src')||tg):tg;   // a position becomes the image's src
+    ops.push(one);
   }
   if((device==='mobile'||device==='tablet')&&ops.some(op=>!MK_CSS[op.field])) return bad('a '+device+'-only change can only change styles');
+  if(cls==='image_swap'&&ops.some(op=>op.field==='html'||op.field==='text')) return bad('an image swap changes the image with "src" (and "target" when the element holds several images), never with html or text');
+  const loss=mkOpsLoss(block, ops, cls);
+  if(loss.length) return bad('that change would delete '+loss.join(', ')+' from the element. Change only what the client asked for: one image with "src" (and "target"), or the text, keeping everything else (if the client asked to remove a link, classify it as structural)');
   let conf=Number(o.confidence); if(!isFinite(conf)) conf=0.5;
   return {ok:true, value:{classification:cls, summary, device, ops, confidence:Math.max(0,Math.min(1,conf))}};
 }
@@ -14206,11 +14432,45 @@ function mkFgeClass(doc, el, data){
   ['desktop','tablet','mobile'].forEach(dv=>Object.keys(data[dv]).forEach(c=>{ max=Math.max(max, parseInt(c.slice(5),10)||0); }));   // a rule whose element is gone still holds its number
   const c='fge-r'+(max+1); el.classList.add(c); return c;
 }
-function mkSetText(el, v){ while(el.firstChild) el.removeChild(el.firstChild); String(v).split('\n').forEach((p,i)=>{ if(i) el.appendChild(el.ownerDocument.createElement('br')); if(p) el.appendChild(el.ownerDocument.createTextNode(p)); }); }
+// A text op replaces the element's text and keeps what isn't text — its icons, images and buttons stay where
+// they were (a phone link's icon, a button's arrow), with a space between them and the new words as before.
+const MK_MEDIA='img,picture,svg,video,audio,iframe,canvas,button,input,select,textarea,object,embed';
+function mkSetText(el, v){
+  const doc=el.ownerDocument;
+  const keep=n=>n.nodeType===1&&(n.matches(MK_MEDIA)||(!!n.querySelector(MK_MEDIA)&&!mkNorm(n.textContent)));
+  const kids=[...el.childNodes];
+  const i=kids.findIndex(n=>!keep(n)), at=i<0?null:kids[i];
+  const keptBefore=(at?kids.slice(0,i):kids).some(keep), keptAfter=!!at&&kids.slice(i+1).some(keep);
+  let s=String(v);
+  if(keptBefore&&s&&!/^\s/.test(s)) s=' '+s;
+  if(keptAfter&&s&&!/\s$/.test(s)) s=s+' ';
+  const frag=doc.createDocumentFragment();
+  s.split('\n').forEach((p,k)=>{ if(k) frag.appendChild(doc.createElement('br')); if(p) frag.appendChild(doc.createTextNode(p)); });
+  if(at) el.insertBefore(frag, at); else el.appendChild(frag);
+  kids.forEach(n=>{ if(!keep(n)) n.remove(); });
+}
+// What text and html ops would take out of the element (src/alt/imgHref never remove anything but a link on request).
+function mkOpsLoss(block, ops, cls){
+  if(!ops.some(op=>op.field==='html'||op.field==='text')) return [];
+  const c=block.cloneNode(true);
+  ops.forEach(op=>{ if(op.field==='html') c.innerHTML=op.value; else if(op.field==='text'&&c.tagName!=='IMG') mkSetText(c, op.value); });
+  return mkLoss(block, c, cls!=='structural');
+}
 function mkSetImage(el, val){
   if(el.tagName==='PICTURE'){ el.querySelectorAll('source').forEach(s=>s.remove()); const im=el.querySelector('img'); if(im) mkSetImage(im,val); return; }
   ['srcset','data-src','data-srcset','data-lazy-src','data-lazy-srcset','data-original'].forEach(a=>el.removeAttribute(a));
   el.setAttribute('src',val);
+}
+// The swapped photo's other references inside the element follow it: a link straight to the picture file
+// (the full size a lightbox opens), and data-* attributes holding the old file (data-full, data-zoom-image…).
+function mkSyncImageRefs(img, oldSrc, val, block){
+  const a=img.closest('a');
+  if(a&&block.contains(a)&&/\.(jpe?g|png|gif|webp|avif|bmp|tiff?)(\?[^#]*)?(#.*)?$/i.test(String(a.getAttribute('href')||'').trim())) a.setAttribute('href', val);
+  if(!oldSrc) return;
+  for(let n=img; n&&n.nodeType===1; n=n.parentElement){
+    [...n.attributes].forEach(at=>{ if(/^data-/.test(at.name)&&at.name!=='data-fourge-block'&&at.value===oldSrc) n.setAttribute(at.name, val); });
+    if(n===block) break;
+  }
 }
 function mkSetImgHref(doc, img, v){
   const a=img.closest('a');
@@ -14221,7 +14481,7 @@ function mkSetImgHref(doc, img, v){
 function mkApplyOps(doc, block, ops, device){
   const undo=[], dev=(device==='mobile'||device==='tablet')?device:'desktop';
   let data=null;
-  const img=mkImgOf(block);
+  const self=block.tagName==='IMG';
   ops.forEach(op=>{
     const f=op.field, v=String(op.value==null?'':op.value);
     if(MK_CSS[f]){
@@ -14241,10 +14501,11 @@ function mkApplyOps(doc, block, ops, device){
       if(v==='') delete data[dev][cls][prop]; else data[dev][cls][prop]=v;
       return;
     }
-    if(f==='text'){ if(!img||block!==img) mkSetText(block, v); return; }
-    if(f==='html'){ if(!img||block!==img) block.innerHTML=mkSanitizeHtml(v); return; }
+    if(f==='text'){ if(!self) mkSetText(block, v); return; }
+    if(f==='html'){ if(!self) block.innerHTML=mkSanitizeHtml(v, block); return; }
+    const img=mkImgOf(block, op.target);   // the one image of several the op names (a gallery's photo)
     if(!img) return;
-    if(f==='src'){ const pic=img.parentElement&&img.parentElement.tagName==='PICTURE'?img.parentElement:null; mkSetImage(pic||img, v); return; }
+    if(f==='src'){ const old=img.getAttribute('src')||''; const pic=img.parentElement&&img.parentElement.tagName==='PICTURE'?img.parentElement:null; mkSetImage(pic||img, v); mkSyncImageRefs(img, old, v, block); return; }
     if(f==='alt'){ img.setAttribute('alt', v); return; }
     if(f==='imgHref'){ mkSetImgHref(doc, img, v); return; }
   });
@@ -14288,7 +14549,17 @@ async function mkGenerate(it){
   const res=mkResolve(doc, th);
   const base={method:res.method, methodConfidence:res.confidence, pageSha:pg.sha256, note:res.note||''};
   if(!res.el){ await mkSaveGen(it,'needs_human',base); return; }
-  const block=mkTarget(res.el);
+  let block=mkTarget(res.el);
+  // Pinned on a photo viewer (a lightbox, hidden until a photo is clicked, its image a placeholder showing
+  // one of the gallery's photos): the change belongs to the gallery, where that photo is.
+  if(mkHidden(block)&&mkImgsOf(block).length===1){
+    const g=mkGalleryFor(doc, block);
+    if(g){
+      block=g;
+      res.note='The comment was pinned on the photo viewer, which shows whichever gallery photo was clicked; the change goes to that photo in the gallery (MarkUp\'s screenshot shows which).';
+      base.note=res.note; base.methodConfidence=Math.min(base.methodConfidence||0, 0.6);
+    }
+  }
   Object.assign(base, mkBlockRef(block));
   const ctx=mkContext(it, th, block, pg, res);
   let v=null, problem='', tries=0;
@@ -14333,11 +14604,16 @@ async function mkApprove(id, opts){
         if(op.field==='src'&&mkIsAttachment(it, op.value)){   // the client's attached image goes onto their site first
           const up=await apiCall('markup_hub_image',{id, url:op.value});
           if(!up.ok) throw new Error(up.error);
-          final.push({field:'src', value:up.url});
-        } else final.push({field:op.field, value:op.value});
+          final.push(Object.assign({}, op, {value:up.url}));
+        } else final.push(Object.assign({}, op));
       }
-      const before=el.outerHTML;
+      const before=el.outerHTML, beforeEl=el.cloneNode(true);
       const ap=mkApplyOps(doc, el, final, device);
+      // Never live with a change that takes things out of the page it wasn't asked to (one made before 1.14.164
+      // could rewrite a whole gallery and lose every photo in it).
+      const cls=opts.classification||(it.gen&&it.gen.classification)||'';
+      const loss=mkLoss(beforeEl, el, cls!=='structural'&&!final.some(o=>o.field==='imgHref'));
+      if(loss.length) throw new Error('This change would delete '+loss.join(', ')+' from the page, so nothing was changed. Regenerate it: Fourge now changes one photo of a gallery on its own.');
       fourgeStampBlockIdsDoc(doc);
       const r=await apiCall('markup_hub_apply',{id, mode:'apply', html:mkSerialize(doc, pg.html), expect:pg.sha256, ops:final, device, summary:opts.summary||it.gen.summary, edited:!!opts.edited,
         block:el.getAttribute('data-fourge-block')||'', blockBefore:before, blockAfter:el.outerHTML, styleUndo:ap.undo});
@@ -14352,7 +14628,7 @@ async function mkApprove(id, opts){
   mkBusy(id); mkRender();
 }
 async function mkBulkApprove(){
-  const ids=[..._mk.selected].filter(id=>{ const it=mkItem(id); return it&&it.status==='pending'; });
+  const ids=[..._mk.selected].filter(id=>{ const it=mkItem(id); return it&&it.status==='pending'&&!mkDestructive(it).length; });
   if(!ids.length) return;
   if(!(await uiConfirm('Approve '+ids.length+' change'+(ids.length===1?'':'s')+'? Each goes live on its site right away, and each client is told in MarkUp.','Approve '+ids.length,'Approve selected'))) return;
   for(const id of ids) await mkApprove(id);
@@ -14367,15 +14643,26 @@ function mkEditToggle(id){
 function mkEditHtml(it){
   const e=_mk.editing[it.id], id=it.id;
   const opt=f=>Object.keys(MK_FIELDS).map(k=>'<option value="'+k+'"'+(k===f?' selected':'')+'>'+esc(MK_FIELDS[k])+'</option>').join('');
+  // an element holding several images (a gallery): which one an image field changes
+  const blk=mkBlockOf(it), imgs=blk?mkImgsOf(blk):[];
+  const which=(op,i)=>(imgs.length>1&&MK_IMG_FIELDS.has(op.field))?'<select aria-label="Which image" onchange="mkEditSet('+id+','+i+',\'target\',this.value)">'
+    +imgs.map((im,k)=>{ const s=im.getAttribute('src')||''; return '<option value="'+esc(s)+'"'+(String(op.target||'')===s?' selected':'')+'>'+esc((k+1)+'. '+mkShortSrc(s)+(im.getAttribute('alt')?' — '+im.getAttribute('alt').slice(0,40):''))+'</option>'; }).join('')+'</select>':'';
   return '<div class="mk-edit"><div class="mk-meta" style="margin-bottom:6px">The change, as you want it (same fields as Markup in the page editor):</div>'
-    +e.ops.map((op,i)=>'<div class="mk-edit-row"><select aria-label="Field" onchange="mkEditSet('+id+','+i+',\'field\',this.value)">'+opt(op.field)+'</select>'
+    +e.ops.map((op,i)=>'<div class="mk-edit-row"><select aria-label="Field" onchange="mkEditSet('+id+','+i+',\'field\',this.value)">'+opt(op.field)+'</select>'+which(op,i)
       +'<textarea aria-label="Value" oninput="mkEditSet('+id+','+i+',\'value\',this.value)">'+esc(op.value)+'</textarea><button class="mk-x" title="Remove" aria-label="Remove" onclick="mkEditDel('+id+','+i+')">×</button></div>').join('')
     +'<div class="mk-actions" style="margin:6px 0"><button class="fd-btn-secondary" onclick="mkEditAdd('+id+')">+ Field</button>'
     +'<select aria-label="Screen sizes" onchange="mkEditSetDevice('+id+',this.value)">'+['all','tablet','mobile'].map(d=>'<option value="'+d+'"'+(e.device===d?' selected':'')+'>'+(d==='all'?'Every screen size':d.charAt(0).toUpperCase()+d.slice(1)+' only')+'</option>').join('')+'</select></div>'
     +'<input type="text" aria-label="Summary" placeholder="What changes, in one line" value="'+esc(e.summary)+'" oninput="mkEditSetSummary('+id+',this.value)" style="width:100%;margin-bottom:8px">'
     +'<button class="fd-btn-primary" onclick="mkEditApprove('+id+')">Approve this change</button></div>';
 }
-function mkEditSet(id,i,k,v){ const e=_mk.editing[id]; if(e&&e.ops[i]){ e.ops[i][k]=v; if(k==='field') mkRenderCard(id); } }
+function mkEditSet(id,i,k,v){
+  const e=_mk.editing[id]; if(!e||!e.ops[i]) return;
+  e.ops[i][k]=v;
+  if(k!=='field') return;
+  if(MK_IMG_FIELDS.has(v)&&!e.ops[i].target){ const b=mkBlockOf(mkItem(id)), ims=b?mkImgsOf(b):[]; if(ims.length>1) e.ops[i].target=ims[0].getAttribute('src')||''; }   // the first image until one is picked
+  if(!MK_IMG_FIELDS.has(v)) delete e.ops[i].target;
+  mkRenderCard(id);
+}
 function mkEditSetDevice(id,v){ const e=_mk.editing[id]; if(e) e.device=v; }
 function mkEditSetSummary(id,v){ const e=_mk.editing[id]; if(e) e.summary=v; }
 function mkEditAdd(id){ const e=_mk.editing[id]; if(e){ e.ops.push({field:'text', value:''}); mkRenderCard(id); } }
@@ -14388,7 +14675,7 @@ async function mkEditApprove(id){
   const cls=ops.every(op=>MK_CSS[op.field])?'style':(ops.some(op=>op.field==='src')?'image_swap':'text_edit');
   const v=mkValidate({classification:cls, summary:e.summary||(it.gen&&it.gen.summary)||'Edited by hand', device:e.device, ops, confidence:1}, block);
   if(!v.ok){ toast('Not valid yet: '+v.error,'err'); return; }
-  await mkApprove(id, {ops:v.value.ops, device:v.value.device, summary:v.value.summary, edited:true});
+  await mkApprove(id, {ops:v.value.ops, device:v.value.device, summary:v.value.summary, edited:true, classification:v.value.classification});
 }
 async function mkRevert(id){
   const it=mkItem(id), a=it&&it.applied; if(!a) return;
