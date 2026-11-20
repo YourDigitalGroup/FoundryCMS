@@ -259,9 +259,15 @@ const ui = await p.evaluate(({ PAGE, SHA }) => {
   const apl = { told: /MarkUp hasn't been told yet: MarkUp answered HTTP 500/.test(root.textContent), retry: !!root.querySelector('button[onclick="mkItemOp(5,\'loop\')"]'), revert: !!root.querySelector('button[onclick="mkRevert(5)"]') };
   _mk.showSettings = true; mkFilter('pending');
   const st = { key: !!root.querySelector('#mk-key'), trig: [...root.querySelectorAll('.mk-trig')].map(x => x.value + ':' + x.checked), hook: /integrations\/markup\/webhook/.test(root.textContent), pk: /PK/.test(root.querySelector('.mk-settings').textContent) };
+  // a hub whose PHP has no sodium (fourge.com's): no Ed25519 key, its RSA one shown by fingerprint
+  const set = () => root.querySelector('.mk-settings');
+  _mk.status = { ..._mk.status, publicKey: '', rsaKey: 'SHA256:RsaFingerprint', signing: ['rsa'] }; mkRender();
+  const rs = { fp: /SHA256:RsaFingerprint/.test(set().textContent), ed: /Ed25519/.test(set().textContent), placeholder: /made when MarkUp is connected/.test(set().textContent), err: !!set().querySelector('.mk-err') };
+  _mk.status = { ..._mk.status, rsaKey: '', signing: [] }; mkRender();
+  const none = { err: /neither the sodium nor the openssl extension/.test((set().querySelector('.mk-err') || {}).textContent || ''), placeholder: /made when MarkUp is connected/.test(set().textContent) };
   _mk.status = { ok: true, isHub: true, hasKey: false, canSetup: false, counts: {} }; mkRender();
   const sa = { noKey: /isn't connected yet\. An Architect connects it once/.test(root.textContent), noField: !root.querySelector('#mk-key') };
-  return { tabs, pend, um, apl, st, sa };
+  return { tabs, pend, um, apl, st, rs, none, sa };
 }, { PAGE, SHA });
 chk(ui.tabs.join(',') === 'Pending2,Needs a person1,Unmapped1,Applied1,Declined0,Failed0', 'the queue\'s filters, with counts: Pending, Needs a person, Unmapped, Applied, Declined, Failed — ' + ui.tabs.join(','));
 chk(ui.pend.sites.length === 1 && /Smith Dental/.test(ui.pend.sites[0]) && ui.pend.pages.length === 2 && ui.pend.cards === 2 && ui.pend.approve === 2, 'pending changes are grouped by site, then page, one card each with Approve (plus Approve selected) — ' + JSON.stringify(ui.pend));
@@ -269,6 +275,8 @@ chk(ui.pend.msg && ui.pend.shot && ui.pend.method && ui.pend.bulk, 'a card shows
 chk(ui.um.site && ui.um.pages.join(',') === 'index.html,about.html' && ui.um.note && ui.um.group, 'an unmapped comment says why, under "Not matched to a site", with a site and page to pick — ' + JSON.stringify(ui.um));
 chk(ui.apl.told && ui.apl.retry && ui.apl.revert, 'an applied change offers Revert, and says when MarkUp hasn\'t been told yet (with Tell MarkUp again)');
 chk(ui.st.key && ui.st.trig.join(',') === 'editing:false,approved:true' && ui.st.hook && ui.st.pk, 'the Architect\'s settings: the key field, the statuses MarkUp has sent as triggers (Approved on), the webhook address and the hub key — ' + JSON.stringify(ui.st));
+chk(ui.rs.fp && !ui.rs.ed && !ui.rs.placeholder && !ui.rs.err, 'a hub whose PHP has no sodium (fourge.com\'s) shows its RSA key by fingerprint, not "made when MarkUp is connected" — ' + JSON.stringify(ui.rs));
+chk(ui.none.err && ui.none.placeholder, 'a hub whose PHP can make neither key says so, and what the host should turn on — ' + JSON.stringify(ui.none));
 chk(ui.sa.noKey && ui.sa.noField, 'before MarkUp is connected, a Super Admin is told an Architect connects it (no key field)');
 
 // ── 8. the menu item: on the hub only ──
