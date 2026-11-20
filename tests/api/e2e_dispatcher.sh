@@ -536,6 +536,60 @@ python3 - "$S/admin/config.secret.php" <<'PY'
 import sys; p=sys.argv[1]; s=open(p).read(); open(p,'w').write(s.replace("  'ai_rate_per_hour' => 42,\n",""))
 PY
 rm -f "$S/data/ai_usage.json"
+# The private AI cost log (1.14.165): a line for every answer in admin/logs/ai-costs-YYYY-MM.csv, beside the database —
+# the feature the admin names (its "purpose"), the model, the tokens, the cost at the list price, today's and the month's
+# totals so far, who, and what for (its "ref"). An attempt Anthropic turns away, or one refused over the hour's limit, is
+# no line. A failure prints a line's counts and labels only, never the whole line (it names the user).
+aicsv(){ python3 - "$S/admin/logs" "$1" <<'PY'
+import csv, glob, os, re, sys
+d, mode = sys.argv[1], sys.argv[2]
+files = sorted(glob.glob(os.path.join(d, 'ai-costs-*.csv'))); assert files, 'no ai-costs-*.csv in admin/logs'
+H = ['when','site','feature','model','input tokens','output tokens','cache write tokens','cache read tokens','web searches','cost USD','today USD','month USD','who','what for']
+rows = []
+for f in files:
+    with open(f, newline='') as h: r = list(csv.reader(h))
+    assert r and r[0] == H, 'the header of ' + os.path.basename(f)
+    assert (os.stat(f).st_mode & 0o777) == 0o640, 'mode of %s: %o' % (os.path.basename(f), os.stat(f).st_mode & 0o777)
+    pm = pt = 0.0; pday = None
+    for x in r[1:]:   # the running totals chain: month = the last line's + this cost; today too, unless the day changed
+        assert len(x) == 14 and re.match(r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+$', x[0]), 'a line of %d cells at %s' % (len(x), x[0][:30])
+        c = float(x[9]) if x[9] else 0.0; t = (pt if x[0][:10] == pday else 0.0) + c; m = pm + c
+        assert abs(float(x[10]) - t) < 6e-7 and abs(float(x[11]) - m) < 6e-7, 'totals at %s: %s / %s, expected %.6f / %.6f' % (x[0], x[10], x[11], t, m)
+        pm, pt, pday = float(x[11]), float(x[10]), x[0][:10]
+    rows += r[1:]
+ht = open(os.path.join(d, '.htaccess')).read(); assert 'Require all denied' in ht and 'Deny from all' in ht, 'admin/logs/.htaccess'
+if mode == 'proxy':
+    stub = [x for x in rows if x[3] == 'stub']
+    assert len(stub) == 42 and all(x[2] == 'other' and x[4:10] == ['10','5','0','0','0',''] for x in stub), 'stub-model lines: %d, first %s' % (len(stub), stub[0][2:10] if stub else None)
+    mk = [x for x in rows if x[2] == 'markup']
+    assert len(mk) == 1 and mk[0][3:10] == ['claude-opus-4-8','10','5','0','0','0','0.000175'] and mk[0][13] == 'MarkUp item 7: client.example/index.html', 'markup lines: %d %s' % (len(mk), [x[2:12] + x[13:] for x in mk])
+    assert mk[0][12] == 'admin@44interactive.com' and mk[0][1] != '', 'who / site on the markup line'
+else:
+    af = [x for x in rows if x[2] == 'auto-fix']
+    assert af and all(x[3:10] == ['claude-haiku-4-5-20251001','10','5','0','0','0','0.000035'] and x[12] == 'Fourge (automatic)' and x[13].startswith('title and description: ') for x in af), 'auto-fix lines: %s' % [x[2:12] + x[13:] for x in af[:3]]
+PY
+}
+call "claude_proxy (Opus 4.8, tagged as MarkUp)" '{"action":"claude_proxy","user":"admin@44interactive.com","model":"claude-opus-4-8","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"purpose":"markup","ref":"MarkUp item 7: client.example/index.html"}'
+ans 'assert d.get("content"), d' && chk 0 "the admin's \"purpose\" and \"ref\" stop at the proxy (Anthropic refuses a field it doesn't know)" || chk 1 "claude_proxy with purpose and ref — got: $(printf '%s' "$LAST" | head -c 200)"
+aicsv proxy && chk 0 "the AI cost log, beside the database (admin/logs/ai-costs-YYYY-MM.csv, 0640, its folder denied to the web): MarkUp on Opus 4.8, 10 tokens in and 5 out, is \$0.000175 with its item; the 42 answers before it are lines with no price (the stub's model), the 2 turned away are none; the totals add up" || chk 1 "the AI cost log (above)"
+# …and the admin's file actions answer as if it weren't there (they reach any other file under the web root)
+AIF=$(cd "$S" && ls admin/logs/ai-costs-*.csv | tail -1); AISUM=$(md5sum < "$S/$AIF")
+for p in "$AIF" "admin/logs/../logs/${AIF##*/}" "admin//logs/./${AIF##*/}"; do
+  call "read_file $p" "{\"action\":\"read_file\",\"path\":\"$p\"}"
+  ans 'assert "content" not in d and d.get("error","").startswith("File not found"), sorted(d)' && chk 0 "read_file can't open the AI cost log, by any spelling: \"File not found\" ($p)" || chk 1 "read_file opened the AI cost log ($p): answered with $(printf '%s' "$LAST" | python3 -c 'import json,sys; print(sorted(json.load(sys.stdin)))' 2>/dev/null)"
+done
+call "delete_file the AI cost log" "{\"action\":\"delete_file\",\"path\":\"$AIF\"}"
+ans 'assert d.get("ok") is not True and d.get("error") == "File not found", d' && [ "$(md5sum < "$S/$AIF")" = "$AISUM" ] && chk 0 "delete_file can't remove it" || chk 1 "delete_file on the AI cost log — got: $(printf '%s' "$LAST" | head -c 120)"
+call "write_file over the AI cost log" "{\"action\":\"write_file\",\"path\":\"$AIF\",\"content\":\"when,site\\nforged\\n\"}"
+ans 'assert d.get("ok") is not True and d.get("error") == "Path not allowed", d' && [ "$(md5sum < "$S/$AIF")" = "$AISUM" ] && chk 0 "write_file can't overwrite it" || chk 1 "write_file over the AI cost log — got: $(printf '%s' "$LAST" | head -c 120)"
+call "write_file a new file into the log's folder" '{"action":"write_file","path":"admin/logs/notes.txt","content":"x"}'
+ans 'assert d.get("error") == "Path not allowed", d' && [ ! -e "$S/admin/logs/notes.txt" ] && chk 0 "…or put a file beside it" || chk 1 "write_file into admin/logs — got: $(printf '%s' "$LAST" | head -c 120)"
+printf 'when,site\nforged\n' > "$S.forged.csv"
+UP=$(curl -s -X POST ${TOK:+-H "X-Session-Token: $TOK"} -F action=upload -F to=admin/logs -F "files[]=@$S.forged.csv;filename=${AIF##*/}" "$BASE")
+printf '%s' "$UP" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("error") == "Destination folder not found", d' && [ "$(md5sum < "$S/$AIF")" = "$AISUM" ] && chk 0 "…or upload into its folder" || chk 1 "upload into admin/logs — got: $(printf '%s' "$UP" | head -c 160)"
+rm -f "$S.forged.csv"
+call "read_file data/site.json (the file actions still reach everything else)" '{"action":"read_file","path":"data/site.json"}'
+ans 'assert "content" in d, d' && chk 0 "…while read_file still opens the site's other files" || chk 1 "read_file data/site.json — got: $(printf '%s' "$LAST" | head -c 120)"
 
 # SEO platform deploy package (1.14.152): the platform now writes format "ydg-deploy-package" (it was
 # "44i-deploy-package", the only one accepted), and its content arrived with the title tag, meta
@@ -586,6 +640,7 @@ call "ai_autofix (preview)" '{"action":"ai_autofix","dry":true,"metaCap":50,"alt
 ans 'assert d.get("ok") is True and "totals" in d, d; assert {"page":"Pavers","wrote":"title","was":"weak/missing"} in d["metas"], d["metas"]' && [ "$(cat "$ANCOUNT")" -gt "$SEEN" ] && [ ! -e "$S/data/ai_autofix.json" ] && chk 0 "the AI auto-fix runs again: its preview asks the AI about the page with a weak title (Pavers) and writes nothing" || chk 1 "ai_autofix preview — got: $(printf '%s' "$LAST" | head -c 400)"
 call "ai_autofix (run)" '{"action":"ai_autofix","metaCap":0,"altCap":0,"linkCap":0,"faqCap":0}'
 ans 'assert d.get("ok") is True and d.get("dry_run") is False, d' && python3 -c "import json; s=json.load(open('$S/data/ai_autofix.json')); assert s.get('last_run'), s" && chk 0 "…and a run saves its state (data/ai_autofix.json)" || chk 1 "ai_autofix run — got: $(printf '%s' "$LAST" | head -c 300)"
+aicsv autofix && chk 0 "the auto-fix's answers are in the AI cost log too: Haiku 4.5 (its dated id), \$0.000035 each, by \"Fourge (automatic)\", for the page's title and description" || chk 1 "the AI cost log after the auto-fix (above)"
 # 1.14.162: the alt-text pass describes the page's own images only. Run over the whole file it also "fixed" an <img>
 # built in code: on rallyforgood.com it put alt="…" with raw quotes into the events runtime's template, which stopped
 # the script and left every event on Loading…
