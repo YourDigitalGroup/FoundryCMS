@@ -3000,7 +3000,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.164';
+const CMS_VERSION='1.14.165';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -6287,7 +6287,7 @@ async function tlpRewrite(srcHtml, page, city, state, apiKey, opt){
     +'Page content: '+visibleText;
 
   try{
-    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:1200,messages:[{role:'user',content:prompt}]}, apiKey);
+    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:1200,messages:[{role:'user',content:prompt}], purpose:'landing-pages', ref:(page.path||page.file||page.title||'')+' for '+cityState}, apiKey);
     const raw=((Array.isArray(d.content)?(d.content.find(b=>b.type==='text')?.text||'{}'):'{}')).replace(/```json?|```/g,'').trim();
     const ai=JSON.parse(raw);
     // Build the new HTML
@@ -10956,7 +10956,7 @@ async function genSEO(pid,opts){
     +'Base everything on the actual page content above — do NOT invent services. NEVER output "Page Not Found" or placeholder text.';
   toast('Generating SEO…');
   try{
-    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:900,messages:[{role:'user',content:prompt}]},'');
+    const d=await callClaudeAPI({model:'claude-sonnet-4-6',max_tokens:900,messages:[{role:'user',content:prompt}], purpose:'seo', ref:(pg.path||pg.file||pid)},'');
     const raw=Array.isArray(d.content)?(d.content.find(b=>b.type==='text')?.text||'{}'):'{}';
     const j=JSON.parse(raw.replace(/```json?|```/g,'').trim());
     if(!_seo[pid])_seo[pid]={};
@@ -14253,7 +14253,7 @@ async function mkAsk(ctx, problem, noImages){
     +(problem?'\n\nYour previous answer was rejected: '+problem+'. Answer again, following the rules exactly.':'')});
   let data;
   try{
-    data=await callClaudeAPI({model:'claude-opus-4-8', max_tokens:4096, thinking:{type:'adaptive'}, system:mkSystem(), messages:[{role:'user', content}]}, '', 2, 150000);
+    data=await callClaudeAPI({model:'claude-opus-4-8', max_tokens:4096, thinking:{type:'adaptive'}, system:mkSystem(), messages:[{role:'user', content}], purpose:'markup', ref:ctx.ref||''}, '', 2, 150000);
   }catch(e){
     // an image the AI couldn't fetch (an expired MarkUp link): once more with the addresses as text
     if(!noImages&&ctx.images.length&&/image|url|fetch|download|media/i.test(e.message||'')) return mkAsk(ctx, problem, true);
@@ -14562,6 +14562,7 @@ async function mkGenerate(it){
   }
   Object.assign(base, mkBlockRef(block));
   const ctx=mkContext(it, th, block, pg, res);
+  ctx.ref='MarkUp item '+it.id+': '+it.site+'/'+it.page;   // the private AI cost log's "what for"
   let v=null, problem='', tries=0;
   for(tries=1; tries<=2; tries++){
     let out;
@@ -19690,7 +19691,8 @@ async function veAiEdit(){
         thinking:{type:'adaptive'},
         system:_veAiChat.systemPrompt,
         tools:[{type:'web_search_20250305', name:'web_search', max_uses:4}],
-        messages:_veAiChat.messages
+        messages:_veAiChat.messages,
+        purpose:'page-editor', ref:'an element on '+(((_pages[_curPage]||{}).path)||_curPage||'a page')
       }, apiKey);
     }catch(e){ _veAiChat.messages.pop(); toast('Markup error: '+e.message,'err'); veAiRenderLog(); return; }
 
@@ -19927,7 +19929,8 @@ async function veAiPageRun(){
         max_tokens:8192,
         thinking:{type:'adaptive'},
         system:'You are editing a website\'s HTML. Comments like <!--FXV0--> are placeholders standing in for the site\'s CSS and scripts \u2014 keep every one EXACTLY where it appears; never modify, reorder, or delete them. Change only what the user asks; preserve all classes, IDs, and structure. Return the COMPLETE modified HTML document with all placeholders intact \u2014 raw HTML only, no markdown, no explanation, no code fences.',
-        messages:[{role:'user',content:'Current page HTML (CSS/JS replaced by FXV placeholders):\n\n'+stripped+'\n\n---\n\nChange request: '+prompt+'\n\nReturn the complete modified HTML with every placeholder kept exactly as-is.'}]
+        messages:[{role:'user',content:'Current page HTML (CSS/JS replaced by FXV placeholders):\n\n'+stripped+'\n\n---\n\nChange request: '+prompt+'\n\nReturn the complete modified HTML with every placeholder kept exactly as-is.'}],
+        purpose:'page-editor', ref:'the whole page '+(((_pages[_curPage]||{}).path)||_curPage||'')
       }, apiKey);
     }catch(e){ toast('Markup error: '+e.message,'err'); return; }
     let newHtml = ((Array.isArray(data.content)?(data.content.find(b=>b.type==='text')?.text||''):'')).replace(/^```html?\n?/,'').replace(/\n?```$/,'').trim();

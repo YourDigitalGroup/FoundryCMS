@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.164');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.165');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -413,7 +413,7 @@ try {
         case 'ga_save_credentials': ob_end_clean(); gaSaveCredentials($body); break;
         case 'ga_status':   ob_end_clean(); gaStatus();          break;
         case 'ga_report':   ob_end_clean(); gaReport($body);     break;
-        case 'claude_proxy': ob_end_clean(); claudeProxy($body); break;
+        case 'claude_proxy': ob_end_clean(); claudeProxy($body, $authUser); break;
         default:
             ob_end_clean();
             echo json_encode(['error' => 'Unknown action: ' . htmlspecialchars($action)]);
@@ -610,7 +610,7 @@ function cmsReadFile($body) {
         echo json_encode(['error' => 'This file is protected']);
         return;
     }
-    if (!$safe || strpos($safe, PUBLIC_HTML) !== 0 || !is_file($safe)) {
+    if (!$safe || strpos($safe, PUBLIC_HTML) !== 0 || !is_file($safe) || fourgeAiLogPath($safe)) {   // the AI cost log: as if not there
         http_response_code(404);
         echo json_encode(['error' => 'File not found: ' . htmlspecialchars($relPath)]);
         return;
@@ -682,7 +682,7 @@ function cmsWriteFile($body) {
     }
     $dir     = dirname($dest);
     $real    = realpath($dir) ?: $dir;
-    if (strpos($real, PUBLIC_HTML) !== 0) {
+    if (strpos($real, PUBLIC_HTML) !== 0 || fourgeAiLogPath($dest)) {   // nor into the AI cost log's folder
         http_response_code(403);
         echo json_encode(['error' => 'Path not allowed']);
         return;
@@ -789,7 +789,7 @@ function handleUpload() {
     if ($to !== '') {
         if (preg_match('~(^|/)\.\.(/|$)~', $to) || strpos($to, "\0") !== false) { echo json_encode(['error' => 'Bad destination folder']); return; }
         $cand = realpath(PUBLIC_HTML . '/' . $to);
-        if (!$cand || strpos($cand, PUBLIC_HTML) !== 0 || !is_dir($cand)) { echo json_encode(['error' => 'Destination folder not found']); return; }
+        if (!$cand || strpos($cand, PUBLIC_HTML) !== 0 || !is_dir($cand) || fourgeAiLogPath($cand)) { echo json_encode(['error' => 'Destination folder not found']); return; }   // never the AI cost log's folder
         $destDir = $cand; $toRel = $to . '/';
     }
     // Every type the CMS actually works with: page/web assets, the images and
@@ -866,7 +866,7 @@ function handleUpload() {
 function cmsDeleteFile($body) {
     $relPath = $body['path'] ?? '';
     $safe    = realpath(PUBLIC_HTML . '/' . $relPath);
-    if (!$safe || strpos($safe, PUBLIC_HTML) !== 0 || !is_file($safe)) {
+    if (!$safe || strpos($safe, PUBLIC_HTML) !== 0 || !is_file($safe) || fourgeAiLogPath($safe)) {   // the AI cost log: as if not there
         http_response_code(404); echo json_encode(['error' => 'File not found']); return;
     }
     $rel = cmsGhRelPath($safe);
@@ -1685,6 +1685,7 @@ function cmsGhShouldMirror($rel) {
     if (preg_match('~\.(db|sqlite|sqlite3|db-wal|db-shm|sqlite-wal|sqlite-shm|sqlite3-wal|sqlite3-shm|log|bak|tmp|swp)$~', $lb)) return false;
     if (in_array($lb, ['error_log', 'php_errorlog', 'thumbs.db', 'config.secret.php', 'ga-service-account.json'], true)) return false;
     if (preg_match('~^data/(users|entries|form-analytics|recaptcha-debug)\.json$~i', $rel)) return false;
+    if (preg_match('~(^|/)logs/ai-costs-\d{4}-\d{2}\.csv$~i', $rel)) return false;   // the private AI cost log, wherever db_path puts it
     return true;
 }
 // A file's path relative to the web root, forward-slashed — the path it has in the repo.
@@ -3506,7 +3507,137 @@ function foundryAiLimit() {
 // Where Anthropic's API lives. FOURGE_ANTHROPIC_API_BASE points the tests at a stub.
 function foundryAnthropicBase() { $b = getenv('FOURGE_ANTHROPIC_API_BASE'); return ($b && preg_match('~^https?://~', $b)) ? rtrim($b, '/') : 'https://api.anthropic.com'; }
 
-function claudeProxy($body) {
+// ── THE AI COST LOG ──────────────────────────────────────────────────────────
+// Every Claude answer this server gets — the admin's calls through claude_proxy
+// (MarkUp, the page editor, SEO, landing pages) and the daily AI auto-fix's
+// through fourgeAiText — is one line in a monthly CSV beside the database:
+// logs/ai-costs-YYYY-MM.csv in the database's folder (admin/, unless db_path in
+// config.secret.php keeps the database outside the web root). Nothing in Fourge
+// shows it: it is read on the server (cPanel's File Manager, FTP, SSH). Over HTTP
+// it is refused twice — admin/.htaccess (fourgeWriteAdminHtaccess) and the
+// folder's own rule (fourgeAiLogGuard) — and the secret-files check
+// (secret_exposure) asks for it like the database. admin/ is never mirrored.
+// A line: when (the agency's time zone), site, feature, model, input / output /
+// cache tokens, web searches, the cost in US dollars at the list prices below,
+// today's and this month's running totals, who, and what it was for.
+//
+// List prices, US dollars per million tokens: input, output, cache write (5 min),
+// cache read — Anthropic's pricing page is the source of truth. A model missing
+// here is logged with its tokens and an empty cost.
+function fourgeAiPrices() {
+    return [
+        'claude-opus-5-5'   => [4.00, 20.00, 5.00, 0.20],
+        'claude-opus-5'     => [5.00, 25.00, 6.25, 0.50],
+        'claude-opus-4-8'   => [5.00, 25.00, 6.25, 0.50],
+        'claude-opus-4-7'   => [5.00, 25.00, 6.25, 0.50],
+        'claude-opus-4-6'   => [5.00, 25.00, 6.25, 0.50],
+        'claude-sonnet-5-5' => [2.00, 10.00, 2.50, 0.10],
+        'claude-sonnet-4-6' => [3.00, 15.00, 3.75, 0.30],
+        'claude-haiku-5-5'  => [0.10, 0.50, 0.125, 0.01],
+        'claude-haiku-4-5'  => [1.00, 5.00, 1.25, 0.10],
+    ];
+}
+function fourgeAiWebSearchPrice() { return 0.01; }   // a web search the model runs: $10 per 1,000
+// The price row for a model id, its date suffix aside (claude-haiku-4-5-20251001 is claude-haiku-4-5), or null.
+function fourgeAiPriceOf($model) {
+    $m = preg_replace('~-\d{8}$~', '', strtolower(trim((string)$model)));
+    return fourgeAiPrices()[$m] ?? null;
+}
+// [cost in dollars or null when the model's price isn't known, input, output, cache write, cache read, web searches]
+function fourgeAiCost($model, $usage) {
+    $u = is_array($usage) ? $usage : [];
+    $in = (int)($u['input_tokens'] ?? 0); $out = (int)($u['output_tokens'] ?? 0);
+    $cw = (int)($u['cache_creation_input_tokens'] ?? 0); $cr = (int)($u['cache_read_input_tokens'] ?? 0);
+    $ws = is_array($u['server_tool_use'] ?? null) ? (int)($u['server_tool_use']['web_search_requests'] ?? 0) : 0;
+    $p = fourgeAiPriceOf($model);
+    $cost = $p ? ($in * $p[0] + $out * $p[1] + $cw * $p[2] + $cr * $p[3]) / 1000000 + $ws * fourgeAiWebSearchPrice() : null;
+    return [$cost, $in, $out, $cw, $cr, $ws];
+}
+function fourgeAiLogDir() { return dirname((string)fourgeDbPath()) . '/logs'; }
+// The agency's time zone where the MarkUp hub knows it (its daily email's), else the server's.
+function fourgeAiLogTz() {
+    try { $tz = (string)fourgeMarkupKvGet('digest_tz', ''); if ($tz !== '' && in_array($tz, timezone_identifiers_list(), true)) return $tz; } catch (Throwable $e) {}
+    $d = (string)date_default_timezone_get();
+    return $d !== '' ? $d : 'UTC';
+}
+// The log folder refuses everything over HTTP on its own, whatever happens to admin/.htaccess.
+function fourgeAiLogGuard($dir) {
+    $rules = "# Fourge: the AI cost log is read on the server only, never over the web.\n"
+        . "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n";
+    $f = $dir . '/.htaccess';
+    if (!is_file($f) || (string)@file_get_contents($f) !== $rules) @file_put_contents($f, $rules, LOCK_EX);
+}
+// Whether a path is the log folder or inside it. The admin's file actions (read_file, write_file, delete_file,
+// upload) answer as if nothing were there: the log is for the server's own eyes, not a signed-in user's. Compared
+// both as written (.. and . collapsed) and as resolved, so neither a detour nor a symlink gets round it.
+function fourgeAiLogPath($path) {
+    try {
+        $norm = function ($p) { $o = []; foreach (preg_split('~[/\\\\]+~', (string)$p) as $s) { if ($s === '' || $s === '.') continue; if ($s === '..') { array_pop($o); continue; } $o[] = $s; } return '/' . implode('/', $o); };
+        $logs = fourgeAiLogDir(); $path = (string)$path;
+        $dirs = [$norm($logs)];
+        if (($r = realpath($logs)) !== false) $dirs[] = $norm($r);
+        if (($r = realpath(dirname($logs))) !== false) $dirs[] = $norm($r . '/' . basename($logs));
+        $cands = [$norm($path)];
+        if (($r = realpath($path)) !== false) $cands[] = $norm($r);
+        if (($r = realpath(dirname($path))) !== false) $cands[] = $norm($r . '/' . basename($path));
+        foreach (array_unique($dirs) as $d) foreach ($cands as $c) if ($c === $d || strpos($c, $d . '/') === 0) return true;
+    } catch (Throwable $e) {}
+    return false;
+}
+// A cell as a spreadsheet will read it: one line, no formula (a cell starting with = + - @ is taken as one).
+function fourgeAiLogCell($s, $max = 200) {
+    $s = trim(preg_replace('~[\x00-\x1F\x7F]+~u', ' ', (string)$s));
+    if (mb_strlen($s) > $max) $s = mb_substr($s, 0, $max - 1) . '…';
+    return ($s !== '' && strpbrk($s[0], '=+-@') !== false) ? "'" . $s : $s;
+}
+// One line for one answer. Never throws, and never holds up the call it records.
+function fourgeAiCostLog($feature, $model, $usage, $who = '', $detail = '', $now = null) {
+    try {
+        if (!is_array($usage)) return false;
+        list($cost, $in, $out, $cw, $cr, $ws) = fourgeAiCost($model, $usage);
+        if (!$in && !$out && !$cw && !$cr && !$ws) return false;
+        $when = new DateTime('@' . (int)($now === null ? time() : $now));
+        try { $when->setTimezone(new DateTimeZone(fourgeAiLogTz())); } catch (Throwable $e) {}
+        $dir = fourgeAiLogDir();
+        if (!is_dir($dir) && !@mkdir($dir, 0750, true) && !is_dir($dir)) return false;   // another answer may have just made it
+        fourgeAiLogGuard($dir);
+        $file = $dir . '/ai-costs-' . $when->format('Y-m') . '.csv';
+        $fh = @fopen($file, 'c+');
+        if (!$fh) return false;
+        $ok = false;
+        if (flock($fh, LOCK_EX)) {
+            $st = fstat($fh); $size = (int)($st['size'] ?? 0);
+            $today = 0.0; $month = 0.0; $day = $when->format('Y-m-d');
+            if ($size > 0) {   // the running totals are the last line's
+                fseek($fh, max(0, $size - 4096));
+                $tail = (string)stream_get_contents($fh);
+                $lines = preg_split('~\r?\n~', rtrim($tail));
+                $last = str_getcsv((string)end($lines), ',', '"', '\\');
+                if (count($last) >= 12 && is_numeric($last[11])) {   // [10] today, [11] month (the header below)
+                    $month = (float)$last[11];
+                    if (substr((string)$last[0], 0, 10) === $day && is_numeric($last[10])) $today = (float)$last[10];
+                }
+            }
+            fseek($fh, 0, SEEK_END);
+            if ($size === 0) @fputcsv($fh, ['when', 'site', 'feature', 'model', 'input tokens', 'output tokens', 'cache write tokens', 'cache read tokens', 'web searches',
+                'cost USD', 'today USD', 'month USD', 'who', 'what for'], ',', '"', '\\');
+            if ($cost !== null) { $today += $cost; $month += $cost; }
+            $site = fourgeAiLogCell((string)($_SERVER['HTTP_HOST'] ?? '') !== '' ? (string)$_SERVER['HTTP_HOST'] : 'server', 120);
+            $row = [$when->format('Y-m-d H:i:s T'), $site, fourgeAiLogCell($feature, 40), fourgeAiLogCell($model, 80), $in, $out, $cw, $cr, $ws,
+                // six decimals: the totals are carried from line to line, so a cheap call (a fraction of a cent) still adds up
+                $cost === null ? '' : number_format($cost, 6, '.', ''), number_format($today, 6, '.', ''), number_format($month, 6, '.', ''),
+                fourgeAiLogCell($who, 120), fourgeAiLogCell($detail, 200)];
+            $ok = @fputcsv($fh, $row, ',', '"', '\\') !== false;   // @: a full disk is a missing line, never a notice in front of the answer
+            @fflush($fh);
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
+        @chmod($file, 0640);
+        return $ok;
+    } catch (Throwable $e) { return false; }
+}
+
+function claudeProxy($body, $authUser = null) {
     $secretPath = __DIR__ . '/config.secret.php';
     $cfg = foundrySecret();
     // Prefer the Architect-managed key stored (encrypted) in the DB; fall back
@@ -3603,7 +3734,14 @@ function claudeProxy($body) {
     fourgeCurlClose($ch);
 
     if ($err) { http_response_code(502); echo json_encode(['error' => 'AI request failed: ' . $err]); return; }
-    if ($code >= 200 && $code < 300) foundryAiUsage($username, true);   // only an answer counts toward the hour
+    if ($code >= 200 && $code < 300) {
+        foundryAiUsage($username, true);   // only an answer counts toward the hour
+        // the private cost log: which feature asked (the admin's "purpose"), who, and what for (its "ref")
+        $ans = json_decode((string)$res, true);
+        $who = (is_array($authUser) && (string)($authUser['username'] ?? '') !== '') ? (string)$authUser['username'] : (string)$username;
+        $feature = substr((string)preg_replace('~[^a-z0-9-]~', '', strtolower((string)($body['purpose'] ?? ''))), 0, 40);
+        if (is_array($ans)) fourgeAiCostLog($feature !== '' ? $feature : 'other', (string)($ans['model'] ?? $payload['model']), $ans['usage'] ?? null, $who, is_scalar($body['ref'] ?? null) ? (string)$body['ref'] : '');
+    }
     // Pass Anthropic's JSON straight through (success or structured error),
     // preserving the upstream status code so the client's retry logic works.
     http_response_code($code ?: 200);
@@ -6056,8 +6194,9 @@ function fourgeWriteAdminHtaccess() {
     $end   = '# END Fourge Secret Files';
     $rules = <<<'HT'
 # Never serve these over HTTP. PHP source is not emitted by the interpreter, but
-# the .db and .json files here are not PHP and WOULD be sent as downloads.
-<FilesMatch "(\.secret\.php|service-account\.json|\.ga-token\.json|\.db|\.db-wal|\.db-shm|\.sqlite|\.sqlite3)$">
+# the .db and .json files here are not PHP and WOULD be sent as downloads — as
+# would the AI cost log (logs/ai-costs-*.csv).
+<FilesMatch "(\.secret\.php|service-account\.json|\.ga-token\.json|\.db|\.db-wal|\.db-shm|\.sqlite|\.sqlite3|\.csv|\.log)$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -6112,6 +6251,16 @@ function fourgeSecretExposure($baseUrl = '') {
     $targets['encryption key'] = $adminRel . '/config.secret.php';
     if (is_file(__DIR__ . '/service-account.json')) $targets['Google service account'] = $adminRel . '/service-account.json';
     if (is_file(__DIR__ . '/protect.secret.php'))   $targets['page passwords']          = $adminRel . '/protect.secret.php';
+    // The AI cost log, when it is inside the web root (beside a database that is).
+    try {
+        $logs = glob(fourgeAiLogDir() . '/ai-costs-*.csv') ?: [];
+        if ($logs) {
+            sort($logs);
+            $real = realpath((string)end($logs)) ?: (string)end($logs);
+            $rootReal = realpath(PUBLIC_HTML) ?: PUBLIC_HTML;
+            if (strpos($real, $rootReal) === 0) $targets['AI cost log'] = ltrim(str_replace('\\', '/', substr($real, strlen($rootReal))), '/');
+        }
+    } catch (Throwable $e) {}
 
     $findings = []; $exposed = 0; $unknown = 0;
     foreach ($targets as $label => $rel) {
@@ -6301,7 +6450,7 @@ function fourgeAiEndpointCfg() {
 // over Anthropic — same "more specific wins" precedence cmsSendForm already
 // uses for SMTP over Mailgun — so an operator who has set one up never pays
 // for both providers on the same generation.
-function fourgeAiText($system, $user, $max = 400) {
+function fourgeAiText($system, $user, $max = 400, $purpose = 'auto-fix', $detail = '') {
     $custom = fourgeAiEndpointCfg();
     if ($custom) return fourgeAiTextCustomEndpoint($custom, $system, $user, $max);
     $key = fourgeAiKey();
@@ -6322,6 +6471,7 @@ function fourgeAiText($system, $user, $max = 400) {
     if ($code !== 200) {
         return ['error' => 'Anthropic ' . $code . ': ' . mb_substr((string)($d['error']['message'] ?? $res), 0, 200)];
     }
+    if (is_array($d)) fourgeAiCostLog($purpose, (string)($d['model'] ?? FOURGE_AI_MODEL), $d['usage'] ?? null, 'Fourge (automatic)', $detail);   // the private cost log
     $text = '';
     foreach ((array)($d['content'] ?? []) as $blk) if (($blk['type'] ?? '') === 'text') $text .= (string)($blk['text'] ?? '');
     return trim($text);
@@ -6598,7 +6748,7 @@ function fourgeAiAutofix($opts = []) {
             . FOURGE_DESC_MIN . '-' . FOURGE_DESC_MAX . ' character meta description ending in a call to action"}. '
             . 'Describe only what the page actually says. Never invent services, locations, credentials, prices or guarantees.',
             'Site: ' . ($siteName ?: 'this business') . "\nPage title: " . (string)($rec['title'] ?? '')
-            . "\nPage content:\n" . mb_substr($text, 0, 1200), 300);
+            . "\nPage content:\n" . mb_substr($text, 0, 1200), 300, 'auto-fix', 'title and description: ' . $pid);
         if (is_array($out)) { $skip((string)($rec['title'] ?? $pid), $out['error']); continue; }
         $j = fourgeAiJson($out);
         if (!$j) { $skip((string)($rec['title'] ?? $pid), 'The model did not return usable JSON'); continue; }
@@ -6660,7 +6810,7 @@ function fourgeAiAutofix($opts = []) {
             'You write image alt text: max 12 words, describing what the image shows. No quotes, no "image of", '
             . 'no marketing copy. Reply with a numbered list only, one line per input line, in the same order.',
             'Site: ' . ($siteName ?: 'this business') . "\nPage: " . (string)($rec['title'] ?? '')
-            . "\nImage filenames:\n" . implode("\n", $lines), 500);
+            . "\nImage filenames:\n" . implode("\n", $lines), 500, 'auto-fix', 'alt text: ' . $pid);
         $alts = [];
         if (is_array($out)) $skip('alt text on "' . (string)($rec['title'] ?? $pid) . '"', $out['error'] . ' — used filenames instead');
         else $alts = fourgeAiNumbered($out);
@@ -6763,7 +6913,7 @@ function fourgeAiAutofix($opts = []) {
             . 'answer grounded ONLY in the page content given. Never invent services, locations, prices, credentials, '
             . 'guarantees, or policies that are not stated. If the page cannot honestly support 3 questions, return fewer.',
             'Site: ' . ($siteName ?: 'this business') . "\nPage title: " . (string)($rec['title'] ?? '')
-            . "\nPage content:\n" . mb_substr($text, 0, 1600), 700);
+            . "\nPage content:\n" . mb_substr($text, 0, 1600), 700, 'auto-fix', 'FAQs: ' . $pid);
         if (is_array($out)) { $skip((string)($rec['title'] ?? $pid) . ' (FAQs)', $out['error']); continue; }
         $j = fourgeAiJson($out);
         $raw = (is_array($j) && is_array($j['faqs'] ?? null)) ? $j['faqs'] : [];

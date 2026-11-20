@@ -15,6 +15,9 @@ admin/fourge.db-shm
 *.db-wal
 *.db-shm
 
+# The private AI cost log (ai-costs-YYYY-MM.csv beside the database), written at runtime
+admin/logs/
+
 # Google Analytics service-account key + cached access token (created at runtime)
 admin/ga-service-account.json
 admin/.ga-token.json

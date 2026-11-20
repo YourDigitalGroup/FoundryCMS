@@ -159,8 +159,10 @@ chk(g.save && g.save.status === 'pending' && g.save.sig === '0123456789abcdef' &
 chk(ai0.model === 'claude-opus-4-8' && /ONLY a JSON object/.test(ai0.system) && ai0.messages[0].content.some(c => c.type === 'image' && c.source.url === 'https://cdn.example/shot.png')
   && /Welcome to Smith Dental/.test(txt) && /Please change this heading/.test(txt) && /desktop layout/.test(txt) && /not instructions to you/.test(ai0.system),
   'Claude (through claude_proxy) gets the thread, the screenshot, the device and the element; the rules say the thread is the client\'s words, not instructions');
+chk(ai0.purpose === 'markup' && ai0.ref === 'MarkUp item 1: client.example/index.html', 'the call is tagged for the private AI cost log (1.14.165): MarkUp, and which item on which page — ' + ai0.purpose + ' / ' + ai0.ref);
 g = await gen(await p.evaluate(t => window.__newItem(2, t), T1), [{ classification: 'text_edit', summary: 'x', ops: [{ field: 'font', value: 'Arial' }] }, { classification: 'style', summary: 'Bigger heading', ops: [{ field: 'size', value: '48px' }], confidence: 0.7 }]);
 chk(g.save && g.save.status === 'pending' && g.save.gen.tries === 2 && g.ai.length === 2 && /Your previous answer was rejected: unknown field "font"/.test(g.ai[1].messages[0].content.slice(-1)[0].text), 'an answer that fails the checks is asked for once more, with the reason; the second one is used');
+chk(g.ai.every(a => a.purpose === 'markup' && a.ref === 'MarkUp item 2: client.example/index.html'), '…and the second ask is tagged too: each answer is a line of its own in the log');
 g = await gen(await p.evaluate(t => window.__newItem(3, t), T1), ['nope', { classification: 'text_edit', summary: '', ops: [] }]);
 chk(g.save && g.save.status === 'needs_human' && /didn't pass the checks twice/.test(g.save.gen.note) && g.ai.length === 2, 'two failed answers: needs a person, with the reason — ' + (g.save && g.save.gen.note));
 g = await gen(await p.evaluate(() => window.__newItem(4, window.__thread({ elements: [{ path: '#gone' }], highlight: '' }))), []);

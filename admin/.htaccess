@@ -3,7 +3,7 @@
 # layer and, importantly, protect non-PHP secret files (the Google
 # service-account JSON and its token cache, and the SQLite database that holds
 # password hashes + encrypted secrets) from being downloaded directly.
-<FilesMatch "(\.secret\.php|service-account\.json|\.ga-token\.json|\.db|\.db-wal|\.db-shm)$">
+<FilesMatch "(\.secret\.php|service-account\.json|\.ga-token\.json|\.db|\.db-wal|\.db-shm|\.sqlite|\.sqlite3|\.csv|\.log)$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
