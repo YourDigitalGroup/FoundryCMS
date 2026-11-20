@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.162');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.163');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -8115,7 +8115,25 @@ function fourgeApiSeoPkgAdmin($me, $body) {
 // host binds it to this site, ts must be within 5 minutes, and a nonce is only
 // accepted once. A site can switch MarkUp off in Plugins (site.json
 // markup.enabled = false); it is on unless switched off.
+//
+// Two signatures over that same message, a site checking whichever its PHP can:
+// sig (Ed25519, PHP's sodium extension) and sig_rs (RSA-2048 with SHA-256, the
+// openssl extension). Some hosts leave sodium out (fourge.com and its client
+// sites among them): the hub then made no key at all, every site it asked
+// answered "did not answer as a Fourge site", and each comment stayed Unmapped.
+// OpenSSL is what the secret store and the Google Analytics sign-in already use.
 // ─────────────────────────────────────────────────────────────────────────────
+function fourgeSodiumOn() { return function_exists('sodium_crypto_sign_verify_detached') && !getenv('FOURGE_NO_SODIUM'); }   // FOURGE_NO_SODIUM: tests play a host without it
+function fourgeOpensslSignOn() { return function_exists('openssl_sign') && function_exists('openssl_verify') && function_exists('openssl_pkey_new'); }
+// The hub's RSA public keys (PEM) this site trusts: its own when it is the hub, and the one the hub's address published.
+function fourgeMarkupHubRsaKeys() {
+    $keys = [];
+    try {
+        if (fourgeMarkupIsHub() && ($own = (string)fourgeMarkupKvGet('hub_pk_rsa', '')) !== '') $keys[] = $own;
+        if (($got = (string)fourgeMarkupKvGet('hub_pk_fetched_rsa', '')) !== '') $keys[] = $got;
+    } catch (Throwable $e) {}
+    return array_values(array_unique($keys));
+}
 function fourgeMarkupHubKeys() {
     $keys = [];   // a hub public key (base64) can also be built in here and released to every site with the engine
     foreach (explode(',', (string)getenv('FOURGE_MARKUP_HUB_KEYS')) as $k) { $k = trim($k); if ($k !== '') $keys[] = $k; }
@@ -8149,11 +8167,16 @@ function fourgeMarkupFetchHubKey() {
         $hub = $scheme . '://' . strtolower((string)$l['host']) . (isset($l['port']) ? ':' . (int)$l['port'] : '');
     }
     $j = json_decode((string)$raw, true);
-    $k = is_array($j) ? (string)($j['key'] ?? '') : '';
-    $pk = base64_decode($k, true);
-    if ($code !== 200 || $pk === false || strlen($pk) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) return '';
-    fourgeMarkupKvSet('hub_pk_fetched', $k);
-    return $k;
+    if ($code !== 200 || !is_array($j)) return '';
+    // Both keys are kept, whichever this site's PHP can check with: Ed25519 (32 bytes) and the RSA key (PEM).
+    $got = '';
+    $k = (string)($j['key'] ?? ''); $pk = base64_decode($k, true);
+    if ($pk !== false && strlen($pk) === 32) { fourgeMarkupKvSet('hub_pk_fetched', $k); $got = $k; }
+    $rsa = (string)($j['rsa'] ?? '');
+    if ($rsa !== '' && strlen($rsa) < 4096 && strpos($rsa, '-----BEGIN PUBLIC KEY-----') === 0 && function_exists('openssl_pkey_get_public') && @openssl_pkey_get_public($rsa)) {
+        fourgeMarkupKvSet('hub_pk_fetched_rsa', $rsa); if ($got === '') $got = $rsa;
+    }
+    return $got;
 }
 function fourgeMarkupEnabled() {
     $site = json_decode((string)@file_get_contents(PUBLIC_HTML . '/data/site.json'), true);
@@ -8166,31 +8189,39 @@ function fourgeMarkupHostKey($h) {
 }
 // Check a hub request. Returns the decoded payload array, or [code, message] on failure.
 function fourgeMarkupVerify($body, $action) {
-    if (!function_exists('sodium_crypto_sign_verify_detached')) return [500, 'This server\'s PHP has no sodium extension, so it cannot check the hub\'s signature.'];
+    $edOn = fourgeSodiumOn(); $rsOn = fourgeOpensslSignOn();
+    if (!$edOn && !$rsOn) return [500, 'This server\'s PHP has neither the sodium nor the openssl extension, so it cannot check the hub\'s signature.'];
     $payload = (string)($body['payload'] ?? '');
     $host = (string)($body['host'] ?? '');
     $ts = (int)($body['ts'] ?? 0);
     $nonce = (string)($body['nonce'] ?? '');
     $sig = base64_decode((string)($body['sig'] ?? ''), true);
-    if ($sig === false || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES || !preg_match('~^[A-Za-z0-9_-]{16,64}$~', $nonce)) return [401, 'Missing or malformed signature.'];
+    $sigRs = base64_decode((string)($body['sig_rs'] ?? ''), true);
+    $hasEd = $edOn && $sig !== false && strlen($sig) === 64;
+    $hasRs = $rsOn && $sigRs !== false && strlen($sigRs) >= 128 && strlen($sigRs) <= 1024;
+    if ((!$hasEd && !$hasRs) || !preg_match('~^[A-Za-z0-9_-]{16,64}$~', $nonce)) return [401, 'Missing or malformed signature.'];
     if (abs(time() - $ts) > 300) return [401, 'The request is too old (or the clocks disagree by over 5 minutes).'];
     if (fourgeMarkupHostKey($host) === '' || fourgeMarkupHostKey($host) !== fourgeMarkupHostKey($_SERVER['HTTP_HOST'] ?? '')) return [401, 'The request was signed for a different site.'];
     $msg = "fourge-markup-v1\n" . $action . "\n" . $host . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $payload);
-    $check = function ($keys) use ($sig, $msg) {
-        foreach ($keys as $k) {
+    $check = function ($edKeys, $rsKeys) use ($hasEd, $hasRs, $sig, $sigRs, $msg) {
+        if ($hasEd) foreach ($edKeys as $k) {
             $pk = base64_decode($k, true);
-            if ($pk !== false && strlen($pk) === SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES && sodium_crypto_sign_verify_detached($sig, $msg, $pk)) return true;
+            if ($pk !== false && strlen($pk) === 32 && sodium_crypto_sign_verify_detached($sig, $msg, $pk)) return true;
+        }
+        if ($hasRs) foreach ($rsKeys as $pem) {
+            $pub = @openssl_pkey_get_public($pem);
+            if ($pub && openssl_verify($msg, $sigRs, $pub, OPENSSL_ALGO_SHA256) === 1) return true;
         }
         return false;
     };
-    $keys = fourgeMarkupHubKeys();
-    $ok = $check($keys);
+    $edKeys = fourgeMarkupHubKeys(); $rsKeys = fourgeMarkupHubRsaKeys();
+    $ok = $check($edKeys, $rsKeys);
     if (!$ok) {   // a hub key this site hasn't seen yet: ask the hub's address (rate-limited)
         $got = '';
         try { $got = fourgeMarkupFetchHubKey(); } catch (Throwable $e) { $got = ''; }
-        if ($got !== '') { $keys[] = $got; $ok = $check([$got]); }
+        if ($got !== '') { $edKeys = fourgeMarkupHubKeys(); $rsKeys = fourgeMarkupHubRsaKeys(); $ok = $check($edKeys, $rsKeys); }
     }
-    if (!$keys) return [503, 'This site does not trust a MarkUp hub yet.'];
+    if (!(($hasEd && $edKeys) || ($hasRs && $rsKeys))) return [503, 'This site does not trust a MarkUp hub yet.'];
     if (!$ok) return [401, 'The signature does not match a trusted hub.'];
     try {
         $pdo = fourgeDb();
@@ -8515,10 +8546,10 @@ function fourgeMarkupSafeTarget($url) {
 // the encrypted secret store (never listed in fourgeSecretPolicy, so no setting
 // screen can read or replace it); the public half is published by markup_hub_key.
 function fourgeMarkupHubKeypair($create = false) {
-    if (!function_exists('sodium_crypto_sign_keypair')) return null;
+    if (!fourgeSodiumOn()) return null;
     $pdo = fourgeMarkupKvDb();
     $raw = base64_decode((string)fourgeGetSecret($pdo, 'markup_hub_sk'), true);
-    if ($raw === false || strlen($raw) !== SODIUM_CRYPTO_SIGN_SECRETKEYBYTES) {
+    if ($raw === false || strlen($raw) !== 64) {
         if (!$create) return null;
         $raw = sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair());
         fourgeSetSecret($pdo, 'markup_hub_sk', base64_encode($raw), 'markup-hub');
@@ -8527,11 +8558,40 @@ function fourgeMarkupHubKeypair($create = false) {
     if ((string)fourgeMarkupKvGet('hub_pk', '') !== $pk) fourgeMarkupKvSet('hub_pk', $pk);
     return ['sk' => $raw, 'pk' => $pk];
 }
-// Public: the hub's public key, for client sites to check its signatures with.
+// The hub's RSA-2048 key (OpenSSL): the private key as PEM in the encrypted secret
+// store (never sent to a browser), the public key published beside the Ed25519 one.
+function fourgeMarkupHubRsaKeypair($create = false) {
+    if (!fourgeOpensslSignOn()) return null;
+    $pdo = fourgeMarkupKvDb();
+    $sk = (string)fourgeGetSecret($pdo, 'markup_hub_rsa');
+    $key = $sk !== '' ? @openssl_pkey_get_private($sk) : false;
+    if (!$key) {
+        if (!$create) return null;
+        $key = @openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA, 'digest_alg' => 'sha256']);
+        $sk = '';
+        if (!$key || !@openssl_pkey_export($key, $sk) || $sk === '') return null;
+        fourgeSetSecret($pdo, 'markup_hub_rsa', $sk, 'markup-hub');
+    }
+    $det = @openssl_pkey_get_details($key);
+    $pk = is_array($det) ? (string)($det['key'] ?? '') : '';
+    if ($pk === '') return null;
+    if ((string)fourgeMarkupKvGet('hub_pk_rsa', '') !== $pk) fourgeMarkupKvSet('hub_pk_rsa', $pk);
+    return ['sk' => $sk, 'pk' => $pk];
+}
+// Public: the hub's public keys, for client sites to check its signatures with.
+// A hub connected to MarkUp makes a key it is missing here too (one connected
+// before its server could make any, or before the RSA key existed), so a site
+// asking always gets one; an install that is not the hub, or not connected, has none.
 function fourgeApiMarkupHubKey() {
-    $pk = fourgeMarkupIsHub() ? (string)fourgeMarkupKvGet('hub_pk', '') : '';
-    if ($pk === '') { fourgeMarkupOut(404, ['ok' => false, 'error' => 'There is no MarkUp hub at this address.']); return; }
-    fourgeMarkupOut(200, ['ok' => true, 'key' => $pk, 'alg' => 'ed25519']);
+    $hub = fourgeMarkupIsHub();
+    $ed = $hub ? (string)fourgeMarkupKvGet('hub_pk', '') : '';
+    $rsa = $hub ? (string)fourgeMarkupKvGet('hub_pk_rsa', '') : '';
+    if ($hub && ($ed === '' || $rsa === '') && fourgeMarkupApiKey() !== '') {
+        try { if ($ed === '' && ($e = fourgeMarkupHubKeypair(true))) $ed = $e['pk']; } catch (Throwable $x) {}
+        try { if ($rsa === '' && ($r = fourgeMarkupHubRsaKeypair(true))) $rsa = $r['pk']; } catch (Throwable $x) {}
+    }
+    if ($ed === '' && $rsa === '') { fourgeMarkupOut(404, ['ok' => false, 'error' => 'There is no MarkUp hub at this address.']); return; }
+    fourgeMarkupOut(200, ['ok' => true, 'key' => $ed, 'alg' => 'ed25519', 'rsa' => $rsa]);
 }
 // A signed request to a client site (checked there by fourgeMarkupVerify). $base
 // is the site's origin, e.g. https://client.com. A redirect to the same site
@@ -8539,8 +8599,11 @@ function fourgeApiMarkupHubKey() {
 // Returns [code, answer|null, error, the origin that answered, and — for a
 // redirect to another host — that host's origin, which fourgeMarkupSiteAt checks].
 function fourgeMarkupSiteCall($base, $action, $payload, $timeout = 20) {
-    $kp = fourgeMarkupHubKeypair(false);
-    if (!$kp) return [0, null, 'The hub has no signing key yet: save the MarkUp settings once.', ''];
+    // Both keys, made here if missing (a hub connected before its server could make one signs from now on).
+    $kp = null; $rk = null;
+    try { $kp = fourgeMarkupHubKeypair(true); } catch (Throwable $e) { $kp = null; }
+    try { $rk = fourgeMarkupHubRsaKeypair(true); } catch (Throwable $e) { $rk = null; }
+    if (!$kp && !$rk) return [0, null, 'The hub cannot sign its requests: this server\'s PHP could make neither an Ed25519 key (sodium extension) nor an RSA key (openssl extension).', ''];
     $json = fourgeMarkupJson((object)$payload);
     $base = rtrim((string)$base, '/');
     for ($hop = 0; $hop < 3; $hop++) {
@@ -8551,8 +8614,12 @@ function fourgeMarkupSiteCall($base, $action, $payload, $timeout = 20) {
         if (!$t) return [0, null, $host . ' is not a public web address.', ''];
         $ts = time();
         $nonce = rtrim(strtr(base64_encode(random_bytes(24)), '+/', '-_'), '=');
-        $sig = sodium_crypto_sign_detached("fourge-markup-v1\n" . $action . "\n" . $host . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $json), $kp['sk']);
-        $req = fourgeMarkupJson(['action' => $action, 'payload' => $json, 'host' => $host, 'ts' => $ts, 'nonce' => $nonce, 'sig' => base64_encode($sig)]);
+        $msg = "fourge-markup-v1\n" . $action . "\n" . $host . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $json);
+        $sig = $kp ? base64_encode(sodium_crypto_sign_detached($msg, $kp['sk'])) : '';
+        $sigRs = ''; $raw = '';
+        if ($rk && @openssl_sign($msg, $raw, $rk['sk'], OPENSSL_ALGO_SHA256)) $sigRs = base64_encode($raw);
+        if ($sig === '' && $sigRs === '') return [0, null, 'The hub could not sign its request.', ''];
+        $req = fourgeMarkupJson(['action' => $action, 'payload' => $json, 'host' => $host, 'ts' => $ts, 'nonce' => $nonce, 'sig' => $sig, 'sig_rs' => $sigRs]);
         list($code, $raw, $err, $h) = fourgeMarkupHttp('POST', $t[0], ['Content-Type: application/json', 'Accept: application/json'], $req, $timeout, ['resolve' => $t[1]]);
         if (in_array($code, [301, 302, 307, 308], true) && !empty($h['location'])) {
             $l = @parse_url((string)$h['location']);
@@ -9057,7 +9124,13 @@ function fourgeMarkupSiteFor($url, &$note = '', $fresh = false) {
         if (($r[4] ?? '') !== '' && ($live = fourgeMarkupSiteAt($r[4], $hk))) return $live;   // a dev link that now goes to the live site
         if ($code === 503) $why = $p['host'] . ' runs Fourge but does not trust this hub yet: it needs Fourge 1.14.159 or later (a site that has just updated trusts the hub within 5 minutes).';
         elseif ($code === 401 && stripos($err, 'API token') !== false) $why = $p['host'] . ' runs an older Fourge without MarkUp: it needs Fourge 1.14.159 or later.';
+        // the hub's request always carries a well-formed nonce, so this means no signature it sent is one the site can check: a site before 1.14.163 (Ed25519 only) and a hub without sodium (RSA only)
+        elseif ($code === 401 && stripos($err, 'Missing or malformed signature') !== false) $why = $p['host'] . ' cannot check the hub\'s signature yet: it needs Fourge 1.14.163 or later (sign in to its admin once, which installs the update), then pull again.';
         elseif ($code === 401) $why = $p['host'] . ' refused the hub\'s signature (' . $err . ').';
+        // a site before 1.14.163 on a server without PHP's sodium extension (fourge.com's hosting and its sites') can't check any signature: updating it fixes that
+        elseif ($code === 500 && stripos($err, 'sodium') !== false) $why = stripos($err, 'openssl') !== false ? $p['host'] . ' cannot check the hub\'s signature: ' . $err
+            : $p['host'] . ' runs a Fourge older than 1.14.163 on a server whose PHP has no sodium extension, so it cannot check the hub\'s signature yet: sign in to its admin once (that installs the update), then pull again.';
+        elseif ($code === 0 && strpos($err, 'The hub ') === 0) { $why = $err; break; }   // the hub itself can't sign: no address will answer
         elseif ($why === '') $why = $p['host'] . ' did not answer as a Fourge site' . ($err !== '' ? ' (' . $err . ')' : '') . '.';
         if ($code !== 0) break;   // it answered; another scheme won't change that
     }
@@ -9139,6 +9212,10 @@ function fourgeMarkupStatusOut($me) {
         'hasKey' => fourgeMarkupApiKey() !== '',
         'workspace' => ['id' => (string)fourgeMarkupKvGet('workspace_id', ''), 'name' => (string)fourgeMarkupKvGet('workspace_name', '')],
         'publicKey' => (string)fourgeMarkupKvGet('hub_pk', ''),
+        // the RSA public key by its fingerprint, as OpenSSH shows one (SHA256 of the key's DER, base64)
+        'rsaKey' => ($rpk = (string)fourgeMarkupKvGet('hub_pk_rsa', '')) !== '' ? 'SHA256:' . rtrim(base64_encode(hash('sha256', (string)base64_decode((string)preg_replace('~-----[^-]+-----|\s+~', '', $rpk)), true)), '=') : '',
+        // How the hub signs (Ed25519 needs PHP's sodium, RSA its openssl); none: client sites can't be reached.
+        'signing' => array_values(array_filter([fourgeSodiumOn() ? 'ed25519' : '', fourgeOpensslSignOn() ? 'rsa' : ''])),
         'webhook' => [
             'registered' => (string)fourgeMarkupKvGet('webhook_id', '') !== '',
             'mode' => $mode,
@@ -9236,8 +9313,9 @@ function fourgeApiMarkupHubSave($me, $body) {
         fourgeMarkupKvSet('trigger_statuses', fourgeMarkupJson(array_values(array_unique(array_slice($t, 0, 20)))));
         $msg[] = 'Saved.';
     }
-    // Made once and kept: the key the hub signs with, and the webhook's secret address.
+    // Made once and kept: the keys the hub signs with, and the webhook's secret address.
     fourgeMarkupHubKeypair(true);
+    try { fourgeMarkupHubRsaKeypair(true); } catch (Throwable $e) {}
     fourgeMarkupWebhookSecret(true);
     if ($register && fourgeMarkupApiKey() !== '') {
         $r = fourgeMarkupRegisterWebhook();

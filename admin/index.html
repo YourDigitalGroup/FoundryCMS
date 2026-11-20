@@ -2993,7 +2993,7 @@ function sha256(message){
 }
 
 
-const CMS_VERSION='1.14.162';
+const CMS_VERSION='1.14.163';
 // Engine files the self-updater is allowed to pull from the CMS repo.
 // These hold NO per-site data or secrets — secrets live in config.secret.php.
 // api.php is now auto-updatable too (it reads its secrets from config.secret.php,
@@ -13901,7 +13901,14 @@ function mkSettingsHtml(s, first){
       +'</div><div class="mk-actions" style="margin-top:4px"><input type="text" id="mk-trig-add" placeholder="Another status" style="padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:12.5px"><button class="fd-btn-secondary" onclick="mkSaveTriggers()">Save statuses</button></div>';
     h+='<h3>Webhook</h3><div class="desc" style="margin-bottom:4px">'+(w.registered?'Registered with MarkUp'+(w.mode==='direct'?' at the plain address (this server doesn\'t rewrite the short one)':'')+'.':'Not registered.')+' The address is secret: anyone holding it can only ask the hub to re-read MarkUp.</div>'
       +(w.url?'<code>'+esc(w.url)+'</code>':'')+'<button class="fd-btn-secondary" onclick="mkRegister()">Register again</button>';
-    h+='<h3>Hub key</h3><div class="desc" style="margin-bottom:4px">Client sites check the hub\'s signature on every change with this public key. They fetch it from '+esc(String(s.hub||'').replace(/^https?:\/\//,''))+' by themselves; nothing is set up on them.</div><code>'+esc(s.publicKey||'(made when MarkUp is connected)')+'</code>';
+    // Ed25519 needs PHP's sodium extension, RSA its openssl one: a host without sodium (fourge.com's) signs with RSA only
+    let keys='';
+    if(s.publicKey) keys+='<div class="mk-muted" style="margin:6px 0 2px">Ed25519</div><code>'+esc(s.publicKey)+'</code>';
+    if(s.rsaKey) keys+='<div class="mk-muted" style="margin:6px 0 2px">RSA-2048, for client sites whose PHP has no sodium extension (fingerprint)</div><code>'+esc(s.rsaKey)+'</code>';
+    h+='<h3>Hub keys</h3>'
+      +(Array.isArray(s.signing)&&!s.signing.length?'<div class="mk-err">This server\'s PHP has neither the sodium nor the openssl extension, so the hub can\'t sign its changes and no client site will accept them. Ask the host to turn either one on (in cPanel: Select PHP Version → Extensions).</div>':'')
+      +'<div class="desc" style="margin-bottom:4px">Client sites check the hub\'s signature on every change with these public keys, each with whichever its server\'s PHP supports. They fetch them from '+esc(String(s.hub||'').replace(/^https?:\/\//,''))+' by themselves; nothing is set up on them.</div>'
+      +(keys||'<code>(made when MarkUp is connected)</code>');
   }
   return h+'</div>';
 }

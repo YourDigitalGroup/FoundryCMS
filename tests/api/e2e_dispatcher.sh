@@ -78,7 +78,9 @@ import sys
 body=''.join('<p>Paragraph %d about the client, long enough to give the page a real size.</p>\n' % i for i in range(30))
 open(sys.argv[1],'w').write('<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8"><title>Client Page</title></head><body>\n<h1 data-fourge-block="bhead01">Old heading</h1>\n<p data-fourge-block="bpara01">Some paragraph text to change.</p>\n'+body+'</body></html>\n')
 PY
-FOURGE_MARKUP_HUB_URL="http://127.0.0.1:$PORT" FOURGE_PROBE_ALLOW_LOCAL=1 PHP_CLI_SERVER_WORKERS=3 php -S 127.0.0.1:$MKCPORT -t "$S2" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S2.server.log" 2>&1 &
+# FOURGE_NO_SODIUM: the client plays a host whose PHP has no sodium extension (fourge.com's client sites), so every
+# signed call the hub makes to it below is checked with the hub's RSA signature (1.14.163)
+FOURGE_NO_SODIUM=1 FOURGE_MARKUP_HUB_URL="http://127.0.0.1:$PORT" FOURGE_PROBE_ALLOW_LOCAL=1 PHP_CLI_SERVER_WORKERS=3 php -S 127.0.0.1:$MKCPORT -t "$S2" -d opcache.revalidate_freq=0 -d display_errors=1 -d error_reporting=32767 -d log_errors=0 > "$S2.server.log" 2>&1 &
 MKCSRV=$!
 # opcache.revalidate_freq=0: the built-in server caches compiled PHP (opcache.enable_cli does not cover it), and the
 # suite edits config.secret.php mid-run; without it a request within 2 s of an edit still sees the old file.
@@ -922,9 +924,11 @@ call "markup_hub_save (connect MarkUp)" '{"action":"markup_hub_save","apiKey":"m
 ans '
 assert d.get("ok") is True and d.get("hasKey") is True and d["workspace"]["name"]=="E2E Agency", d
 w=d["webhook"]; assert w["registered"] is True and w["mode"]=="direct" and "action=markup_webhook&secret=" in w["url"], w
-assert len(d.get("publicKey",""))==44, d.get("publicKey")
-assert "mk-e2e-key" not in json.dumps(d)' && chk 0 "connecting checks the key with MarkUp, makes the hub's signing key and registers the webhook (at the plain address: php -S doesn't rewrite the short one); the key never comes back" || chk 1 "connect — got: $(printf '%s' "$LAST" | head -c 400)"
+assert len(d.get("publicKey",""))==44 and d.get("signing")==["ed25519","rsa"] and d.get("rsaKey","").startswith("SHA256:") and len(d["rsaKey"])==50, (d.get("publicKey"), d.get("signing"), d.get("rsaKey"))
+assert "mk-e2e-key" not in json.dumps(d)' && chk 0 "connecting checks the key with MarkUp, makes the hub's signing keys (Ed25519 and RSA) and registers the webhook (at the plain address: php -S doesn't rewrite the short one); the key never comes back" || chk 1 "connect — got: $(printf '%s' "$LAST" | head -c 400)"
+[ "$(dbq 'echo (int)(preg_match("~^-----BEGIN (RSA )?PRIVATE KEY-----~",(string)fourgeGetSecret($pdo,"markup_hub_rsa"))===1);')" = 1 ] && chk 0 "…the RSA private key is kept in the encrypted secret store" || chk 1 "hub RSA key missing from the secret store"
 HUBPK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["publicKey"])' 2>/dev/null)
+HUBFP=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rsaKey"])' 2>/dev/null)
 HOOK=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["webhook"]["url"])' 2>/dev/null)
 mkstate 'h=list(s["hooks"].values()); assert len(h)==1 and h[0]["workspaceId"]=="ws_e2e" and h[0]["enabled"] and {"markup_status_changed","comment_created","comment_reply_created"}<=set(h[0]["eventTypes"]) and h[0]["url"]==sys.argv[2], h' "$HOOK" && chk 0 "…one webhook registration in MarkUp: the hub's address, with the comment and status events" || chk 1 "webhook registration — $(curl -s "http://127.0.0.1:$MKAPORT/__state" | head -c 400)"
 call "markup_hub_save registerWebhook again" '{"action":"markup_hub_save","registerWebhook":true}'
@@ -933,9 +937,13 @@ call "install_clean_urls (the hub's sign-in self-heal)" '{"action":"install_clea
 ans 'assert d.get("markupWebhook") is True, d.get("markupWebhook")' && [ "$(grep -c '^# BEGIN Fourge MarkUp Webhook' "$S/.htaccess")" = 1 ] && awk '/^# BEGIN Fourge MarkUp Webhook/{m=NR} /^# BEGIN Fourge Clean URLs/{c=NR} END{exit !(m && c && m<c)}' "$S/.htaccess" && grep -qF 'RewriteRule ^integrations/markup/webhook/([A-Za-z0-9_-]{20,100})/?$ admin/api.php?action=markup_webhook&secret=$1 [L,QSA]' "$S/.htaccess" && chk 0 "on the hub, .htaccess routes /integrations/markup/webhook/<secret> to the webhook, once, above the clean-URL rules" || chk 1 "webhook rewrite — $(grep -n 'MarkUp Webhook\|Clean URLs' "$S/.htaccess")"
 TOK=""
 mkcall '{"action":"markup_hub_key"}'
-[ "$MKST" = 200 ] && ans "assert d['key']=='$HUBPK'" && chk 0 "markup_hub_key (public) gives the hub's public key, the one client sites check its signatures with" || chk 1 "markup_hub_key — $(mkerr)"
+[ "$MKST" = 200 ] && ans "assert d['key']=='$HUBPK' and d.get('rsa','').startswith('-----BEGIN PUBLIC KEY-----'), d" && chk 0 "markup_hub_key (public) gives the hub's public keys, the ones client sites check its signatures with: Ed25519 and RSA" || chk 1 "markup_hub_key — $(mkerr)"
+HUBRSA=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rsa"], end="")' 2>/dev/null)
+[ -n "$HUBFP" ] && [ "$(printf '%s' "$HUBRSA" | python3 -c 'import sys,base64,hashlib; der=base64.b64decode("".join(l for l in sys.stdin.read().splitlines() if not l.startswith("-----"))); print("SHA256:"+base64.b64encode(hashlib.sha256(der).digest()).decode().rstrip("="))')" = "$HUBFP" ] && chk 0 "…the hub's settings show that RSA key by its fingerprint (SHA256 of the key, as OpenSSH shows one)" || chk 1 "the RSA fingerprint ($HUBFP) is not the published key's"
 mkpost "http://127.0.0.1:$MKCPORT/admin/api.php" '{"action":"markup_hub_key"}'
 [ "$MKST" = 404 ] && chk 0 "…a client site publishes none" || chk 1 "client markup_hub_key — $(mkerr)"
+mkpost "http://127.0.0.1:$MKCPORT/admin/api.php" '{"action":"markup_hello","payload":"{}","host":"127.0.0.1","ts":1,"nonce":"abcdefghijklmnop","sig":""}'
+[ "$MKST" = 401 ] && ans "assert d.get('error')=='Missing or malformed signature.', d" && chk 0 "a client site whose PHP has no sodium answers an unsigned request with 401 (before 1.14.163: 500, \"no sodium extension\", and the hub could never place a comment on it)" || chk 1 "no-sodium client, unsigned — $(mkerr)"
 mkpost "${HOOK%%secret=*}secret=wrongwrongwrongwrongwrongwrong01" '{"id":"ev_x","type":"comment_created","data":{}}'
 [ "$MKST" = 404 ] && [ "$(dbq 'echo $pdo->query("SELECT COUNT(*) FROM markup_events")->fetchColumn();')" = 0 ] && chk 0 "the webhook at a wrong secret address: 404, nothing recorded" || chk 1 "webhook wrong secret — $(mkerr)"
 curl -s "$HOOK" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("markup")=="webhook"' && chk 0 "…a GET at the right address answers as the webhook (the hub's check that its address works)" || chk 1 "webhook GET — $(curl -s "$HOOK" | head -c 200)"
@@ -978,7 +986,7 @@ assert rows['th_5'][1:4]==['client-e2e.example','hello-client.html','new'], rows
 assert rows['th_3'][1:4]==['client-e2e.example','','unmapped'] and 'No page on Client E2E matches /no-such-page' in rows['th_3'][4], rows['th_3']
 assert rows['th_4'][1:4]==['','','unmapped'] and 'did not answer as a Fourge site' in rows['th_4'][4], rows['th_4']
 PY
-[ "$(cdbq 'echo (string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched\"")->fetchColumn();')" = "$HUBPK" ] && chk 0 "the client site, given no key, fetched the hub's public key from the hub's address and checked the hello with it" || chk 1 "client's hub key: $(cdbq 'echo (string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched\"")->fetchColumn();')"
+[ "$(cdbq 'echo (string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched\"")->fetchColumn();')" = "$HUBPK" ] && [ "$(cdbq 'echo (string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched_rsa\"")->fetchColumn();')" = "$HUBRSA" ] && chk 0 "the client site, given no key and with no sodium in its PHP, fetched the hub's public keys from the hub's address and checked the hello with the RSA one" || chk 1 "client's hub keys: $(cdbq 'echo (string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched\"")->fetchColumn();') / rsa: $(cdbq 'echo substr((string)$pdo->query("SELECT v FROM markup_kv WHERE k=\"hub_pk_fetched_rsa\"")->fetchColumn(),0,40);')"
 call "markup_hub_status (statuses MarkUp has sent)" '{"action":"markup_hub_status"}'
 ans 'assert "editing" in d["statusesSeen"] and "Approved" in d["statusesSeen"] and "approved" in d["triggerStatuses"], d' && chk 0 "the settings offer the statuses MarkUp has actually sent (its documentation lists none); Approved is a trigger by default" || chk 1 "statuses — got: $(printf '%s' "$LAST" | head -c 300)"
 call "markup_hub_queue" '{"action":"markup_hub_queue"}'
