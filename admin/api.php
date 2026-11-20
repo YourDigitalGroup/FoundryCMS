@@ -107,7 +107,7 @@ const FOURGE_UPLOAD_MAX_BYTES = 10485760;   // 10 MB per file
 // the largest file the mirror will push — see the policy comment by those functions.
 const FOURGE_GH_SKIP_DIRS = ['.git', 'admin', 'node_modules', 'cgi-bin', 'data/uploads'];
 const FOURGE_GH_MAX_BYTES = 20971520;
-define('FOURGE_API_VERSION', '1.14.163');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
+define('FOURGE_API_VERSION', '1.14.164');   // this file's engine version — KEEP EQUAL to CMS_VERSION / version.json (CI + the sign-in api-version check compare them)
 define('FOURGE_POSTS_RUNTIME_VERSION', 4);   // the public post-list runtime's version — KEEP EQUAL to POSTS_RUNTIME_SWEEP_VERSION in admin/index.html (parity-tested)
 
 // Mailgun (forms)
@@ -272,9 +272,12 @@ $action = $body['action'] ?? $_POST['action'] ?? ($_GET['action'] ?? '');
 //    can't sign anything). The second is MarkUp's webhook: it answers only at its
 //    secret address (/integrations/markup/webhook/<secret>), records the event and
 //    never acts on what it says — the hub reads everything again from MarkUp's API.
-$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe', 'host_probe', 'chat_start', 'chat_send', 'chat_poll', 'markup_hello', 'markup_read', 'markup_write', 'markup_upload', 'markup_hub_key', 'markup_webhook'];   // markup_*: checked by the hub's signature (fourgeMarkupVerify); markup_webhook by its secret address
+//  • 'markup_digest_tick' is the clock for the hub's daily email (a cron job on the
+//    hub's server calls it). It answers only with the hub's secret key, and can do
+//    nothing but send the daily email once it is due — at most once a day.
+$PUBLIC_ACTIONS  = ['login', 'send_form', 'check_form_password', 'form_view', 'seo_package', 'seo_pkg_tick', 'blog_sync_tick', 'blog_sync_poke', 'blog_sync_subscribe', 'host_probe', 'chat_start', 'chat_send', 'chat_poll', 'markup_hello', 'markup_read', 'markup_write', 'markup_upload', 'markup_hub_key', 'markup_webhook', 'markup_digest_tick'];   // markup_*: checked by the hub's signature (fourgeMarkupVerify); markup_webhook and markup_digest_tick by their secret
 $SESSION_ACTIONS = ['logout','session','list_users','save_user','delete_user','change_password','get_secrets','set_secret','repo_fetch','set_page_password','install_clean_urls','ghl_test','ghl_dashboard','ghl_messages','ghl_send','ghl_form_def','gh_mirror','gh_set_private','gh_sync_all','send_test_email','recaptcha_status','seo_pkg_admin','ai_endpoint_test','blog_sync_admin','chat_bot_status','chat_bot_save','chat_ai_test','chat_ai_test_poll',
-                    'markup_hub_status','markup_hub_save','markup_hub_process','markup_hub_pull','markup_hub_queue','markup_hub_sites','markup_hub_page','markup_hub_item','markup_hub_apply','markup_hub_image'];
+                    'markup_hub_status','markup_hub_save','markup_hub_process','markup_hub_pull','markup_hub_queue','markup_hub_sites','markup_hub_page','markup_hub_item','markup_hub_apply','markup_hub_image','markup_hub_digest'];
 
 $apiTok      = $_SERVER['HTTP_X_API_TOKEN'] ?? ($body['token'] ?? ($_POST['token'] ?? ''));
 $hasApiToken = ($apiTok !== '' && hash_equals(API_TOKEN, (string)$apiTok));
@@ -402,6 +405,8 @@ try {
         case 'markup_hub_item':    ob_end_clean(); fourgeApiMarkupHubItem($authUser, $body); break;
         case 'markup_hub_apply':   ob_end_clean(); fourgeApiMarkupHubApply($authUser, $body); break;
         case 'markup_hub_image':   ob_end_clean(); fourgeApiMarkupHubImage($authUser, $body); break;
+        case 'markup_hub_digest':  ob_end_clean(); fourgeApiMarkupHubDigest($authUser, $body); break;
+        case 'markup_digest_tick': ob_end_clean(); fourgeApiMarkupDigestTick($body); break;
         case 'check_form_password': ob_end_clean(); fourgeApiCheckFormPassword($body); break;
         case 'form_view':   ob_end_clean(); fourgeApiFormView($body); break;
         case 'hash_form_password': ob_end_clean(); fourgeApiHashFormPassword($body); break;
@@ -3256,6 +3261,44 @@ function cmsSendTestEmail($to, &$info) {
     return [false, 'No mail method is configured. Add SMTP settings (in send.php or config.secret.php) or a Mailgun API key.'];
 }
 
+// One message out through the site's mail settings, chosen as form email and the
+// test email choose: SMTP when it is set up, else Mailgun's API. True when it went;
+// false with $err saying why (never a password or key).
+function fourgeSendMail($to, $subject, $html, $text, &$err) {
+    $err = '';
+    $mg = cmsMailgun();
+    if (cmsSmtpEnabled()) {
+        list($fromEmail, $fromName) = cmsSmtpFrom($mg['from']);
+        $e = '';
+        $ok = cmsSmtpSend([
+            'host' => SMTP_HOST, 'port' => SMTP_PORT, 'secure' => SMTP_SECURE, 'user' => SMTP_USER, 'pass' => SMTP_PASS,
+            'from' => $fromEmail, 'fromName' => $fromName, 'to' => $to, 'toName' => '',
+            'replyTo' => '', 'replyName' => '', 'subject' => $subject, 'html' => $html, 'text' => $text,
+        ], $e);
+        if (!$ok) $err = 'SMTP: ' . $e;
+        return (bool)$ok;
+    }
+    if ($mg['key'] !== '' && $mg['domain'] !== '' && stripos($mg['domain'], 'example.com') === false) {
+        $ch = curl_init('https://api.mailgun.net/v3/' . $mg['domain'] . '/messages');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_USERPWD        => 'api:' . $mg['key'],
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => ['from' => $mg['from'], 'to' => $to, 'subject' => $subject, 'text' => $text, 'html' => $html],
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_TIMEOUT        => 15,
+        ]);
+        $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $ce = curl_error($ch); fourgeCurlClose($ch);
+        if ($ce) { $err = 'Mailgun: ' . $ce; return false; }
+        if ($code === 200) return true;
+        $d = json_decode((string)$res, true);
+        $err = 'Mailgun answered ' . $code . ': ' . (is_array($d) && isset($d['message']) ? (string)$d['message'] : substr((string)$res, 0, 200));
+        return false;
+    }
+    $err = 'No mail method is set up on this server (SMTP settings or a Mailgun key).';
+    return false;
+}
+
 // Admin diagnostic endpoint: run cmsSendTestEmail and return the structured
 // result to the CMS so mail failures are self-explaining instead of a generic
 // "could not be sent". Level 2+ (admin) — surfaces host/From but never secrets.
@@ -4676,6 +4719,7 @@ function fourgeApiBlogSyncTick($me, $body) {
     $site = cmsPkgReadJson('site.json', []);
     if (!is_array($site)) $site = [];
     $result = fourgeBlogSyncDoSync($site);
+    try { fourgeMarkupDigestMaybe('scheduler'); } catch (Throwable $e) {}   // on the MarkUp hub only: its daily email, when due
     echo json_encode($result + ['checked_at' => date('c')]);
 }
 // Public, unauthenticated and deliberately boring: it can only run the sync the
@@ -6898,9 +6942,12 @@ function fourgeApiInstallCleanUrls($me) {
     // The MarkUp hub only: keep the webhook's address rule (a hand-edited or redeployed .htaccess may have lost it).
     $markupHook = null;
     try { if (fourgeMarkupIsHub() && fourgeMarkupWebhookSecret(false) !== '') $markupHook = fourgeWriteMarkupWebhookHtaccess(); } catch (Throwable $e) { $markupHook = false; }
+    // …and its daily email, if it is due and no cron job or webhook event sent it yet.
+    $markupDigest = null;
+    try { if (fourgeMarkupIsHub()) $markupDigest = fourgeMarkupDigestMaybe('sign-in'); } catch (Throwable $e) { $markupDigest = null; }
     echo json_encode(['ok' => true, 'cacheHeaders' => $cache, 'canonicalHost' => $canon, 'websiteAuto' => $websiteAuto, 'postsCors' => $cors, 'seoApi' => $seoApi, 'indexing' => $idx,
         'secretGuard' => $sec, 'headers' => $hdr, 'llms' => $llms, 'published' => count($due), 'fleet' => $fleet,
-        'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync, 'markupWebhook' => $markupHook,
+        'blogSyncApi' => $blogSyncApi, 'blogSync' => $blogSync, 'markupWebhook' => $markupHook, 'markupDigest' => $markupDigest,
         'entriesGuard' => $entriesGuard, 'uploadsGuard' => $uploadsGuard, 'backupsGuard' => $backupsGuard, 'fleetDashboardCopy' => $fleetCopy, 'captchaSecrets' => $captchaSecrets,
         'scriptsRepaired' => $scriptAlts]);
 }
@@ -8063,6 +8110,7 @@ function fourgeApiSeoPkgTick($me, $body) {
     // site's admin — which is exactly the human step this is meant to remove.
     // Never allowed to affect the response this endpoint exists for.
     try { fourgeAiDailyTick(); } catch (Throwable $e) {}
+    try { fourgeMarkupDigestMaybe('scheduler'); } catch (Throwable $e) {}   // on the MarkUp hub only: its daily email, when due
     $done = cmsPkgTick(false);
     echo json_encode(['ok' => true, 'published' => $done, 'count' => count($done), 'checked_at' => date('c')]);
 }
@@ -8742,6 +8790,7 @@ function fourgeApiMarkupWebhook($body) {
     @ignore_user_abort(true);
     @set_time_limit(150);
     try { fourgeMarkupProcess(90); } catch (Throwable $e) {}
+    try { fourgeMarkupDigestMaybe('webhook'); } catch (Throwable $e) {}   // the daily email, if it is due and no cron job sent it yet
 }
 
 // ── WORKING THROUGH EVENTS ───────────────────────────────────────────────────
@@ -9230,6 +9279,7 @@ function fourgeMarkupStatusOut($me) {
         'lastError' => (string)fourgeMarkupKvGet('last_error', ''),
         'lastProcess' => (int)fourgeMarkupKvGet('last_process', '0'),
         'lastPull' => (int)fourgeMarkupKvGet('last_pull', '0'),
+        'digest' => fourgeMarkupDigestStatus($arch),
     ];
 }
 function fourgeApiMarkupHubStatus($me, $body) {
@@ -9313,10 +9363,32 @@ function fourgeApiMarkupHubSave($me, $body) {
         fourgeMarkupKvSet('trigger_statuses', fourgeMarkupJson(array_values(array_unique(array_slice($t, 0, 20)))));
         $msg[] = 'Saved.';
     }
-    // Made once and kept: the keys the hub signs with, and the webhook's secret address.
+    // The daily email: on/off, who gets it, when, in which time zone; a new cron key on request.
+    if (is_array($body['digest'] ?? null)) {
+        $dg = $body['digest'];
+        $fail = function ($m) { fourgeMarkupOut(200, ['ok' => false, 'error' => $m]); };
+        $to = null; $time = null; $tz = null;
+        if (array_key_exists('to', $dg)) {
+            $ok = []; $bad = [];
+            foreach (preg_split('~[\s,;]+~', (string)$dg['to']) as $a) { $a = trim($a); if ($a === '') continue; if (!filter_var($a, FILTER_VALIDATE_EMAIL)) $bad[] = $a; elseif (!isset($ok[strtolower($a)])) $ok[strtolower($a)] = $a; }
+            if ($bad) { $fail('Not an email address: ' . implode(', ', array_slice($bad, 0, 3)) . '.'); return; }
+            if (count($ok) > 10) { $fail('Ten addresses at most.'); return; }
+            $to = implode(', ', array_values($ok));
+        }
+        if (array_key_exists('time', $dg)) { $time = (string)$dg['time']; if (!fourgeMarkupDigestTimeOk($time)) { $fail('Pick a time of day, like 08:45.'); return; } }
+        if (array_key_exists('tz', $dg)) { $tz = (string)$dg['tz']; if (!in_array($tz, timezone_identifiers_list(), true)) { $fail('Unknown time zone: ' . mb_substr($tz, 0, 60) . '.'); return; } }
+        if (array_key_exists('on', $dg)) fourgeMarkupKvSet('digest_on', !empty($dg['on']) ? '1' : '0');
+        if ($to !== null) fourgeMarkupKvSet('digest_to', $to);
+        if ($time !== null) fourgeMarkupKvSet('digest_time', $time);
+        if ($tz !== null) fourgeMarkupKvSet('digest_tz', $tz);
+        if (!empty($dg['newKey'])) { fourgeMarkupKvSet('digest_key', null); $msg[] = 'The cron job\'s address changed: update the cron job with the new one.'; }
+        if (array_diff(array_keys($dg), ['tz'])) $msg[] = 'Daily email saved.';
+    }
+    // Made once and kept: the keys the hub signs with, the webhook's secret address and the daily email's cron key.
     fourgeMarkupHubKeypair(true);
     try { fourgeMarkupHubRsaKeypair(true); } catch (Throwable $e) {}
     fourgeMarkupWebhookSecret(true);
+    fourgeMarkupDigestKey(true);
     if ($register && fourgeMarkupApiKey() !== '') {
         $r = fourgeMarkupRegisterWebhook();
         $msg[] = $r['ok'] ? 'MarkUp now tells the hub about new comments and status changes.' : ('The webhook could not be registered: ' . $r['error']);
@@ -9328,6 +9400,7 @@ function fourgeApiMarkupHubSave($me, $body) {
 function fourgeApiMarkupHubProcess($me, $body) {
     if (!fourgeMarkupHubGate($me)) return;
     $r = fourgeMarkupProcess(min(25, max(2, (int)($body['budget'] ?? 15))));
+    $r['digest'] = fourgeMarkupDigestMaybe('panel');   // the daily email, if it is due and nothing sent it yet
     fourgeMarkupOut(200, ['ok' => true] + $r);
 }
 // "Pull changes now": every website markup (of one site, or all), its open
@@ -9454,7 +9527,10 @@ function fourgeMarkupCleanOps($ops) {
         if (!is_array($op) || !in_array((string)($op['field'] ?? ''), fourgeMarkupOpFields(), true)) continue;
         $v = $op['value'] ?? '';
         if (!is_scalar($v)) continue;
-        $out[] = ['field' => (string)$op['field'], 'value' => mb_substr((string)$v, 0, 20000)];
+        $o = ['field' => (string)$op['field'], 'value' => mb_substr((string)$v, 0, 20000)];
+        // which image of several (a gallery): its src as the page has it
+        if (in_array($o['field'], ['src', 'alt', 'imgHref'], true) && isset($op['target']) && is_scalar($op['target']) && trim((string)$op['target']) !== '') $o['target'] = mb_substr(trim((string)$op['target']), 0, 2000);
+        $out[] = $o;
         if (count($out) >= 16) break;
     }
     return $out;
@@ -9662,6 +9738,264 @@ function fourgeApiMarkupHubImage($me, $body) {
     if ($c2 !== 200 || empty($j2['url'])) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'The site did not take the image: ' . ($e2 !== '' ? $e2 : 'HTTP ' . $c2)]); return; }
     fourgeMarkupItemLog((int)$it['id'], ['what' => 'image', 'url' => (string)$j2['url']], $me);
     fourgeMarkupOut(200, ['ok' => true, 'url' => (string)$j2['url']]);
+}
+
+// ── THE DAILY EMAIL ──────────────────────────────────────────────────────────
+// Once a day, after its time (8:45 unless set otherwise) in the agency's time zone,
+// the hub emails the client sites with MarkUp comments waiting on someone: changes
+// ready to approve, comments that need a person, ones still being prepared, ones it
+// couldn't place on a site, and ones that failed. Nothing waiting: no email that day.
+// Fourge has no cron of its own, so the send rides whatever reaches the hub first
+// after that time: the hub's cron job (markup_digest_tick, the one way to have it
+// out at 8:45 sharp), a MarkUp webhook event, a sign-in, the MarkUp panel opening,
+// or the SEO platform's and Blog Sync's scheduled pings. "Email the to-do list" in
+// the panel sends it at once, without counting as the day's email.
+function fourgeMarkupDigestTimeOk($t) { return is_string($t) && preg_match('~^([01]\d|2[0-3]):[0-5]\d$~', $t) === 1; }
+function fourgeMarkupDigestTz() {
+    $tz = (string)fourgeMarkupKvGet('digest_tz', '');
+    if ($tz !== '' && in_array($tz, timezone_identifiers_list(), true)) return $tz;
+    $d = (string)date_default_timezone_get();
+    return $d !== '' ? $d : 'UTC';
+}
+// Who gets it: the addresses saved in the settings, else the agency's Architects.
+function fourgeMarkupDigestRecipients() {
+    $raw = fourgeMarkupKvGet('digest_to', null);
+    $list = $raw === null ? fourgeArchitectEmails() : preg_split('~[\s,;]+~', (string)$raw);
+    $out = [];
+    foreach ((array)$list as $e) { $e = trim((string)$e); if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL) && !isset($out[strtolower($e)])) $out[strtolower($e)] = $e; }
+    return array_slice(array_values($out), 0, 10);
+}
+function fourgeMarkupDigestCfg() {
+    $t = (string)fourgeMarkupKvGet('digest_time', '08:45');
+    return [
+        'on'    => (string)fourgeMarkupKvGet('digest_on', '1') !== '0',
+        'to'    => fourgeMarkupDigestRecipients(),
+        'time'  => fourgeMarkupDigestTimeOk($t) ? $t : '08:45',
+        'tz'    => fourgeMarkupDigestTz(),
+        'tzSet' => (string)fourgeMarkupKvGet('digest_tz', '') !== '',
+        'last'  => (string)fourgeMarkupKvGet('digest_last', ''),   // the agency's date of the last daily send (Y-m-d)
+    ];
+}
+// The agency's date and time: [Y-m-d, H:i, DateTime].
+function fourgeMarkupDigestNow($tz, $now = null) {
+    $d = new DateTime('@' . (int)($now === null ? time() : $now));
+    try { $d->setTimezone(new DateTimeZone((string)$tz)); } catch (Throwable $e) { $d->setTimezone(new DateTimeZone('UTC')); }
+    return [$d->format('Y-m-d'), $d->format('H:i'), $d];
+}
+// Due: switched on, someone to send it to, the agency's time zone known (the server's
+// own is often UTC, which would make 8:45 the middle of the night), past today's time,
+// not sent today, and not inside the 15 minutes a failed send waits before a new try.
+function fourgeMarkupDigestDue($cfg, $now = null) {
+    $now = $now === null ? time() : (int)$now;
+    if (empty($cfg['on']) || empty($cfg['to']) || empty($cfg['tzSet'])) return false;
+    list($day, $hm) = fourgeMarkupDigestNow($cfg['tz'], $now);
+    if (strcmp($hm, (string)$cfg['time']) < 0 || (string)$cfg['last'] === $day) return false;
+    return (int)fourgeMarkupKvGet('digest_retry_at', '0') <= $now;
+}
+// What is waiting, by site: the sites the hub matched first (by name), then the
+// addresses it couldn't place. Each with its counts, its oldest comment and the comments.
+function fourgeMarkupDigestData() {
+    $pdo = fourgeMarkupHubDb();
+    $rows = $pdo->query("SELECT i.site, i.page, i.status, i.created_at, t.url, t.body FROM markup_items i LEFT JOIN markup_threads t ON t.id=i.thread_id
+        WHERE i.status IN ('new','pending','needs_human','no_change','failed','unmapped') ORDER BY i.created_at, i.id")->fetchAll();
+    $known = [];
+    foreach (fourgeMarkupSites() as $s) $known[$s['site']] = $s;
+    $bucket = ['pending' => 'ready', 'new' => 'preparing', 'needs_human' => 'person', 'no_change' => 'person', 'failed' => 'failed', 'unmapped' => 'unmapped'];
+    $sites = [];
+    foreach ($rows as $r) {
+        $site = (string)$r['site'];
+        $host = fourgeMarkupHostKey((string)@parse_url((string)$r['url'], PHP_URL_HOST));
+        $key = $site !== '' ? $site : '~' . $host;
+        if (!isset($sites[$key])) {
+            $k = $known[$site] ?? null;
+            $sites[$key] = ['site' => $site, 'host' => $site !== '' ? $site : $host, 'matched' => $site !== '',
+                'name' => $site !== '' ? (($k && (string)$k['name'] !== '') ? (string)$k['name'] : $site) : ($host !== '' ? $host : 'An address the hub couldn\'t read'),
+                'counts' => ['ready' => 0, 'person' => 0, 'preparing' => 0, 'unmapped' => 0, 'failed' => 0], 'oldest' => 0, 'total' => 0, 'items' => []];
+        }
+        $b = $bucket[(string)$r['status']] ?? 'person';
+        $sites[$key]['counts'][$b]++;
+        $sites[$key]['total']++;
+        $at = (int)$r['created_at'];
+        if ($at && (!$sites[$key]['oldest'] || $at < $sites[$key]['oldest'])) $sites[$key]['oldest'] = $at;
+        $th = json_decode((string)$r['body'], true);
+        $msg = (is_array($th) && is_array($th['messages'] ?? null) && is_array($th['messages'][0] ?? null)) ? (string)($th['messages'][0]['text'] ?? '') : '';
+        $sites[$key]['items'][] = ['page' => (string)$r['page'], 'path' => (string)@parse_url((string)$r['url'], PHP_URL_PATH), 'status' => $b, 'text' => $msg, 'at' => $at];
+    }
+    uasort($sites, function ($a, $b) { return $a['matched'] === $b['matched'] ? strcasecmp($a['name'], $b['name']) : ($a['matched'] ? -1 : 1); });
+    $total = 0;
+    foreach ($sites as $s) $total += $s['total'];
+    return ['sites' => array_values($sites), 'total' => $total];
+}
+// [subject, html, text]
+function fourgeMarkupDigestCompose($d, $cfg, $now = null) {
+    $e = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); };
+    $now = $now === null ? time() : (int)$now;
+    list(, , $dt) = fourgeMarkupDigestNow($cfg['tz'], $now);
+    $hubHost = (string)@parse_url(fourgeMarkupHubUrl(), PHP_URL_HOST);
+    $link = fourgeMarkupHubUrl() . '/admin/#markup';
+    $n = (int)$d['total']; $ns = count($d['sites']);
+    $plural = function ($k, $one, $many) { return $k . ' ' . ($k === 1 ? $one : $many); };
+    $subject = $n ? 'MarkUp: ' . $plural($n, 'comment', 'comments') . ' waiting on ' . $plural($ns, 'site', 'sites') : 'MarkUp: nothing waiting';
+    $headline = $n ? $plural($n, 'comment is', 'comments are') . ' waiting on ' . $plural($ns, 'site', 'sites') : 'Nothing is waiting in MarkUp';
+    $statusLabel = ['ready' => 'ready to approve', 'person' => 'needs a person', 'preparing' => 'being prepared', 'unmapped' => 'not matched to a site', 'failed' => 'failed'];
+    $countsLine = function ($s) use ($plural) {
+        $c = $s['counts']; $bits = [];
+        if ($c['ready']) $bits[] = $c['ready'] . ' ready to approve';
+        if ($c['person']) $bits[] = $c['person'] . ($c['person'] === 1 ? ' needs' : ' need') . ' a person';
+        if ($c['preparing']) $bits[] = $c['preparing'] . ' being prepared';
+        if ($c['failed']) $bits[] = $c['failed'] . ' failed';
+        if ($c['unmapped']) $bits[] = $plural($c['unmapped'], 'comment', 'comments') . ' the hub couldn\'t match to a Fourge site';
+        return implode(' · ', $bits);
+    };
+    $age = function ($ts) use ($now) { if (!$ts) return ''; $days = (int)floor(($now - $ts) / 86400); return $days < 1 ? 'oldest from today' : 'oldest ' . $days . ($days === 1 ? ' day' : ' days') . ' old'; };
+    $excerpt = function ($t) { $t = trim(preg_replace('~\s+~u', ' ', (string)$t)); return mb_strlen($t) > 110 ? rtrim(mb_substr($t, 0, 107)) . '…' : $t; };
+    $where = function ($it) { return $it['page'] !== '' ? $it['page'] : ($it['path'] !== '' ? $it['path'] : '/'); };
+    $html = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . $e($subject) . '</title></head>'
+        . '<body style="margin:0;padding:0;background:#f3f2ee">'
+        . '<div style="max-width:600px;margin:0 auto;padding:28px 20px;font-family:Arial,Helvetica,sans-serif;color:#1d1c19">'
+        . '<p style="margin:0 0 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#7d786c">MarkUp &middot; ' . $e($dt->format('l, F j')) . '</p>'
+        . '<h1 style="margin:0 0 20px;font-size:22px;line-height:1.3;font-weight:bold">' . $e($headline) . '</h1>';
+    $text = $headline . "\n" . $dt->format('l, F j') . "\n\n";
+    foreach ($d['sites'] as $s) {
+        $html .= '<div style="background:#ffffff;border:1px solid #e2dfd6;border-radius:8px;padding:14px 16px;margin:0 0 12px">'
+            . '<div style="font-size:16px;font-weight:bold;line-height:1.35">' . $e($s['name'])
+            . ($s['matched'] && $s['host'] !== $s['name'] ? ' <span style="font-weight:normal;font-size:13px;color:#7d786c">' . $e($s['host']) . '</span>' : '') . '</div>'
+            . '<div style="font-size:13px;color:#4b473f;margin:4px 0 8px;line-height:1.45">' . $e($countsLine($s)) . ($s['oldest'] ? ' &middot; ' . $e($age($s['oldest'])) : '') . '</div>'
+            . '<ul style="margin:0;padding:0 0 0 18px;font-size:13px;line-height:1.5;color:#4b473f">';
+        $text .= $s['name'] . ($s['matched'] && $s['host'] !== $s['name'] ? ' (' . $s['host'] . ')' : '') . "\n  " . $countsLine($s) . ($s['oldest'] ? ', ' . $age($s['oldest']) : '') . "\n";
+        foreach (array_slice($s['items'], 0, 6) as $it) {
+            $q = $excerpt($it['text']);
+            $html .= '<li style="margin:0 0 3px">' . $e($where($it)) . ($q !== '' ? ' &mdash; &ldquo;' . $e($q) . '&rdquo;' : '') . ' <span style="color:#7d786c">(' . $e($statusLabel[$it['status']] ?? $it['status']) . ')</span></li>';
+            $text .= '  - ' . $where($it) . ($q !== '' ? ' - "' . $q . '"' : '') . ' (' . ($statusLabel[$it['status']] ?? $it['status']) . ")\n";
+        }
+        if (count($s['items']) > 6) {
+            $more = count($s['items']) - 6;
+            $html .= '<li style="margin:0;list-style:none;color:#7d786c">and ' . $more . ' more</li>';
+            $text .= '  and ' . $more . " more\n";
+        }
+        $html .= '</ul></div>';
+        $text .= "\n";
+    }
+    if (!$n) {
+        $html .= '<p style="font-size:14px;line-height:1.5;color:#4b473f;margin:0 0 16px">No client comment is waiting on anyone right now.</p>';
+        $text .= "No client comment is waiting on anyone right now.\n\n";
+    }
+    $when = 'every day after ' . date('g:i A', strtotime('2000-01-01 ' . $cfg['time'])) . ' (' . $cfg['tz'] . ')';
+    $html .= '<p style="margin:20px 0 22px"><a href="' . $e($link) . '" style="display:inline-block;background:#1d1c19;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:bold;font-size:14px">Open MarkUp in Fourge</a></p>'
+        . '<p style="margin:0;font-size:12px;line-height:1.5;color:#7d786c">Sent by the MarkUp hub at ' . $e($hubHost) . ' ' . $e($when) . ' when something is waiting. Change who gets it, or when, in MarkUp &rarr; Settings &rarr; Daily email.</p>'
+        . '</div></body></html>';
+    $text .= 'Open MarkUp in Fourge: ' . $link . "\n\n" . 'Sent by the MarkUp hub at ' . $hubHost . ' ' . $when . ' when something is waiting. Change who gets it, or when, in MarkUp > Settings > Daily email.' . "\n";
+    return [$subject, $html, $text];
+}
+// One email to each recipient. ['sent' => [addresses], 'failed' => [address => why], 'subject', 'total', 'sites']
+function fourgeMarkupDigestSend($d, $cfg) {
+    list($subject, $html, $text) = fourgeMarkupDigestCompose($d, $cfg);
+    $sent = []; $failed = [];
+    foreach ($cfg['to'] as $addr) {
+        $err = '';
+        if (fourgeSendMail($addr, $subject, $html, $text, $err)) $sent[] = $addr; else $failed[$addr] = $err;
+    }
+    return ['sent' => $sent, 'failed' => $failed, 'subject' => $subject, 'total' => (int)$d['total'], 'sites' => count($d['sites'])];
+}
+function fourgeMarkupDigestFailText($failed) {
+    $bits = [];
+    foreach ($failed as $a => $why) $bits[] = $a . ' (' . $why . ')';
+    return implode('; ', $bits);
+}
+// The day's email, if it is due. Never twice: a lock, then a second look under it.
+function fourgeMarkupDigestMaybe($via) {
+    try {
+        if (!fourgeMarkupIsHub() || fourgeMarkupApiKey() === '') return false;
+        if (!fourgeMarkupDigestDue(fourgeMarkupDigestCfg())) return false;
+        if (!fourgeMarkupLock('digest', 120)) return false;
+        try {
+            $cfg = fourgeMarkupDigestCfg();
+            if (!fourgeMarkupDigestDue($cfg)) return false;
+            list($day) = fourgeMarkupDigestNow($cfg['tz']);
+            $d = fourgeMarkupDigestData();
+            if (!$d['total']) {   // nothing waiting: no email today
+                fourgeMarkupKvSet('digest_last', $day);
+                fourgeMarkupKvSet('digest_last_at', (string)time());
+                fourgeMarkupKvSet('digest_last_via', $via);
+                fourgeMarkupKvSet('digest_last_note', 'Nothing was waiting, so no email went out.');
+                fourgeMarkupKvSet('digest_error', null);
+                return false;
+            }
+            $r = fourgeMarkupDigestSend($d, $cfg);
+            if (!$r['sent']) {
+                fourgeMarkupKvSet('digest_error', 'Not sent: ' . fourgeMarkupDigestFailText($r['failed']));
+                fourgeMarkupKvSet('digest_retry_at', (string)(time() + 900));
+                return false;
+            }
+            fourgeMarkupKvSet('digest_last', $day);
+            fourgeMarkupKvSet('digest_last_at', (string)time());
+            fourgeMarkupKvSet('digest_last_via', $via);
+            fourgeMarkupKvSet('digest_last_note', 'Sent to ' . implode(', ', $r['sent']) . ': ' . $r['subject'] . '.');
+            fourgeMarkupKvSet('digest_error', $r['failed'] ? 'Not delivered to ' . fourgeMarkupDigestFailText($r['failed']) : null);
+            fourgeMarkupKvSet('digest_retry_at', null);
+            return true;
+        } finally { fourgeMarkupUnlock('digest'); }
+    } catch (Throwable $e) { return false; }
+}
+// The cron job's address holds this key: made once and kept, new on request.
+function fourgeMarkupDigestKey($create = false) {
+    $k = (string)fourgeMarkupKvGet('digest_key', '');
+    if ($k === '' && $create) { $k = rtrim(strtr(base64_encode(random_bytes(24)), '+/', '-_'), '='); fourgeMarkupKvSet('digest_key', $k); }
+    return $k;
+}
+function fourgeMarkupDigestCronUrl() {
+    $k = fourgeMarkupDigestKey(false);
+    return $k === '' ? '' : fourgeMarkupHubUrl() . '/admin/api.php?action=markup_digest_tick&key=' . $k;
+}
+function fourgeMarkupDigestStatus($arch) {
+    $cfg = fourgeMarkupDigestCfg();
+    list($day) = fourgeMarkupDigestNow($cfg['tz']);
+    $toSet = fourgeMarkupKvGet('digest_to', null) !== null;
+    return [
+        // the addresses saved in the settings; until then it goes to the agency's Architects, counted, not listed
+        'on' => $cfg['on'], 'to' => $toSet ? $cfg['to'] : [], 'toSet' => $toSet, 'toCount' => count($cfg['to']),
+        'time' => $cfg['time'], 'tz' => $cfg['tz'], 'tzSet' => $cfg['tzSet'],
+        'sentToday' => $cfg['last'] === $day, 'lastAt' => (int)fourgeMarkupKvGet('digest_last_at', '0'),
+        'lastVia' => (string)fourgeMarkupKvGet('digest_last_via', ''), 'lastNote' => (string)fourgeMarkupKvGet('digest_last_note', ''),
+        'error' => (string)fourgeMarkupKvGet('digest_error', ''),
+        'cronAt' => (int)fourgeMarkupKvGet('digest_cron_at', '0'),
+        'cronUrl' => $arch ? fourgeMarkupDigestCronUrl() : '',   // the key is the address's lock: Architects only
+    ];
+}
+// The hub's cron job: https://<hub>/admin/api.php?action=markup_digest_tick&key=<key>
+function fourgeApiMarkupDigestTick($body) {
+    $want = fourgeMarkupIsHub() ? fourgeMarkupDigestKey(false) : '';
+    $key = (string)($_GET['key'] ?? (is_array($body) ? ($body['key'] ?? '') : ''));
+    if ($want === '' || $key === '' || !hash_equals($want, $key)) { fourgeMarkupOut(404, ['ok' => false, 'error' => 'Not found.']); return; }
+    fourgeMarkupKvSet('digest_cron_at', (string)time());
+    $sent = fourgeMarkupDigestMaybe('cron');
+    $cfg = fourgeMarkupDigestCfg();
+    list($day) = fourgeMarkupDigestNow($cfg['tz']);
+    fourgeMarkupOut(200, ['ok' => true, 'sent' => $sent, 'sentToday' => $cfg['last'] === $day]);
+}
+// "Email the to-do list": now, to the same people, whether or not today's went.
+function fourgeApiMarkupHubDigest($me, $body) {
+    if (!fourgeMarkupHubGate($me)) return;
+    $op = (string)($body['op'] ?? 'send');
+    if ($op === 'tz') {   // the time zone of the first person to open MarkUp here, until an Architect sets one
+        $tz = (string)($body['tz'] ?? '');
+        if ((string)fourgeMarkupKvGet('digest_tz', '') === '' && in_array($tz, timezone_identifiers_list(), true)) fourgeMarkupKvSet('digest_tz', $tz);
+        fourgeMarkupOut(200, ['ok' => true, 'tz' => fourgeMarkupDigestTz(), 'tzSet' => (string)fourgeMarkupKvGet('digest_tz', '') !== '']);
+        return;
+    }
+    $cfg = fourgeMarkupDigestCfg();
+    $d = fourgeMarkupDigestData();
+    if ($op === 'preview') {
+        list($subject, $html) = fourgeMarkupDigestCompose($d, $cfg);
+        fourgeMarkupOut(200, ['ok' => true, 'subject' => $subject, 'html' => $html, 'to' => $cfg['to'], 'total' => (int)$d['total']]);
+        return;
+    }
+    if ($op !== 'send') { fourgeMarkupOut(400, ['ok' => false, 'error' => 'Unknown request.']); return; }
+    if (!$cfg['to']) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'Nobody gets the daily email yet: an Architect adds the addresses in MarkUp → Settings → Daily email.']); return; }
+    if (!fourgeMarkupLock('digest_now', 20)) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'It went out a moment ago. Try again in a few seconds.']); return; }
+    $r = fourgeMarkupDigestSend($d, $cfg);
+    if (!$r['sent']) { fourgeMarkupOut(200, ['ok' => false, 'error' => 'Not sent: ' . fourgeMarkupDigestFailText($r['failed'])]); return; }
+    fourgeMarkupOut(200, ['ok' => true, 'sent' => $r['sent'], 'failed' => (object)$r['failed'], 'subject' => $r['subject'], 'total' => $r['total'], 'sites' => $r['sites']]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
